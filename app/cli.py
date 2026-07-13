@@ -1,7 +1,15 @@
+"""GitHub Issue Agent CLI — rich-powered terminal interface."""
+
 import argparse
 import asyncio
 import sys
 from pathlib import Path
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.syntax import Syntax
+from rich.table import Table
 
 from app.agent import IssueAgent, ModelResponseError
 from app.config import get_settings
@@ -9,68 +17,87 @@ from app.github import GitHubError, parse_issue_url
 from app.models import AnalysisReport
 from app.sessions import SessionManager
 
+console = Console()
+
 
 def print_report(report: AnalysisReport) -> None:
-    print()
-    print("=" * 60)
-    print(f"  摘要：{report.summary}")
-    print("=" * 60)
-    print()
-    print(f"根因：{report.root_cause}")
-    print()
-    print(f"置信度：{report.confidence}")
-    print(f"有效证据：{report.evidence_audit.valid_references} 条")
-    print(f"根因有据：{'是' if report.evidence_audit.root_cause_supported else '否'}")
-    print(f"检查文件：{len(report.files_examined)} 个")
+    console.print()
+    console.rule("[bold cyan]Analysis Report[/]")
+    console.print(Panel(report.summary, title="Summary", border_style="blue"))
+    console.print(f"[bold]Root Cause:[/] {report.root_cause}")
+    console.print()
+
+    badge_style = {"high": "red", "medium": "yellow", "low": "green"}
+    style = badge_style.get(report.confidence, "white")
+    console.print(f"[bold]Confidence:[/] [{style}]{report.confidence}[/]")
+    console.print(f"Valid Evidence: {report.evidence_audit.valid_references}")
+    console.print(f"Root Cause Supported: {'Yes' if report.evidence_audit.root_cause_supported else 'No'}")
+    console.print(f"Files Examined: {len(report.files_examined)}")
 
     if report.evidence:
-        print()
-        print("代码证据：")
+        console.print()
+        table = Table(title="Code Evidence", border_style="dim")
+        table.add_column("File", style="cyan")
+        table.add_column("Lines", style="yellow")
+        table.add_column("Reason")
         for ev in report.evidence:
-            print(f"  - {ev.path} {ev.lines or ''}: {ev.reason or ''}")
+            table.add_row(ev.path, ev.lines or "", ev.reason or "")
+        console.print(table)
 
     if report.proposed_changes:
-        print()
-        print("修复建议：")
+        console.print()
+        console.print("[bold]Proposed Changes:[/]")
         for i, change in enumerate(report.proposed_changes, 1):
-            print(f"  {i}. {change}")
+            console.print(f"  [green]{i}.[/] {change}")
 
     if report.patch:
-        print()
-        print("补丁 (unified diff)：")
-        print(report.patch)
+        console.print()
+        console.print("[bold]Patch:[/]")
+        console.print(Syntax(report.patch, "diff", theme="monokai", line_numbers=True))
 
     if report.tests:
-        print()
-        print("建议测试：")
+        console.print()
+        console.print("[bold]Suggested Tests:[/]")
         for i, test in enumerate(report.tests, 1):
-            print(f"  {i}. {test}")
+            console.print(f"  [green]{i}.[/] {test}")
 
     if report.risks:
-        print()
-        print("风险提示：")
+        console.print()
+        console.print("[bold red]Risks:[/]")
         for risk in report.risks:
-            print(f"  - {risk}")
+            console.print(f"  - {risk}")
 
     if report.files_examined:
-        print()
-        print(f"检查的文件：{', '.join(report.files_examined)}")
-    print()
+        console.print()
+        console.print(f"[dim]Files examined: {', '.join(report.files_examined)}[/]")
+    console.print()
 
 
 async def cmd_analyze(url: str, save_patch: str | None = None) -> None:
     agent = IssueAgent(get_settings())
     try:
-        print(f"正在分析：{url}")
-        print("请等待（30-90 秒）...")
-        report = await agent.investigate(url)
-        print_report(report)
-        if save_patch and report.patch:
-            Path(save_patch).write_text(report.patch, encoding="utf-8")
-            print(f"补丁已保存到：{save_patch}")
-            print()
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+            task = progress.add_task(f"[cyan]Analyzing {url}...", total=None)
+            events = []
+            async for event in agent.investigate_stream(url):
+                events.append(event)
+                if event.type == "start":
+                    progress.update(task, description=f"[cyan]Fetched issue, exploring {event.data.get('file_count', 0)} files...")
+                elif event.type == "tool_call":
+                    name = event.data.get("name", "")
+                    args = event.data.get("args", {})
+                    progress.update(task, description=f"[yellow]{name}({str(args)[:60]})")
+                elif event.type == "report":
+                    progress.update(task, description="[green]Analysis complete!")
+                    report_data = event.data
+                    if report_data:
+                        report = AnalysisReport(**report_data)
+                        print_report(report)
+                        if save_patch and report.patch:
+                            Path(save_patch).write_text(report.patch, encoding="utf-8")
+                            console.print(f"[green]Patch saved to {save_patch}[/]")
     except (ValueError, GitHubError, ModelResponseError) as error:
-        print(f"错误：{error}", file=sys.stderr)
+        console.print(f"[red]Error: {error}[/]", style="red")
         sys.exit(1)
     finally:
         await agent.aclose()
@@ -79,35 +106,34 @@ async def cmd_analyze(url: str, save_patch: str | None = None) -> None:
 async def cmd_chat(url: str, save_patch: str | None = None) -> None:
     agent = IssueAgent(get_settings())
     session_manager = SessionManager()
-
     try:
         parse_issue_url(url)
         session = session_manager.create(url)
 
-        print(f"正在分析：{url}")
-        print("请等待（30-90 秒）...")
-        report = await agent.investigate(url, session=session)
-        print_report(report)
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+            task = progress.add_task(f"[cyan]Analyzing {url}...", total=None)
+            async for event in agent.investigate_stream(url, session=session):
+                if event.type == "tool_call":
+                    progress.update(task, description=f"[yellow]Reading {event.data.get('name', '')}...")
+                elif event.type == "report":
+                    progress.update(task, description="[green]Analysis complete!")
+                    if event.data:
+                        report = AnalysisReport(**event.data)
+                        print_report(report)
+                        if save_patch and report.patch:
+                            Path(save_patch).write_text(report.patch, encoding="utf-8")
+                            console.print(f"[green]Patch saved to {save_patch}[/]")
 
-        if save_patch and report.patch:
-            Path(save_patch).write_text(report.patch, encoding="utf-8")
-            print(f"补丁已保存到：{save_patch}")
-            print()
-
-        print("=" * 60)
-        print("  进入交互模式，输入问题继续对话")
-        print("  /save <file>  保存补丁")
-        print("  /quit         退出")
-        print("=" * 60)
-        print()
+        console.rule("[bold]Interactive Mode[/]")
+        console.print("[dim]/save <file>  Save patch | /quit  Exit[/]")
+        console.print()
 
         while True:
             try:
                 user_input = input("> ").strip()
             except (EOFError, KeyboardInterrupt):
-                print()
+                console.print()
                 break
-
             if not user_input:
                 continue
             if user_input in ("/quit", "/exit"):
@@ -115,48 +141,43 @@ async def cmd_chat(url: str, save_patch: str | None = None) -> None:
             if user_input.startswith("/save"):
                 parts = user_input.split(maxsplit=1)
                 if len(parts) < 2:
-                    print("用法：/save <文件路径>")
+                    console.print("[yellow]Usage: /save <file_path>[/]")
                     continue
                 if not session.report or not session.report.patch:
-                    print("当前没有可保存的补丁")
+                    console.print("[yellow]No patch available to save[/]")
                     continue
                 Path(parts[1]).write_text(session.report.patch, encoding="utf-8")
-                print(f"补丁已保存到：{parts[1]}")
+                console.print(f"[green]Patch saved to {parts[1]}[/]")
                 continue
-
-            print()
+            console.print()
             try:
                 response = await agent.chat(session, user_input)
-                print(response.reply)
+                console.print(response.reply)
                 if response.tools_used:
-                    print()
-                    print(f"[工具调用：{', '.join(response.tools_used)}]")
+                    console.print(f"[dim]Tools: {', '.join(response.tools_used)}[/]")
             except (GitHubError, ModelResponseError) as error:
-                print(f"错误：{error}")
-            print()
+                console.print(f"[red]Error: {error}[/]")
+            console.print()
     except ValueError as error:
-        print(f"错误：{error}", file=sys.stderr)
+        console.print(f"[red]Error: {error}[/]")
         sys.exit(1)
     finally:
         await agent.aclose()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="GitHub Issue Agent — 基于工具调用的自主代码调查",
-    )
+    parser = argparse.ArgumentParser(description="GitHub Issue Agent — LLM-powered code investigation")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_analyze = sub.add_parser("analyze", help="一次性分析 issue")
+    p_analyze = sub.add_parser("analyze", help="One-shot issue analysis")
     p_analyze.add_argument("url", help="GitHub issue URL")
-    p_analyze.add_argument("--save-patch", help="保存补丁到指定文件")
+    p_analyze.add_argument("--save-patch", help="Save patch to file")
 
-    p_chat = sub.add_parser("chat", help="交互式对话分析")
+    p_chat = sub.add_parser("chat", help="Interactive chat analysis")
     p_chat.add_argument("url", help="GitHub issue URL")
-    p_chat.add_argument("--save-patch", help="保存补丁到指定文件")
+    p_chat.add_argument("--save-patch", help="Save patch to file")
 
     args = parser.parse_args()
-
     if args.command == "analyze":
         asyncio.run(cmd_analyze(args.url, args.save_patch))
     elif args.command == "chat":

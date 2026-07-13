@@ -12,6 +12,12 @@ class AnalyzeRequest(BaseModel):
     issue_url: HttpUrl
 
 
+class StreamRequest(BaseModel):
+    issue_url: HttpUrl
+    session_id: str | None = None
+    message: str | None = None
+
+
 class CodeReference(BaseModel):
     path: str
     lines: str | None = Field(default=None, description="Line or range in L12 or L12-L18 format")
@@ -72,3 +78,20 @@ class ChatResponse(BaseModel):
     reply: str
     tools_used: list[str] = Field(default_factory=list)
     report: AnalysisReport | None = None
+
+
+class CreatePRRequest(BaseModel):
+    session_id: str
+    branch: str
+    title: str
+    body: str
+    changes: list[dict] = Field(default_factory=list)
+
+
+class CreatePRResponse(BaseModel):
+    pr_url: str
+    branch: str
+
+
+class ApplyFixRequest(BaseModel):
+    confirm: bool = Field(default=True)

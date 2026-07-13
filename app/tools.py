@@ -3,12 +3,18 @@ import logging
 import posixpath
 import re
 
+from app.config import Settings
 from app.github import GitHubClient, GitHubFileSkipped
 from app.models import IssueData
 
 logger = logging.getLogger(__name__)
 
-TOOL_DEFINITIONS = [
+_MAX_LIST_ENTRIES = 80
+_MAX_GREP_RESULTS = 50
+_MAX_SEARCH_RESULTS = 50
+
+
+_READ_ONLY_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -72,17 +78,101 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_history",
+            "description": (
+                "Show recent git commits that touched a specific file. "
+                "Returns commit SHA, author, date, and message. Useful for understanding "
+                "when and why code was changed — like git blame."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path in the repository"},
+                    "max_commits": {"type": "integer", "description": "Max commits to return (default 10)"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_branches",
+            "description": "List branches in the repository. Returns branch names and their latest commit SHA.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_at_commit",
+            "description": (
+                "Read a file's content at a specific git commit SHA. "
+                "Use this to check how a file looked before recent changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path in the repository"},
+                    "sha": {"type": "string", "description": "Git commit SHA (7-40 hex chars)"},
+                },
+                "required": ["path", "sha"],
+            },
+        },
+    },
 ]
 
-_MAX_LIST_ENTRIES = 80
-_MAX_GREP_RESULTS = 50
-_MAX_SEARCH_RESULTS = 50
+_CREATE_PR_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_pull_request",
+        "description": (
+            "PROPOSE creating a pull request with code changes. "
+            "This RETURNS A PROPOSAL ONLY — the PR is NOT created automatically. "
+            "The user must review and confirm before anything is actually created. "
+            "When called, clearly describe: branch name, files to modify, PR title and description."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "branch": {"type": "string", "description": "Name for the new branch (e.g., fix/issue-42)"},
+                "title": {"type": "string", "description": "PR title"},
+                "body": {"type": "string", "description": "PR description explaining the changes"},
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "File path to modify"},
+                            "content": {"type": "string", "description": "New file content"},
+                            "message": {"type": "string", "description": "Commit message for this file"},
+                        },
+                        "required": ["path", "content", "message"],
+                    },
+                    "description": "List of file changes",
+                },
+            },
+            "required": ["branch", "title", "body", "changes"],
+        },
+    },
+}
+
+
+def get_tool_definitions(settings: Settings) -> list[dict]:
+    tools = list(_READ_ONLY_TOOLS)
+    if settings.write_mode:
+        tools.append(_CREATE_PR_TOOL)
+    return tools
 
 
 class ToolExecutor:
     def __init__(
         self,
         github: GitHubClient,
+        settings: Settings,
         issue: IssueData,
         tree: list[str],
         *,
@@ -93,6 +183,7 @@ class ToolExecutor:
         max_total_context_chars: int = 80_000,
     ) -> None:
         self._github = github
+        self._settings = settings
         self._issue = issue
         self._tree = tree
         self._tree_set = set(tree)
@@ -132,12 +223,22 @@ class ToolExecutor:
                 return self._search_files(arguments["query"])
             if name == "grep_content":
                 return self._grep_content(arguments["pattern"])
+            if name == "get_file_history":
+                return await self._get_file_history(**arguments)
+            if name == "list_branches":
+                return await self._list_branches()
+            if name == "get_file_at_commit":
+                return await self._get_file_at_commit(**arguments)
+            if name == "create_pull_request":
+                return self._create_pull_request_proposal(**arguments)
             return f"Unknown tool: {name}"
         except GitHubFileSkipped as error:
             return f"File skipped: {error}"
         except Exception as error:
             logger.warning("Tool %s failed: %s", name, error)
             return f"Error: {error}"
+
+    # ── core tools (unchanged) ──────────────────────────────────────
 
     async def _read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         path = self._normalize_file_path(path)
@@ -197,7 +298,7 @@ class ToolExecutor:
         for p in self._tree:
             if not p.startswith(prefix):
                 continue
-            remainder = p[len(prefix) :]
+            remainder = p[len(prefix):]
             if not remainder:
                 continue
             if "/" in remainder:
@@ -233,6 +334,58 @@ class ToolExecutor:
         if not results:
             return f"No matches for '{pattern}' in files read so far. Use read_file first."
         return "\n".join(results)
+
+    # ── new tools ────────────────────────────────────────────────────
+
+    async def _get_file_history(self, path: str, max_commits: int = 10) -> str:
+        path = self._normalize_file_path(path)
+        commits = await self._github.get_file_history(self._issue, path, max_commits=max_commits)
+        if not commits:
+            return f"No commit history found for {path}"
+        lines = [f"History for {path}:"]
+        for c in commits:
+            lines.append(f"  {c['sha']} {c['date']} {c['author']}: {c['message']}")
+        return "\n".join(lines)
+
+    async def _list_branches(self) -> str:
+        branches = await self._github.list_branches(self._issue.owner, self._issue.repo)
+        if not branches:
+            return "No branches found"
+        lines = ["Branches:"]
+        for b in branches:
+            protected = " [protected]" if b.get("protected") else ""
+            lines.append(f"  {b['name']} ({b['sha']}){protected}")
+        return "\n".join(lines)
+
+    async def _get_file_at_commit(self, path: str, sha: str) -> str:
+        path = self._normalize_file_path(path)
+        sha = sha.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
+            return "Error: SHA must be a 7-40 character hex string"
+        source = await self._github.get_file_at_commit(self._issue, path, sha)
+        lines = source.content.splitlines()
+        result = "\n".join(f"L{i}: {line}" for i, line in enumerate(lines, 1))
+        return self._limit_tool_context(result)
+
+    def _create_pull_request_proposal(
+        self, branch: str, title: str, body: str, changes: list[dict]
+    ) -> str:
+        if not self._settings.write_mode:
+            return "Error: Write mode is disabled. Set WRITE_MODE=true to enable PR creation."
+
+        branch = branch.strip().replace(" ", "-")
+        change_list = "\n".join(
+            f"  - {c.get('path', '?')}: {c.get('message', 'update')}" for c in changes
+        )
+        return (
+            "⚠️  PR PROPOSAL — not yet created:\n\n"
+            f"Branch: {branch}\n"
+            f"Title: {title}\n"
+            f"Description: {body}\n\n"
+            f"Files to change:\n{change_list}\n\n"
+            "---\n"
+            "To create this PR, POST to /apply-fix with confirm=true"
+        )
 
     @property
     def line_counts(self) -> dict[str, int]:

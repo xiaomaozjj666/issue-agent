@@ -16,8 +16,7 @@ class _FakeToolCall:
         self.id = call_id
         self.type = "function"
         self.function = SimpleNamespace(
-            name=name,
-            arguments=json.dumps(arguments) if isinstance(arguments, dict) else arguments,
+            name=name, arguments=json.dumps(arguments) if isinstance(arguments, dict) else arguments,
         )
 
 
@@ -56,6 +55,11 @@ class _FakeClient:
 
 
 @pytest.fixture
+def settings() -> Settings:
+    return Settings(openai_api_key="test-key", max_agent_iterations=5)
+
+
+@pytest.fixture
 def make_settings() -> Settings:
     return Settings(openai_api_key="test-key")
 
@@ -74,14 +78,9 @@ def make_agent():
 def make_issue():
     def _factory(**changes: object) -> IssueData:
         values: dict[str, object] = {
-            "owner": "acme",
-            "repo": "widget",
-            "number": 1,
-            "title": "Parser failure",
-            "body": "A" * 4_000,
-            "labels": ["bug"],
-            "comments": ["B" * 2_000],
-            "default_branch": "main",
+            "owner": "acme", "repo": "widget", "number": 1,
+            "title": "Parser failure", "body": "A" * 4_000,
+            "labels": ["bug"], "comments": ["B" * 2_000], "default_branch": "main",
         }
         values.update(changes)
         return IssueData.model_validate(values)

@@ -1,76 +1,29 @@
 import json
 import logging
 import re
+from collections.abc import AsyncGenerator
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.events import (
+    AgentEvent,
+    done_event,
+    error_event,
+    report_event,
+    start_event,
+    thinking_event,
+    tool_call_event,
+    tool_result_event,
+)
 from app.github import GitHubClient, parse_issue_url, select_candidate_paths
+from app.i18n import get_chat_system_prompt, get_final_output_prompt, get_system_prompt, t
 from app.models import AnalysisReport, ChatResponse, IssueData
 from app.sessions import Session
-from app.tools import TOOL_DEFINITIONS, ToolExecutor, parse_tool_call
+from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = """You are a senior software engineer investigating a GitHub issue.
-You have tools to explore the codebase: read_file, list_directory, search_files, grep_content.
-
-Investigation process:
-1. Read the issue description and comments carefully
-2. Use search_files and list_directory to find relevant files
-3. Use read_file to examine the code — always read before claiming anything
-4. Use grep_content to search patterns in files you have already read
-5. Verify every hypothesis with actual code evidence
-6. When confident, stop calling tools and state your conclusion
-
-Rules:
-- Never invent files, symbols, behavior, or line numbers
-- Only reference files you have actually read via read_file
-- Evidence line ranges must use L12 or L12-L18 format
-- All human-readable text MUST be in Simplified Chinese (简体中文)
-- Keep code identifiers, file paths, exception names, and JSON keys in English
-- The confidence field must be one of: "low", "medium", "high"
-"""
-
-FINAL_OUTPUT_PROMPT = """Based on your investigation above, provide the final analysis \
-as a JSON object with exactly this schema:
-
-{
-  "summary": "问题摘要（简体中文）",
-  "root_cause": "根因分析（简体中文，引用具体文件和行号）",
-  "confidence": "high" | "medium" | "low",
-  "evidence": [
-    {"path": "实际读过的文件路径", "lines": "L12-L18", "reason": "该证据说明了什么（简体中文）"}
-  ],
-  "proposed_changes": ["具体修复建议（简体中文）"],
-  "patch": "unified diff 格式的补丁，或 null",
-  "tests": ["建议的测试用例（简体中文）"],
-  "risks": ["风险提示（简体中文）"]
-}
-
-Patch format (unified diff):
---- a/path/to/file
-+++ b/path/to/file
-@@ -10,7 +10,9 @@
- context line
--removed line
-+added line
- context line
-
-Only include files you actually read in evidence. Set patch to null if you cannot confidently generate a fix.
-"""
-
-CHAT_SYSTEM_PROMPT = """你是一位资深软件工程师，正在讨论一个 GitHub issue 的调查结果。
-
-回答原则：
-- 优先基于已有调查结果直接回答，不要重复探索已经读过的文件
-- 仅当用户明确要求查看新代码、或需要验证新假设时才调用工具
-- 回答简洁明了，避免不必要的工具调用
-- 如果已有信息足以回答，直接回复文本，不要调用任何工具
-
-所有人类可读文本必须使用简体中文，代码标识符、文件路径、异常名保持英文。
-"""
 
 LINE_RANGE = re.compile(r"^L(\d+)(?:-L?(\d+))?$")
 
@@ -106,17 +59,12 @@ class IssueAgent:
             self._owns_client = True
         return self._client
 
-    async def investigate(
-        self, issue_url: str, *, session: Session | None = None
-    ) -> AnalysisReport:
-        if session is not None:
-            async with session.lock:
-                return await self._investigate(issue_url, session=session)
-        return await self._investigate(issue_url)
+    # ── streaming investigation ─────────────────────────────────────
 
-    async def _investigate(
+    async def investigate_stream(
         self, issue_url: str, *, session: Session | None = None
-    ) -> AnalysisReport:
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Investigate an issue, yielding AgentEvent objects for real-time streaming."""
         owner, repo, number = parse_issue_url(issue_url)
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
 
@@ -125,9 +73,9 @@ class IssueAgent:
             max_file_bytes=self.settings.github_max_file_bytes,
         ) as github:
             issue = await github.get_issue(owner, repo, number)
-            logger.info("Fetched issue: %r (%d comments)", issue.title, len(issue.comments))
             tree = await github.get_tree(issue)
-            logger.info("Repository tree has %d blobs", len(tree))
+            yield start_event(issue.title, len(tree))
+            logger.info("Fetched issue: %r (%d comments, %d files)", issue.title, len(issue.comments), len(tree))
 
             if session is not None:
                 session.issue = issue
@@ -136,15 +84,74 @@ class IssueAgent:
             executor = self._build_executor(github, issue, tree)
             messages = self._build_initial_messages(issue, tree)
 
-            await self._agentic_loop(messages, executor)
+            tools = get_tool_definitions(self.settings)
+            client = self._get_client()
+            for iteration in range(self.settings.max_agent_iterations):
+                response = await client.chat.completions.create(
+                    model=self.settings.openai_model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=0.1,
+                    max_tokens=self.settings.max_output_tokens,
+                )
+
+                if not response.choices:
+                    raise ModelResponseError("The model returned no choices")
+
+                msg = response.choices[0].message
+                content = msg.content or ""
+                messages.append(_serialize_message(msg))
+
+                if content and not msg.tool_calls:
+                    yield thinking_event(content)
+
+                if not msg.tool_calls:
+                    logger.info("Agent finished exploration after %d iterations", iteration + 1)
+                    break
+
+                for tc in msg.tool_calls:
+                    name, args = parse_tool_call(tc)
+                    logger.info("Tool call %d: %s(%s)", iteration + 1, name, args)
+                    yield tool_call_event(name, args, iteration + 1)
+                    result = await executor.execute(name, args)
+                    yield tool_result_event(name, result)
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            else:
+                logger.warning("Agent reached max iterations (%d)", self.settings.max_agent_iterations)
+
             report = await self._generate_report(messages, executor)
+            yield report_event(report.model_dump())
 
             if session is not None:
                 session.file_cache = executor.file_cache
                 session.files_read = executor.files_read
                 session.report = report
 
+            yield done_event()
+
+    # ── non‑streaming wrappers (backward‑compatible) ─────────────────
+
+    async def investigate(
+        self, issue_url: str, *, session: Session | None = None
+    ) -> AnalysisReport:
+        if session is not None:
+            async with session.lock:
+                return await self._investigate_from_stream(issue_url, session=session)
+        return await self._investigate_from_stream(issue_url)
+
+    async def _investigate_from_stream(
+        self, issue_url: str, *, session: Session | None = None
+    ) -> AnalysisReport:
+        report: AnalysisReport | None = None
+        async for event in self.investigate_stream(issue_url, session=session):
+            if event.type == "report" and event.data:
+                report = AnalysisReport(**event.data)
+        if report is None:
+            raise ModelResponseError("Investigation did not produce a report")
         return report
+
+    # ── chat ─────────────────────────────────────────────────────────
 
     async def chat(self, session: Session, message: str) -> ChatResponse:
         async with session.lock:
@@ -154,32 +161,26 @@ class IssueAgent:
         if session.issue is None:
             raise ValueError("Session not initialized")
 
+        tools = get_tool_definitions(self.settings)
         async with GitHubClient(
             self.settings.github_token,
             max_file_bytes=self.settings.github_max_file_bytes,
         ) as github:
             executor = self._build_executor(
-                github,
-                session.issue,
-                session.tree,
-                file_cache=session.file_cache,
-                files_read=session.files_read,
+                github, session.issue, session.tree,
+                file_cache=session.file_cache, files_read=session.files_read,
             )
 
             investigation_context = _build_investigation_context(session)
             session.messages.append({"role": "user", "content": message})
             messages = [
-                {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+                {"role": "system", "content": get_chat_system_prompt()},
                 {"role": "system", "content": investigation_context},
                 *session.messages,
             ]
 
             for _ in range(self.settings.max_agent_iterations):
-                response = await self._call_llm(
-                    messages,
-                    tools=TOOL_DEFINITIONS,
-                    max_tokens=self.settings.max_chat_tokens,
-                )
+                response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
                 msg = response.choices[0].message
                 serialized = _serialize_message(msg)
                 messages.append(serialized)
@@ -213,45 +214,15 @@ class IssueAgent:
         _trim_session_messages(session.messages, max(history_budget, 0))
         return ChatResponse(
             session_id=session.session_id,
-            reply="已达到调查深度上限，无法继续深入。",
+            reply=t("depth_limit"),
             tools_used=executor.tools_used,
         )
 
-    async def _agentic_loop(self, messages: list[dict], executor: ToolExecutor) -> None:
+    # ── report generation ────────────────────────────────────────────
+
+    async def _generate_report(self, messages: list[dict], executor: ToolExecutor) -> AnalysisReport:
         client = self._get_client()
-        for iteration in range(self.settings.max_agent_iterations):
-            response = await client.chat.completions.create(
-                model=self.settings.openai_model,
-                messages=messages,
-                tools=TOOL_DEFINITIONS,
-                tool_choice="auto",
-                temperature=0.1,
-                max_tokens=self.settings.max_output_tokens,
-            )
-
-            if not response.choices:
-                raise ModelResponseError("The model returned no choices")
-
-            msg = response.choices[0].message
-            messages.append(_serialize_message(msg))
-
-            if not msg.tool_calls:
-                logger.info("Agent finished exploration after %d iterations", iteration + 1)
-                return
-
-            for tc in msg.tool_calls:
-                name, args = parse_tool_call(tc)
-                logger.info("Tool call %d: %s(%s)", iteration + 1, name, args)
-                result = await executor.execute(name, args)
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-
-        logger.warning("Agent reached max iterations (%d)", self.settings.max_agent_iterations)
-
-    async def _generate_report(
-        self, messages: list[dict], executor: ToolExecutor
-    ) -> AnalysisReport:
-        client = self._get_client()
-        final_messages = [*messages, {"role": "user", "content": FINAL_OUTPUT_PROMPT}]
+        final_messages = [*messages, {"role": "user", "content": get_final_output_prompt()}]
 
         response = await client.chat.completions.create(
             model=self.settings.openai_model,
@@ -289,42 +260,32 @@ class IssueAgent:
 
         if not report.evidence:
             report.confidence = "low"
-            warning = "根因缺少有效的源码引用，尚未验证。"
+            warning = t("evidence_unsupported")
             if warning not in report.risks:
                 report.risks.append(warning)
 
         logger.info(
             "Analysis complete: confidence=%s, evidence=%d, files=%d",
-            report.confidence,
-            report.evidence_audit.valid_references,
-            len(report.files_examined),
+            report.confidence, report.evidence_audit.valid_references, len(report.files_examined),
         )
         return report
+
+    # ── helpers ──────────────────────────────────────────────────────
 
     def _build_initial_messages(self, issue: IssueData, tree: list[str]) -> list[dict]:
         candidate_paths = select_candidate_paths(tree, issue, self.settings.max_planning_paths)
         tree_preview = candidate_paths if candidate_paths else tree[: self.settings.max_planning_paths]
         issue_context = json.dumps(
-            {
-                "title": issue.title,
-                "body": issue.body[:5000],
-                "labels": issue.labels,
-                "comments": issue.comments[:10],
-            },
-            ensure_ascii=False,
-            indent=2,
+            {"title": issue.title, "body": issue.body[:5000], "labels": issue.labels, "comments": issue.comments[:10]},
+            ensure_ascii=False, indent=2,
         )
         return [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Investigate this GitHub issue:\n{issue_context}\n\n"
-                    f"Repository file tree ({len(tree)} files total, "
-                    f"showing {len(tree_preview)} most relevant):\n"
-                    + "\n".join(tree_preview)
-                ),
-            },
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": (
+                f"Investigate this GitHub issue:\n{issue_context}\n\n"
+                f"Repository file tree ({len(tree)} files total, showing {len(tree_preview)} most relevant):\n"
+                + "\n".join(tree_preview)
+            )},
         ]
 
     @staticmethod
@@ -338,13 +299,7 @@ class IssueAgent:
         end = int(match.group(2) or start)
         return 1 <= start <= end <= line_count
 
-    async def _call_llm(
-        self,
-        messages: list[dict],
-        *,
-        tools: list | None = None,
-        max_tokens: int | None = None,
-    ):
+    async def _call_llm(self, messages: list[dict], *, tools: list | None = None, max_tokens: int | None = None):
         client = self._get_client()
         kwargs: dict = {
             "model": self.settings.openai_model,
@@ -359,9 +314,7 @@ class IssueAgent:
 
     def _build_executor(self, github: GitHubClient, issue: IssueData, tree: list[str], **kwargs) -> ToolExecutor:
         return ToolExecutor(
-            github,
-            issue,
-            tree,
+            github, self.settings, issue, tree,
             max_files=self.settings.max_candidate_files,
             max_file_chars=self.settings.max_file_chars,
             max_total_context_chars=self.settings.max_total_context_chars,
@@ -369,18 +322,13 @@ class IssueAgent:
         )
 
 
+# ── module‑level helpers ────────────────────────────────────────────
+
 def _serialize_message(message) -> dict:
     msg: dict = {"role": "assistant", "content": message.content or ""}
     if message.tool_calls:
         msg["tool_calls"] = [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments,
-                },
-            }
+            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
             for tc in message.tool_calls
         ]
     return msg
@@ -409,8 +357,7 @@ def _trim_session_messages(messages: list[dict], max_chars: int, max_messages: i
             if retained:
                 break
             turn = [
-                message
-                for message in turn
+                message for message in turn
                 if message.get("role") == "user"
                 or (message.get("role") == "assistant" and not message.get("tool_calls"))
             ][-max_messages:]
@@ -441,24 +388,24 @@ _JSON_BLOCK = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
 
 def _build_investigation_context(session: Session) -> str:
     if session.report is None:
-        return "调查尚未完成，暂无结论可供参考。"
+        return t("no_investigation")
     report = session.report
-    parts = ["以下是已完成调查的结论，请优先基于这些信息回答用户问题：", ""]
-    parts.append(f"问题摘要：{report.summary}")
-    parts.append(f"根因分析：{report.root_cause}")
-    parts.append(f"置信度：{report.confidence}")
+    parts = [t("investigation_context_header"), ""]
+    parts.append(f"Summary: {report.summary}")
+    parts.append(f"Root Cause: {report.root_cause}")
+    parts.append(f"Confidence: {report.confidence}")
     if report.evidence:
-        parts.append("代码证据：")
+        parts.append("Evidence:")
         for ev in report.evidence:
             parts.append(f"  - {ev.path} {ev.lines or ''}: {ev.reason or ''}")
     if report.proposed_changes:
-        parts.append("修复建议：")
+        parts.append("Proposed Changes:")
         for i, change in enumerate(report.proposed_changes, 1):
             parts.append(f"  {i}. {change}")
     if report.files_examined:
-        parts.append(f"已检查的文件：{', '.join(report.files_examined)}")
+        parts.append(f"Files Examined: {', '.join(report.files_examined)}")
     parts.append("")
-    parts.append("除非用户明确要求查看新代码，否则不要调用工具，直接基于以上信息回答。")
+    parts.append(t("investigation_context_footer"))
     return "\n".join(parts)
 
 

@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
     max_chat_tokens: int = Field(default=2_000, ge=500, le=8_000)
 
+    # --- New settings for v0.3.0 ---
+    language: str = Field(default="zh", pattern=r"^(zh|en)$")
+    api_key: str | None = None
+    write_mode: bool = False
+    session_db_path: str = ":memory:"
+
 
 @lru_cache
 def get_settings() -> Settings:

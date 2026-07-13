@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Issue Agent</title>
+<style>
+:root{--bg:#0d1117;--fg:#c9d1d9;--border:#30363d;--accent:#58a6ff;--card:#161b22;--green:#3fb950;--yellow:#d2991d;--red:#f85149;--radius:8px}
+[data-theme="light"]{--bg:#fff;--fg:#24292f;--border:#d0d7de;--card:#f6f8fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--fg);height:100vh;display:flex}
+#sidebar{width:260px;border-right:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+#sidebar h2{font-size:16px;color:var(--accent)}
+#sidebar input,#sidebar button{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:13px}
+#sidebar button{background:var(--accent);color:#fff;cursor:pointer;font-weight:600;border:none}
+#sidebar button:hover{opacity:.85}
+#main{flex:1;display:flex;flex-direction:column}
+#messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+.msg{padding:12px 16px;border-radius:var(--radius);max-width:85%}
+.msg.system{align-self:center;background:var(--card);border:1px solid var(--border);max-width:95%;font-size:13px}
+.msg.user{align-self:flex-end;background:var(--accent);color:#fff}
+.msg.assistant{align-self:flex-start;background:var(--card);border:1px solid var(--border)}
+.msg.tool{align-self:flex-start;background:var(--card);border:1px solid var(--yellow);font-family:monospace;font-size:12px;cursor:pointer}
+.msg.tool .preview{max-height:60px;overflow:hidden}
+.msg.tool .full{display:none;margin-top:8px;white-space:pre-wrap;max-height:300px;overflow-y:auto}
+.msg.tool.expanded .full{display:block}
+.msg.tool.expanded .preview{display:none}
+.msg.error{align-self:center;background:var(--red);color:#fff}
+#report{padding:20px;border-top:1px solid var(--border)}
+#report h3{color:var(--accent);margin-bottom:8px}
+#report pre{background:var(--card);padding:12px;border-radius:var(--radius);overflow-x:auto;font-size:13px}
+.evidence-table{width:100%;border-collapse:collapse;margin:8px 0}
+.evidence-table td,.evidence-table th{border:1px solid var(--border);padding:6px 10px;font-size:13px;text-align:left}
+.badge{padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+.badge.high{background:var(--red);color:#fff}
+.badge.medium{background:var(--yellow);color:#000}
+.badge.low{background:var(--green);color:#000}
+#input-bar{display:flex;padding:12px 20px;border-top:1px solid var(--border);gap:8px}
+#input-bar input{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-size:14px}
+#input-bar button{padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-weight:600}
+#progress{padding:8px 20px;font-size:13px;color:var(--yellow);min-height:24px}
+.theme-toggle{cursor:pointer;font-size:18px;align-self:flex-end}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2>Issue Agent</h2>
+    <span class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">&#9788;</span>
+  </div>
+  <input id="issueUrl" placeholder="GitHub Issue URL" value="">
+  <button onclick="analyze()">Analyze</button>
+  <div style="font-size:12px;color:var(--yellow);margin-top:8px" id="status"></div>
+</div>
+<div id="main">
+  <div id="messages"></div>
+  <div id="report" style="display:none"></div>
+  <div id="progress"></div>
+  <div id="input-bar" style="display:none">
+    <input id="chatInput" placeholder="Ask follow-up questions..." onkeydown="if(event.key==='Enter')chat()">
+    <button onclick="chat()">Send</button>
+  </div>
+</div>
+<script>
+let sessionId = null;
+let report = null;
+
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';localStorage.setItem('ds-theme',h.dataset.theme)}
+(function(){const s=localStorage.getItem('ds-theme');if(s)document.documentElement.dataset.theme=s})()
+
+function addMsg(role,content,cls=''){
+  const d=document.getElementById('messages');
+  const m=document.createElement('div');
+  m.className='msg '+role+' '+cls;
+  m.textContent=content;
+  d.appendChild(m);
+  d.scrollTop=d.scrollHeight;
+  return m;
+}
+
+function addToolCard(name,args){
+  const d=document.getElementById('messages');
+  const m=document.createElement('div');
+  m.className='msg tool';
+  m.innerHTML='<div class="preview"><b>'+name+'</b> '+JSON.stringify(args).substring(0,80)+'...</div><div class="full"></div>';
+  m.onclick=function(){this.classList.toggle('expanded')};
+  d.appendChild(m);
+  d.scrollTop=d.scrollHeight;
+  return m;
+}
+
+async function analyze(){
+  const url=document.getElementById('issueUrl').value.trim();
+  if(!url)return;
+  document.getElementById('messages').innerHTML='';
+  document.getElementById('report').style.display='none';
+  document.getElementById('progress').textContent='Fetching issue...';
+  addMsg('assistant','Analyzing: '+url);
+
+  try{
+    const resp=await fetch('/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({issue_url:url})});
+    const reader=resp.body.getReader();
+    const decoder=new TextDecoder();
+    let buf='';
+    let toolCard=null;
+
+    while(true){
+      const{value,done}=await reader.read();
+      if(done)break;
+      buf+=decoder.decode(value,{stream:true});
+      const lines=buf.split('\n');
+      buf=lines.pop()||'';
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        const data=line.slice(6);
+        if(data==='[DONE]'){document.getElementById('progress').textContent='Done.';break}
+        try{
+          const evt=JSON.parse(data);
+          switch(evt.type){
+            case'start':
+              document.getElementById('progress').textContent='Exploring '+evt.data.file_count+' files...';
+              break;
+            case'tool_call':
+              document.getElementById('progress').textContent=evt.data.name+': '+JSON.stringify(evt.data.args).substring(0,60);
+              toolCard=addToolCard(evt.data.name,evt.data.args);
+              break;
+            case'tool_result':
+              if(toolCard){toolCard.querySelector('.full').textContent=evt.data.preview||'';toolCard.classList.add('expanded')}
+              break;
+            case'thinking':
+              addMsg('assistant',evt.data.content);
+              break;
+            case'report':
+              report=evt.data;
+              renderReport(report);
+              document.getElementById('input-bar').style.display='flex';
+              document.getElementById('progress').textContent='';
+              break;
+            case'error':
+              addMsg('error',evt.message||'Error');
+              document.getElementById('progress').textContent='';
+              break;
+            case'done':
+              break;
+          }
+        }catch(e){}
+      }
+    }
+  }catch(e){
+    addMsg('error','Connection error: '+e.message);
+    document.getElementById('progress').textContent='';
+  }
+}
+
+function renderReport(r){
+  const d=document.getElementById('report');
+  d.style.display='block';
+  let h='<h3>'+escapeHtml(r.summary)+'</h3>';
+  h+='<p><strong>Root Cause:</strong> '+escapeHtml(r.root_cause)+'</p>';
+  h+='<p>Confidence: <span class="badge '+r.confidence+'">'+r.confidence+'</span></p>';
+  if(r.evidence&&r.evidence.length){
+    h+='<h4>Code Evidence</h4><table class="evidence-table"><tr><th>File</th><th>Lines</th><th>Reason</th></tr>';
+    r.evidence.forEach(function(e){h+='<tr><td>'+escapeHtml(e.path)+'</td><td>'+escapeHtml(e.lines||'')+'</td><td>'+escapeHtml(e.reason||'')+'</td></tr>'});
+    h+='</table>';
+  }
+  if(r.proposed_changes&&r.proposed_changes.length){h+='<h4>Proposed Changes</h4><ul>'+r.proposed_changes.map(function(c){return'<li>'+escapeHtml(c)+'</li>'}).join('')+'</ul>'}
+  if(r.patch){h+='<h4>Patch</h4><pre>'+escapeHtml(r.patch)+'</pre>'}
+  if(r.tests&&r.tests.length){h+='<h4>Suggested Tests</h4><ul>'+r.tests.map(function(t){return'<li>'+escapeHtml(t)+'</li>'}).join('')+'</ul>'}
+  if(r.risks&&r.risks.length){h+='<h4>Risks</h4><ul>'+r.risks.map(function(r){return'<li>'+escapeHtml(r)+'</li>'}).join('')+'</ul>'}
+  d.innerHTML=h;
+}
+
+async function chat(){
+  const inp=document.getElementById('chatInput');
+  const msg=inp.value.trim();
+  if(!msg||!sessionId)return;
+  inp.value='';
+  addMsg('user',msg);
+  document.getElementById('progress').textContent='Thinking...';
+  try{
+    const resp=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,message:msg})});
+    const data=await resp.json();
+    document.getElementById('progress').textContent='';
+    addMsg('assistant',data.reply);
+    if(data.tools_used&&data.tools_used.length)addMsg('system','Tools: '+data.tools_used.join(', '));
+  }catch(e){
+    document.getElementById('progress').textContent='';
+    addMsg('error','Error: '+e.message);
+  }
+}
+
+function escapeHtml(s){if(!s)return'';return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+</script>
+</body>
+</html>

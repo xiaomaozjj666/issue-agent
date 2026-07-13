@@ -108,19 +108,12 @@ class GitHubClient:
         comments = [item.get("body") or "" for item in comments_response.json()]
         link_header = comments_response.headers.get("Link", "")
         if "rel=\"next\"" in link_header:
-            logger.info(
-                "Issue %s/%s#%d has more than 30 comments; only first page fetched",
-                owner, repo, number,
-            )
+            logger.info("Issue %s/%s#%d has more than 30 comments; only first page fetched", owner, repo, number)
         return IssueData(
-            owner=owner,
-            repo=repo,
-            number=number,
-            title=issue["title"],
-            body=issue.get("body") or "",
+            owner=owner, repo=repo, number=number,
+            title=issue["title"], body=issue.get("body") or "",
             labels=[label["name"] for label in issue.get("labels", [])],
-            comments=comments,
-            default_branch=repository["default_branch"],
+            comments=comments, default_branch=repository["default_branch"],
         )
 
     async def get_tree(self, issue: IssueData) -> list[str]:
@@ -128,8 +121,7 @@ class GitHubClient:
         repo_segment = self._repo_segment(issue.owner, issue.repo)
         try:
             response = await self._get(
-                f"/repos/{repo_segment}/git/trees/{branch}",
-                params={"recursive": "1"},
+                f"/repos/{repo_segment}/git/trees/{branch}", params={"recursive": "1"},
             )
         except GitHubError as error:
             if "409" in str(error):
@@ -150,20 +142,107 @@ class GitHubClient:
         data = response.json()
         size = data.get("size")
         if isinstance(size, int) and size > self._max_file_bytes:
-            raise GitHubFileSkipped(
-                f"File {path} is {size} bytes, exceeds limit {self._max_file_bytes}"
-            )
+            raise GitHubFileSkipped(f"File {path} is {size} bytes, exceeds limit {self._max_file_bytes}")
         if data.get("encoding") != "base64" or not isinstance(data.get("content"), str):
             raise GitHubFileSkipped(f"Unsupported file response for {path}")
         try:
-            raw = base64.b64decode(
-                "".join(data["content"].split()), validate=True
-            )
+            raw = base64.b64decode("".join(data["content"].split()), validate=True)
         except (ValueError, base64.binascii.Error) as error:
             raise GitHubFileSkipped(f"Invalid file content for {path}") from error
         if b"\x00" in raw:
             raise GitHubFileSkipped(f"Binary file skipped: {path}")
         return SourceFile(path=path, content=raw.decode("utf-8", errors="replace"))
+
+    # ── v0.3.0 extended API ─────────────────────────────────────────
+
+    async def get_file_history(self, issue: IssueData, path: str, max_commits: int = 10) -> list[dict]:
+        repo_segment = self._repo_segment(issue.owner, issue.repo)
+        response = await self._get(
+            f"/repos/{repo_segment}/commits",
+            params={"path": path, "per_page": min(max_commits, 30), "sha": issue.default_branch},
+        )
+        commits = response.json()
+        if not isinstance(commits, list):
+            return []
+        return [
+            {"sha": c.get("sha", "")[:7],
+             "author": (c.get("commit", {}).get("author", {}).get("name", "unknown")),
+             "date": (c.get("commit", {}).get("author", {}).get("date", "")[:10]),
+             "message": (c.get("commit", {}).get("message", "").split("\n")[0][:120])}
+            for c in commits
+        ]
+
+    async def list_branches(self, owner: str, repo: str) -> list[dict]:
+        repo_segment = self._repo_segment(owner, repo)
+        response = await self._get(f"/repos/{repo_segment}/branches", params={"per_page": 30})
+        branches = response.json()
+        if not isinstance(branches, list):
+            return []
+        return [
+            {"name": b.get("name", ""), "sha": (b.get("commit", {}).get("sha", "")[:7]),
+             "protected": b.get("protected", False)}
+            for b in branches
+        ]
+
+    async def get_file_at_commit(self, issue: IssueData, path: str, sha: str) -> SourceFile:
+        encoded_path = quote(path, safe="/")
+        repo_segment = self._repo_segment(issue.owner, issue.repo)
+        response = await self._get(
+            f"/repos/{repo_segment}/contents/{encoded_path}", params={"ref": sha},
+        )
+        data = response.json()
+        if data.get("encoding") != "base64" or not isinstance(data.get("content"), str):
+            raise GitHubFileSkipped(f"Unsupported file response for {path} at {sha}")
+        try:
+            raw = base64.b64decode("".join(data["content"].split()), validate=True)
+        except (ValueError, base64.binascii.Error) as error:
+            raise GitHubFileSkipped(f"Invalid file content for {path}") from error
+        if b"\x00" in raw:
+            raise GitHubFileSkipped(f"Binary file skipped: {path}")
+        return SourceFile(path=path, content=raw.decode("utf-8", errors="replace"))
+
+    def _check_write_mode(self) -> None:
+        from app.config import get_settings
+        if not get_settings().write_mode:
+            raise GitHubError("Write mode is disabled. Set WRITE_MODE=true to enable.")
+
+    async def create_branch(self, owner: str, repo: str, branch: str, base_sha: str) -> dict:
+        self._check_write_mode()
+        repo_segment = self._repo_segment(owner, repo)
+        response = await self._client.post(
+            f"/repos/{repo_segment}/git/refs",
+            json={"ref": f"refs/heads/{branch}", "sha": base_sha},
+        )
+        if response.status_code >= 400:
+            raise GitHubError(f"Failed to create branch: {response.text}")
+        return response.json()
+
+    async def create_or_update_file(
+        self, owner: str, repo: str, path: str, content: str, branch: str, message: str,
+    ) -> dict:
+        self._check_write_mode()
+        repo_segment = self._repo_segment(owner, repo)
+        response = await self._client.put(
+            f"/repos/{repo_segment}/contents/{quote(path, safe='/')}",
+            json={"message": message, "content": base64.b64encode(content.encode()).decode(), "branch": branch},
+        )
+        if response.status_code >= 400:
+            raise GitHubError(f"Failed to write file: {response.text}")
+        return response.json()
+
+    async def create_pull_request(
+        self, owner: str, repo: str, head: str, base: str, title: str, body: str,
+    ) -> dict:
+        self._check_write_mode()
+        repo_segment = self._repo_segment(owner, repo)
+        response = await self._client.post(
+            f"/repos/{repo_segment}/pulls",
+            json={"title": title, "body": body, "head": head, "base": base},
+        )
+        if response.status_code >= 400:
+            raise GitHubError(f"Failed to create PR: {response.text}")
+        data = response.json()
+        return {"pr_url": data.get("html_url", ""), "number": data.get("number", 0)}
 
 
 def select_candidate_paths(paths: list[str], issue: IssueData, limit: int) -> list[str]:
@@ -173,7 +252,6 @@ def select_candidate_paths(paths: list[str], issue: IssueData, limit: int) -> li
         for token in re.findall(r"[a-zA-Z_][a-zA-Z0-9_.-]{2,}", text)
         if token not in STOP_WORDS
     }
-
     scored: list[tuple[int, str]] = []
     for path in paths:
         lowered = path.lower()
@@ -189,6 +267,5 @@ def select_candidate_paths(paths: list[str], issue: IssueData, limit: int) -> li
         if lowered.startswith(("src/", "app/", "lib/", "packages/")):
             score += 2
         scored.append((score, path))
-
     scored.sort(key=lambda item: (-item[0], len(item[1]), item[1]))
     return [path for _, path in scored[:limit]]

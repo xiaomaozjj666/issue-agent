@@ -16,10 +16,13 @@ classifiers = [
   "Topic :: Software Development :: Bug Tracking",
 ]
 dependencies = [
+  "aiosqlite>=0.20,<1",
   "fastapi>=0.128,<1",
   "httpx>=0.28,<1",
+  "jinja2>=3.1,<4",
   "openai>=2.11,<3",
   "pydantic-settings>=2.7,<3",
+  "rich>=13,<14",
   "uvicorn[standard]>=0.34,<1",
 ]
 

@@ -13,7 +13,7 @@ from app.models import (
     SourceFile,
 )
 from app.sessions import Session, SessionManager
-from app.tools import TOOL_DEFINITIONS, ToolExecutor
+from app.tools import get_tool_definitions, ToolExecutor, parse_tool_call
 
 __all__ = [
     "AnalysisReport",
@@ -33,8 +33,9 @@ __all__ = [
     "Session",
     "SessionManager",
     "SourceFile",
-    "TOOL_DEFINITIONS",
+    "get_tool_definitions",
     "ToolExecutor",
+    "parse_tool_call",
     "app",
     "get_settings",
 ]
