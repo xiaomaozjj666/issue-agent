@@ -76,13 +76,17 @@ def print_report(report: AnalysisReport) -> None:
 async def cmd_analyze(url: str, save_patch: str | None = None) -> None:
     agent = IssueAgent(get_settings())
     try:
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        with Progress(
+            SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console
+        ) as progress:
             task = progress.add_task(f"[cyan]Analyzing {url}...", total=None)
             events = []
             async for event in agent.investigate_stream(url):
                 events.append(event)
                 if event.type == "start":
-                    progress.update(task, description=f"[cyan]Fetched issue, exploring {event.data.get('file_count', 0)} files...")
+                    progress.update(
+                        task, description=f"[cyan]Fetched issue, exploring {event.data.get('file_count', 0)} files..."
+                    )
                 elif event.type == "tool_call":
                     name = event.data.get("name", "")
                     args = event.data.get("args", {})
@@ -110,7 +114,9 @@ async def cmd_chat(url: str, save_patch: str | None = None) -> None:
         parse_issue_url(url)
         session = session_manager.create(url)
 
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        with Progress(
+            SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console
+        ) as progress:
             task = progress.add_task(f"[cyan]Analyzing {url}...", total=None)
             async for event in agent.investigate_stream(url, session=session):
                 if event.type == "tool_call":

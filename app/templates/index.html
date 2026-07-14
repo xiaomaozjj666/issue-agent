@@ -117,6 +117,9 @@ async function analyze(){
         try{
           const evt=JSON.parse(data);
           switch(evt.type){
+            case'session':
+              sessionId=evt.data.session_id;
+              break;
             case'start':
               document.getElementById('progress').textContent='Exploring '+evt.data.file_count+' files...';
               break;

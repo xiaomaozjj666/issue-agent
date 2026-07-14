@@ -1,7 +1,7 @@
 [project]
 name = "github-issue-agent"
-version = "0.2.0"
-description = "Read-only GitHub Issue code analysis agent"
+version = "0.3.1"
+description = "GitHub Issue analysis agent with safe, opt-in pull request creation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

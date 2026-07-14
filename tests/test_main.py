@@ -1,14 +1,18 @@
+import json
 import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.agent import IssueAgent, ModelResponseError
 from app.config import Settings
+from app.events import done_event
 from app.github import GitHubError, GitHubRateLimitError
 from app.main import app, get_settings
-from app.models import AnalysisReport
+from app.models import AnalysisReport, ApplyFixRequest, ChatResponse
+from app.sessions import SessionManager
 
 
 def test_health() -> None:
@@ -16,6 +20,13 @@ def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_web_ui_renders() -> None:
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert "GitHub Issue Agent" in response.text
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:
@@ -135,3 +146,30 @@ def test_chat_new_session_returns_report(monkeypatch) -> None:
     assert "session_id" in data
     assert "测试摘要" in data["reply"]
     assert data["report"]["confidence"] == "high"
+
+
+def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+
+    async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
+        yield done_event()
+
+    async def fake_chat(self: IssueAgent, session, message: str):
+        return ChatResponse(session_id=session.session_id, reply=f"reply: {message}")
+
+    monkeypatch.setattr(IssueAgent, "investigate_stream", fake_stream)
+    monkeypatch.setattr(IssueAgent, "chat", fake_chat)
+    client = TestClient(app)
+
+    stream_response = client.post("/stream", json={"issue_url": "https://github.com/acme/widget/issues/1"})
+    session_line = next(line for line in stream_response.text.splitlines() if '"type": "session"' in line)
+    session_id = json.loads(session_line.removeprefix("data: "))["data"]["session_id"]
+    chat_response = client.post("/chat", json={"session_id": session_id, "message": "what changed?"})
+
+    assert chat_response.status_code == 200
+    assert chat_response.json()["reply"] == "reply: what changed?"
+
+
+def test_apply_fix_requires_explicit_confirmation() -> None:
+    assert ApplyFixRequest().confirm is False

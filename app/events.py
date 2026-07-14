@@ -26,6 +26,10 @@ def start_event(issue_title: str = "", file_count: int = 0) -> AgentEvent:
     return AgentEvent(type="start", data={"title": issue_title, "file_count": file_count})
 
 
+def session_event(session_id: str) -> AgentEvent:
+    return AgentEvent(type="session", data={"session_id": session_id})
+
+
 def tool_call_event(name: str, args: dict, iteration: int) -> AgentEvent:
     return AgentEvent(type="tool_call", data={"name": name, "args": args, "iteration": iteration})
 

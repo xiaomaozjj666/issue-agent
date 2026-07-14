@@ -16,7 +16,8 @@ class _FakeToolCall:
         self.id = call_id
         self.type = "function"
         self.function = SimpleNamespace(
-            name=name, arguments=json.dumps(arguments) if isinstance(arguments, dict) else arguments,
+            name=name,
+            arguments=json.dumps(arguments) if isinstance(arguments, dict) else arguments,
         )
 
 
@@ -71,6 +72,7 @@ def make_agent():
             Settings(openai_api_key="test-key", max_agent_iterations=5),
             **kwargs,
         )
+
     return _factory
 
 
@@ -78,12 +80,18 @@ def make_agent():
 def make_issue():
     def _factory(**changes: object) -> IssueData:
         values: dict[str, object] = {
-            "owner": "acme", "repo": "widget", "number": 1,
-            "title": "Parser failure", "body": "A" * 4_000,
-            "labels": ["bug"], "comments": ["B" * 2_000], "default_branch": "main",
+            "owner": "acme",
+            "repo": "widget",
+            "number": 1,
+            "title": "Parser failure",
+            "body": "A" * 4_000,
+            "labels": ["bug"],
+            "comments": ["B" * 2_000],
+            "default_branch": "main",
         }
         values.update(changes)
         return IssueData.model_validate(values)
+
     return _factory
 
 
@@ -91,6 +99,7 @@ def make_issue():
 def fake_tool_call():
     def _factory(name: str, arguments: dict, call_id: str = "call_1") -> _FakeToolCall:
         return _FakeToolCall(name, arguments, call_id)
+
     return _factory
 
 
@@ -98,6 +107,7 @@ def fake_tool_call():
 def fake_response():
     def _factory(content: str | None = None, tool_calls: list | None = None) -> _FakeResponse:
         return _FakeResponse(_FakeMessage(content=content, tool_calls=tool_calls))
+
     return _factory
 
 
@@ -105,4 +115,5 @@ def fake_response():
 def fake_client():
     def _factory(responses: list) -> _FakeClient:
         return _FakeClient(responses)
+
     return _factory

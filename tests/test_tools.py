@@ -10,7 +10,9 @@ _SETTINGS = Settings(openai_api_key="test-key")
 
 
 def _make_issue() -> IssueData:
-    return IssueData(owner="acme", repo="widget", number=1, title="Bug", body="", labels=[], comments=[], default_branch="main")
+    return IssueData(
+        owner="acme", repo="widget", number=1, title="Bug", body="", labels=[], comments=[], default_branch="main"
+    )
 
 
 def _make_github(file_contents: dict[str, str] | None = None) -> MagicMock:
@@ -180,7 +182,9 @@ def test_file_cache_copied_not_shared() -> None:
 
 def test_files_read_copied_not_shared() -> None:
     original = ["src/a.py"]
-    executor = ToolExecutor(MagicMock(), _SETTINGS, _make_issue(), ["src/a.py"], file_cache={"src/a.py": "content"}, files_read=original)
+    executor = ToolExecutor(
+        MagicMock(), _SETTINGS, _make_issue(), ["src/a.py"], file_cache={"src/a.py": "content"}, files_read=original
+    )
     executor.files_read.append("src/b.py")
     assert "src/b.py" not in original
 
@@ -196,15 +200,79 @@ async def test_read_file_rejects_unsafe_and_unknown_paths_before_request() -> No
 
 async def test_read_file_enforces_file_and_total_character_limits() -> None:
     github = _make_github({"a.py": "abcdef", "b.py": "uvwxyz"})
-    executor = ToolExecutor(github, _SETTINGS, _make_issue(), ["a.py", "b.py"], max_files=2, max_file_chars=4, max_total_context_chars=6)
+    executor = ToolExecutor(
+        github, _SETTINGS, _make_issue(), ["a.py", "b.py"], max_files=2, max_file_chars=4, max_total_context_chars=6
+    )
     await executor.execute("read_file", {"path": "a.py"})
     await executor.execute("read_file", {"path": "b.py"})
     assert executor.file_cache == {"a.py": "abcd", "b.py": "uv"}
     assert sum(map(len, executor.file_cache.values())) == 6
 
 
+async def test_read_file_can_fetch_lines_beyond_cached_prefix() -> None:
+    content = "\n".join(f"line {number}" for number in range(1, 51))
+    github = _make_github({"large.py": content})
+    executor = ToolExecutor(
+        github,
+        _SETTINGS,
+        _make_issue(),
+        ["large.py"],
+        max_file_chars=20,
+    )
+
+    result = await executor.execute("read_file", {"path": "large.py", "start_line": 40, "end_line": 42})
+
+    assert "L40: line 40" in result
+    assert "L42: line 42" in result
+    assert executor.line_counts["large.py"] == 50
+
+
+def test_create_pull_request_tool_stores_validated_proposal() -> None:
+    settings = Settings(openai_api_key="test-key", write_mode=True)
+    executor = ToolExecutor(MagicMock(), settings, _make_issue(), ["src/a.py"])
+
+    result = executor._create_pull_request_proposal(
+        "fix/issue-1",
+        "Fix parser",
+        "Fixes the parser failure.",
+        [{"path": "src/a.py", "content": "fixed\n", "message": "fix: parser"}],
+    )
+
+    assert "PR PROPOSAL" in result
+    assert executor.pr_proposal == {
+        "branch": "fix/issue-1",
+        "title": "Fix parser",
+        "body": "Fixes the parser failure.",
+        "changes": [{"path": "src/a.py", "content": "fixed\n", "message": "fix: parser"}],
+    }
+
+
+def test_create_pull_request_tool_rejects_unsafe_paths() -> None:
+    settings = Settings(openai_api_key="test-key", write_mode=True)
+    executor = ToolExecutor(MagicMock(), settings, _make_issue(), [])
+
+    result = executor._create_pull_request_proposal(
+        "fix/issue-1",
+        "Fix parser",
+        "Fixes the parser failure.",
+        [{"path": "../secret", "content": "x", "message": "fix: parser"}],
+    )
+
+    assert result.startswith("Error:")
+    assert executor.pr_proposal is None
+
+
 def test_restored_cache_is_filtered_and_bounded_without_files_read() -> None:
-    executor = ToolExecutor(MagicMock(), _SETTINGS, _make_issue(), ["a.py", "b.py"], file_cache={"a.py": "abcdef", "missing.py": "ignored", "b.py": "uvwxyz"}, max_files=2, max_file_chars=4, max_total_context_chars=6)
+    executor = ToolExecutor(
+        MagicMock(),
+        _SETTINGS,
+        _make_issue(),
+        ["a.py", "b.py"],
+        file_cache={"a.py": "abcdef", "missing.py": "ignored", "b.py": "uvwxyz"},
+        max_files=2,
+        max_file_chars=4,
+        max_total_context_chars=6,
+    )
     assert executor.file_cache == {"a.py": "abcd", "b.py": "uv"}
     assert executor.files_read == ["a.py", "b.py"]
 

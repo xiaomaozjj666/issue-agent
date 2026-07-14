@@ -206,6 +206,8 @@ class ToolExecutor:
             self.files_read.append(path)
             cached_chars += len(self._file_cache[path])
         self._cached_chars = cached_chars
+        self._line_counts = {path: content.count("\n") + 1 for path, content in self._file_cache.items()}
+        self.pr_proposal: dict | None = None
         self.tools_used: list[str] = []
 
     @property
@@ -242,6 +244,7 @@ class ToolExecutor:
 
     async def _read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         path = self._normalize_file_path(path)
+        full_content: str | None = None
         if path not in self._file_cache:
             if len(self.files_read) >= self._max_files:
                 return f"File limit reached ({self._max_files}); use files already read."
@@ -249,11 +252,20 @@ class ToolExecutor:
             if remaining <= 0:
                 return "Source context limit reached; use files already read."
             source = await self._github.get_file(self._issue, path)
+            full_content = source.content
             self._file_cache[path] = source.content[: self._max_file_chars][:remaining]
             self.files_read.append(path)
             self._cached_chars += len(self._file_cache[path])
+            self._line_counts[path] = source.content.count("\n") + 1
 
         content = self._file_cache[path]
+        cached_line_count = content.count("\n") + 1
+        if start_line is not None and (end_line is None or end_line > cached_line_count):
+            if full_content is None:
+                source = await self._github.get_file(self._issue, path)
+                full_content = source.content
+                self._line_counts[path] = source.content.count("\n") + 1
+            content = full_content
         lines = content.splitlines()
 
         if start_line is not None and start_line < 1:
@@ -298,7 +310,7 @@ class ToolExecutor:
         for p in self._tree:
             if not p.startswith(prefix):
                 continue
-            remainder = p[len(prefix):]
+            remainder = p[len(prefix) :]
             if not remainder:
                 continue
             if "/" in remainder:
@@ -367,16 +379,48 @@ class ToolExecutor:
         result = "\n".join(f"L{i}: {line}" for i, line in enumerate(lines, 1))
         return self._limit_tool_context(result)
 
-    def _create_pull_request_proposal(
-        self, branch: str, title: str, body: str, changes: list[dict]
-    ) -> str:
+    def _create_pull_request_proposal(self, branch: str, title: str, body: str, changes: list[dict]) -> str:
         if not self._settings.write_mode:
             return "Error: Write mode is disabled. Set WRITE_MODE=true to enable PR creation."
 
         branch = branch.strip().replace(" ", "-")
-        change_list = "\n".join(
-            f"  - {c.get('path', '?')}: {c.get('message', 'update')}" for c in changes
-        )
+        if (
+            not branch
+            or len(branch) > 120
+            or not re.fullmatch(r"[A-Za-z0-9._/-]+", branch)
+            or branch.startswith(("/", "."))
+            or branch.endswith(("/", "."))
+            or ".." in branch
+        ):
+            return "Error: Invalid branch name"
+        if not title.strip() or not body.strip():
+            return "Error: PR title and body are required"
+        if not changes or len(changes) > 20:
+            return "Error: A PR proposal must contain between 1 and 20 file changes"
+
+        normalized_changes: list[dict] = []
+        seen_paths: set[str] = set()
+        for change in changes:
+            path = str(change.get("path", ""))
+            if not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
+                return f"Error: Invalid change path: {path or '<empty>'}"
+            path = posixpath.normpath(path)
+            content = change.get("content")
+            message = str(change.get("message", "")).strip()
+            if path in seen_paths or not isinstance(content, str) or not message:
+                return f"Error: Invalid or duplicate change for {path}"
+            if len(content.encode("utf-8")) > self._settings.github_max_file_bytes:
+                return f"Error: Proposed content for {path} exceeds the file size limit"
+            seen_paths.add(path)
+            normalized_changes.append({"path": path, "content": content, "message": message})
+
+        self.pr_proposal = {
+            "branch": branch,
+            "title": title.strip(),
+            "body": body.strip(),
+            "changes": normalized_changes,
+        }
+        change_list = "\n".join(f"  - {c['path']}: {c['message']}" for c in normalized_changes)
         return (
             "⚠️  PR PROPOSAL — not yet created:\n\n"
             f"Branch: {branch}\n"
@@ -389,7 +433,9 @@ class ToolExecutor:
 
     @property
     def line_counts(self) -> dict[str, int]:
-        return {path: content.count("\n") + 1 for path, content in self._file_cache.items()}
+        counts = {path: content.count("\n") + 1 for path, content in self._file_cache.items()}
+        counts.update(self._line_counts)
+        return counts
 
 
 def parse_tool_call(tool_call) -> tuple[str, dict]:

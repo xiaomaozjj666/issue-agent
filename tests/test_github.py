@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -56,9 +58,7 @@ def test_select_candidate_paths_prefers_exact_path_tokens() -> None:
         default_branch="main",
     )
 
-    selected = select_candidate_paths(
-        ["src/cache.py", "src/cacheable_widget.py", "src/database.py"], issue, 2
-    )
+    selected = select_candidate_paths(["src/cache.py", "src/cacheable_widget.py", "src/database.py"], issue, 2)
 
     assert selected[0] == "src/cache.py"
 
@@ -83,9 +83,7 @@ async def test_get_file_encodes_path_segments() -> None:
         return httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="})
 
     await github._client.aclose()
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     async with github:
         source = await github.get_file(issue, "src/a file#.py")
 
@@ -104,9 +102,7 @@ async def test_rate_limit_response_raises_dedicated_error() -> None:
         )
 
     await github._client.aclose()
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     async with github:
         with pytest.raises(GitHubRateLimitError):
             await github.get_issue("acme", "widget", 1)
@@ -129,12 +125,39 @@ async def test_get_file_skips_oversized_file() -> None:
         return httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk=", "size": 9999})
 
     await github._client.aclose()
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     async with github:
         with pytest.raises(GitHubFileSkipped):
             await github.get_file(issue, "src/huge.py")
+
+
+async def test_write_flow_uses_branch_sha_and_existing_file_sha() -> None:
+    github = GitHubClient(write_enabled=True)
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "a" * 40}})
+        if request.method == "POST" and request.url.path.endswith("/git/refs"):
+            return httpx.Response(201, json={"ref": "refs/heads/fix/issue-1"})
+        if request.method == "GET" and "/contents/src/a.py" in request.url.path:
+            return httpx.Response(200, json={"sha": "existing-file-sha"})
+        if request.method == "PUT" and "/contents/src/a.py" in request.url.path:
+            return httpx.Response(200, json={"content": {"sha": "new-file-sha"}})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        base_sha = await github.get_branch_sha("acme", "widget", "main")
+        await github.create_branch("acme", "widget", "fix/issue-1", base_sha)
+        await github.create_or_update_file("acme", "widget", "src/a.py", "fixed\n", "fix/issue-1", "fix: parser")
+
+    branch_payload = json.loads(requests[1].content)
+    update_payload = json.loads(requests[-1].content)
+    assert branch_payload["sha"] == "a" * 40
+    assert update_payload["sha"] == "existing-file-sha"
 
 
 def test_select_candidate_paths_filters_stop_words() -> None:

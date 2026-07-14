@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 
 from app.models import AnalysisReport, IssueData
@@ -54,6 +55,10 @@ class MemoryStore:
             return session.pending_pr
         return None
 
+    async def delete_pr_proposal(self, session_id: str) -> None:
+        if session := self._sessions.get(session_id):
+            session.pending_pr = None
+
     def _evict(self) -> None:
         while len(self._sessions) > self._max:
             oldest = next(iter(self._sessions))
@@ -70,6 +75,7 @@ class SqliteStore:
     async def _get_conn(self):
         if self._conn is None:
             from app.db import get_db
+
             self._conn = await get_db(self._path)
         return self._conn
 
@@ -109,8 +115,13 @@ class SqliteStore:
         db = await self._get_conn()
         await db.execute(
             "INSERT OR REPLACE INTO pending_pr (session_id, branch, title, body, changes_json) VALUES (?,?,?,?,?)",
-            (session_id, proposal["branch"], proposal["title"], proposal["body"],
-             json.dumps(proposal.get("changes", []), ensure_ascii=False)),
+            (
+                session_id,
+                proposal["branch"],
+                proposal["title"],
+                proposal["body"],
+                json.dumps(proposal.get("changes", []), ensure_ascii=False),
+            ),
         )
         await db.commit()
 
@@ -120,9 +131,16 @@ class SqliteStore:
         if row is None:
             return None
         return {
-            "branch": row["branch"], "title": row["title"], "body": row["body"],
+            "branch": row["branch"],
+            "title": row["title"],
+            "body": row["body"],
             "changes": json.loads(row["changes_json"]),
         }
+
+    async def delete_pr_proposal(self, session_id: str) -> None:
+        db = await self._get_conn()
+        await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
+        await db.commit()
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -136,15 +154,24 @@ class SessionManager:
             self._store = SqliteStore(db_path)
         else:
             self._store = MemoryStore()
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def create(self, issue_url: str) -> Session:
-        return await self._store.create(issue_url)
+        session = await self._store.create(issue_url)
+        session.lock = self._locks.setdefault(session.session_id, asyncio.Lock())
+        return session
 
     async def get(self, session_id: str) -> Session | None:
-        return await self._store.get(session_id)
+        session = await self._store.get(session_id)
+        if session is not None:
+            session.lock = self._locks.setdefault(session_id, asyncio.Lock())
+            session.pending_pr = await self._store.get_pr_proposal(session_id)
+        return session
 
     async def save(self, session: Session) -> None:
         await self._store.save(session)
+        if session.pending_pr is not None:
+            await self._store.save_pr_proposal(session.session_id, session.pending_pr)
 
     async def save_pr_proposal(self, session_id: str, proposal: dict) -> None:
         await self._store.save_pr_proposal(session_id, proposal)
@@ -152,42 +179,32 @@ class SessionManager:
     async def get_pr_proposal(self, session_id: str) -> dict | None:
         return await self._store.get_pr_proposal(session_id)
 
+    async def delete_pr_proposal(self, session_id: str) -> None:
+        await self._store.delete_pr_proposal(session_id)
+
     async def close(self) -> None:
         if hasattr(self._store, "close"):
             await self._store.close()
 
 
 def _row_to_session(row) -> Session:
-    import json as _json
     s = Session(session_id=row["session_id"], issue_url=row["issue_url"])
     if row["issue_json"]:
-        try:
+        with suppress(Exception):
             s.issue = IssueData.model_validate_json(row["issue_json"])
-        except Exception:
-            pass
     if row["tree_json"]:
-        try:
-            s.tree = _json.loads(row["tree_json"])
-        except Exception:
-            pass
+        with suppress(Exception):
+            s.tree = json.loads(row["tree_json"])
     if row["messages_json"]:
-        try:
-            s.messages = _json.loads(row["messages_json"])
-        except Exception:
-            pass
+        with suppress(Exception):
+            s.messages = json.loads(row["messages_json"])
     if row["file_cache_json"]:
-        try:
-            s.file_cache = _json.loads(row["file_cache_json"])
-        except Exception:
-            pass
+        with suppress(Exception):
+            s.file_cache = json.loads(row["file_cache_json"])
     if row["files_read_json"]:
-        try:
-            s.files_read = _json.loads(row["files_read_json"])
-        except Exception:
-            pass
+        with suppress(Exception):
+            s.files_read = json.loads(row["files_read_json"])
     if row["report_json"]:
-        try:
+        with suppress(Exception):
             s.report = AnalysisReport.model_validate_json(row["report_json"])
-        except Exception:
-            pass
     return s

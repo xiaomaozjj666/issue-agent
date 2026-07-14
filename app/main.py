@@ -9,7 +9,7 @@ from openai import APIError
 from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
 from app.config import get_settings
-from app.events import error_event
+from app.events import error_event, session_event
 from app.github import GitHubClient, GitHubError, GitHubRateLimitError
 from app.models import (
     AnalysisReport,
@@ -23,7 +23,7 @@ from app.models import (
 from app.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="GitHub Issue Agent", version="0.3.0")
+app = FastAPI(title="GitHub Issue Agent", version="0.3.1")
 app.add_middleware(AuthMiddleware)
 
 _session_manager: SessionManager | None = None
@@ -81,12 +81,18 @@ async def stream_analysis(request: StreamRequest) -> StreamingResponse:
                 if session is None:
                     yield error_event("Session not found").to_sse()
                     return
-                async for event in agent.investigate_stream("", session=session):
-                    yield event.to_sse()
-                await session_mgr.save(session)
+                yield session_event(session.session_id).to_sse()
+                async with session.lock:
+                    async for event in agent.investigate_stream(session.issue_url, session=session):
+                        yield event.to_sse()
+                    await session_mgr.save(session)
             else:
-                async for event in agent.investigate_stream(str(request.issue_url)):
-                    yield event.to_sse()
+                session = await session_mgr.create(str(request.issue_url))
+                yield session_event(session.session_id).to_sse()
+                async with session.lock:
+                    async for event in agent.investigate_stream(session.issue_url, session=session):
+                        yield event.to_sse()
+                    await session_mgr.save(session)
         except Exception as exc:
             yield error_event(str(exc)).to_sse()
         finally:
@@ -167,60 +173,79 @@ async def apply_fix(request: ApplyFixRequest, session_id: str) -> CreatePRRespon
     if not request.confirm:
         raise HTTPException(status_code=400, detail="Set confirm=true to create the PR")
 
-    async with GitHubClient(settings.github_token) as github:
-        branch = proposal["branch"]
-        base = session.issue.default_branch if session.issue else "main"
+    if session.issue is None:
+        raise HTTPException(status_code=409, detail="Session investigation is incomplete")
 
-        # Create branch
-        result = await github.create_branch(
-            session.issue.owner, session.issue.repo, branch,
-            proposal.get("base_sha", base),
-        )
+    try:
+        async with GitHubClient(settings.github_token, write_enabled=True) as github:
+            branch = proposal["branch"]
+            base = session.issue.default_branch
+            base_sha = await github.get_branch_sha(session.issue.owner, session.issue.repo, base)
 
-        # Apply each file change
-        for change in proposal.get("changes", []):
-            await github.create_or_update_file(
-                session.issue.owner, session.issue.repo,
-                change["path"], change["content"], branch, change.get("message", "fix: apply patch"),
+            await github.create_branch(session.issue.owner, session.issue.repo, branch, base_sha)
+
+            for change in proposal.get("changes", []):
+                await github.create_or_update_file(
+                    session.issue.owner,
+                    session.issue.repo,
+                    change["path"],
+                    change["content"],
+                    branch,
+                    change.get("message", "fix: apply patch"),
+                )
+
+            pr = await github.create_pull_request(
+                session.issue.owner,
+                session.issue.repo,
+                branch,
+                base,
+                proposal["title"],
+                proposal["body"],
             )
-
-        # Create PR
-        pr = await github.create_pull_request(
-            session.issue.owner, session.issue.repo,
-            branch, base, proposal["title"], proposal["body"],
-        )
-        return CreatePRResponse(pr_url=pr["pr_url"], branch=branch)
+            await session_mgr.delete_pr_proposal(session_id)
+            return CreatePRResponse(pr_url=pr["pr_url"], branch=branch)
+    except GitHubError as error:
+        logger.exception("Failed to apply fix for session %s", session_id)
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     if templates is None:
         raise HTTPException(status_code=404, detail="Web UI templates not found")
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 
 def format_report_text(report: AnalysisReport) -> str:
     lines = [
-        f"Summary: {report.summary}", "",
-        f"Root Cause: {report.root_cause}", "",
+        f"Summary: {report.summary}",
+        "",
+        f"Root Cause: {report.root_cause}",
+        "",
         f"Confidence: {report.confidence}",
     ]
     if report.evidence:
-        lines.append(""); lines.append("Code Evidence:")
+        lines.append("")
+        lines.append("Code Evidence:")
         for ev in report.evidence:
             lines.append(f"  - {ev.path} {ev.lines or ''}: {ev.reason or ''}")
     if report.proposed_changes:
-        lines.append(""); lines.append("Proposed Changes:")
+        lines.append("")
+        lines.append("Proposed Changes:")
         for i, change in enumerate(report.proposed_changes, 1):
             lines.append(f"  {i}. {change}")
     if report.patch:
-        lines.append(""); lines.append("Patch:"); lines.append(report.patch)
+        lines.append("")
+        lines.append("Patch:")
+        lines.append(report.patch)
     if report.tests:
-        lines.append(""); lines.append("Suggested Tests:")
+        lines.append("")
+        lines.append("Suggested Tests:")
         for i, test in enumerate(report.tests, 1):
             lines.append(f"  {i}. {test}")
     if report.risks:
-        lines.append(""); lines.append("Risks:")
+        lines.append("")
+        lines.append("Risks:")
         for risk in report.risks:
             lines.append(f"  - {risk}")
     return "\n".join(lines)

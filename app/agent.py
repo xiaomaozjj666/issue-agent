@@ -10,7 +10,6 @@ from app.config import Settings
 from app.events import (
     AgentEvent,
     done_event,
-    error_event,
     report_event,
     start_event,
     thinking_event,
@@ -115,6 +114,8 @@ class IssueAgent:
                     logger.info("Tool call %d: %s(%s)", iteration + 1, name, args)
                     yield tool_call_event(name, args, iteration + 1)
                     result = await executor.execute(name, args)
+                    if session is not None and executor.pr_proposal is not None:
+                        session.pending_pr = executor.pr_proposal
                     yield tool_result_event(name, result)
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
             else:
@@ -132,17 +133,13 @@ class IssueAgent:
 
     # ── non‑streaming wrappers (backward‑compatible) ─────────────────
 
-    async def investigate(
-        self, issue_url: str, *, session: Session | None = None
-    ) -> AnalysisReport:
+    async def investigate(self, issue_url: str, *, session: Session | None = None) -> AnalysisReport:
         if session is not None:
             async with session.lock:
                 return await self._investigate_from_stream(issue_url, session=session)
         return await self._investigate_from_stream(issue_url)
 
-    async def _investigate_from_stream(
-        self, issue_url: str, *, session: Session | None = None
-    ) -> AnalysisReport:
+    async def _investigate_from_stream(self, issue_url: str, *, session: Session | None = None) -> AnalysisReport:
         report: AnalysisReport | None = None
         async for event in self.investigate_stream(issue_url, session=session):
             if event.type == "report" and event.data:
@@ -167,8 +164,11 @@ class IssueAgent:
             max_file_bytes=self.settings.github_max_file_bytes,
         ) as github:
             executor = self._build_executor(
-                github, session.issue, session.tree,
-                file_cache=session.file_cache, files_read=session.files_read,
+                github,
+                session.issue,
+                session.tree,
+                file_cache=session.file_cache,
+                files_read=session.files_read,
             )
 
             investigation_context = _build_investigation_context(session)
@@ -181,6 +181,8 @@ class IssueAgent:
 
             for _ in range(self.settings.max_agent_iterations):
                 response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
+                if not response.choices:
+                    raise ModelResponseError("The model returned no choices")
                 msg = response.choices[0].message
                 serialized = _serialize_message(msg)
                 messages.append(serialized)
@@ -202,6 +204,8 @@ class IssueAgent:
                 for tc in msg.tool_calls:
                     name, args = parse_tool_call(tc)
                     result = await executor.execute(name, args)
+                    if executor.pr_proposal is not None:
+                        session.pending_pr = executor.pr_proposal
                     tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": result}
                     messages.append(tool_msg)
                     session.messages.append(tool_msg)
@@ -251,14 +255,21 @@ class IssueAgent:
         report.evidence = [
             item
             for item in report.evidence
-            if item.path in read_paths
-            and self._has_valid_lines(item.lines, line_counts.get(item.path, 0))
+            if item.path in read_paths and self._has_valid_lines(item.lines, line_counts.get(item.path, 0))
         ]
         report.files_examined = executor.files_read
         report.evidence_audit.valid_references = len(report.evidence)
-        report.evidence_audit.root_cause_supported = bool(report.evidence)
+        report.evidence_audit.root_cause_supported = bool(report.evidence) and all(
+            bool(item.reason and item.reason.strip()) for item in report.evidence
+        )
 
-        if not report.evidence:
+        reference_count = len(report.evidence)
+        confidence_rank = {"low": 0, "medium": 1, "high": 2}
+        maximum_confidence = "low" if reference_count == 0 else "medium" if reference_count < 3 else "high"
+        if confidence_rank[report.confidence] > confidence_rank[maximum_confidence]:
+            report.confidence = maximum_confidence
+
+        if not report.evidence_audit.root_cause_supported:
             report.confidence = "low"
             warning = t("evidence_unsupported")
             if warning not in report.risks:
@@ -266,7 +277,9 @@ class IssueAgent:
 
         logger.info(
             "Analysis complete: confidence=%s, evidence=%d, files=%d",
-            report.confidence, report.evidence_audit.valid_references, len(report.files_examined),
+            report.confidence,
+            report.evidence_audit.valid_references,
+            len(report.files_examined),
         )
         return report
 
@@ -277,15 +290,19 @@ class IssueAgent:
         tree_preview = candidate_paths if candidate_paths else tree[: self.settings.max_planning_paths]
         issue_context = json.dumps(
             {"title": issue.title, "body": issue.body[:5000], "labels": issue.labels, "comments": issue.comments[:10]},
-            ensure_ascii=False, indent=2,
+            ensure_ascii=False,
+            indent=2,
         )
         return [
             {"role": "system", "content": get_system_prompt()},
-            {"role": "user", "content": (
-                f"Investigate this GitHub issue:\n{issue_context}\n\n"
-                f"Repository file tree ({len(tree)} files total, showing {len(tree_preview)} most relevant):\n"
-                + "\n".join(tree_preview)
-            )},
+            {
+                "role": "user",
+                "content": (
+                    f"Investigate this GitHub issue:\n{issue_context}\n\n"
+                    f"Repository file tree ({len(tree)} files total, showing {len(tree_preview)} most relevant):\n"
+                    + "\n".join(tree_preview)
+                ),
+            },
         ]
 
     @staticmethod
@@ -314,7 +331,10 @@ class IssueAgent:
 
     def _build_executor(self, github: GitHubClient, issue: IssueData, tree: list[str], **kwargs) -> ToolExecutor:
         return ToolExecutor(
-            github, self.settings, issue, tree,
+            github,
+            self.settings,
+            issue,
+            tree,
             max_files=self.settings.max_candidate_files,
             max_file_chars=self.settings.max_file_chars,
             max_total_context_chars=self.settings.max_total_context_chars,
@@ -324,11 +344,16 @@ class IssueAgent:
 
 # ── module‑level helpers ────────────────────────────────────────────
 
+
 def _serialize_message(message) -> dict:
     msg: dict = {"role": "assistant", "content": message.content or ""}
     if message.tool_calls:
         msg["tool_calls"] = [
-            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+            }
             for tc in message.tool_calls
         ]
     return msg
@@ -357,7 +382,8 @@ def _trim_session_messages(messages: list[dict], max_chars: int, max_messages: i
             if retained:
                 break
             turn = [
-                message for message in turn
+                message
+                for message in turn
                 if message.get("role") == "user"
                 or (message.get("role") == "assistant" and not message.get("tool_calls"))
             ][-max_messages:]

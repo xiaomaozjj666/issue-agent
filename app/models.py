@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 ConfidenceLevel = Literal["low", "medium", "high"]
 
@@ -13,9 +13,15 @@ class AnalyzeRequest(BaseModel):
 
 
 class StreamRequest(BaseModel):
-    issue_url: HttpUrl
+    issue_url: HttpUrl | None = None
     session_id: str | None = None
     message: str | None = None
+
+    @model_validator(mode="after")
+    def _require_issue_or_session(self) -> "StreamRequest":
+        if self.issue_url is None and self.session_id is None:
+            raise ValueError("issue_url or session_id is required")
+        return self
 
 
 class CodeReference(BaseModel):
@@ -94,4 +100,4 @@ class CreatePRResponse(BaseModel):
 
 
 class ApplyFixRequest(BaseModel):
-    confirm: bool = Field(default=True)
+    confirm: bool = Field(default=False)

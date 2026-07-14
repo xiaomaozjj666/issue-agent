@@ -40,6 +40,27 @@ async def test_get_returns_none_for_unknown_id(manager) -> None:
     assert await manager.get("nonexistent") is None
 
 
+async def test_sqlite_persists_proposal_and_reuses_session_lock(tmp_path) -> None:
+    db_path = str(tmp_path / "sessions.db")
+    manager = SessionManager(db_path=db_path)
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.pending_pr = {
+        "branch": "fix/issue-1",
+        "title": "Fix",
+        "body": "Body",
+        "changes": [],
+    }
+    await manager.save(session)
+
+    first = await manager.get(session.session_id)
+    second = await manager.get(session.session_id)
+
+    assert first is not None and second is not None
+    assert first.lock is second.lock
+    assert first.pending_pr == session.pending_pr
+    await manager.close()
+
+
 def test_session_dataclass_defaults() -> None:
     session = Session(session_id="abc123", issue_url="https://github.com/a/b/issues/1")
     assert session.issue is None

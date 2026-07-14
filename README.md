@@ -4,8 +4,9 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A read-only FastAPI agent that fetches a GitHub Issue, selects relevant repository source files,
-and asks an OpenAI-compatible model for a structured root-cause and fix report.
+A read-only-by-default FastAPI agent that fetches a GitHub Issue, selects relevant repository source
+files, and asks an OpenAI-compatible model for a structured root-cause and fix report. An opt-in write
+mode can prepare pull request proposals, which require a separate explicit confirmation before creation.
 
 Unlike a one-shot repository prompt, analysis uses a bounded tool-calling loop. The model explores a
 real repository path index, reads selected source excerpts, and then produces a line-grounded report.
@@ -23,13 +24,13 @@ Every requested file is normalized and validated against the repository tree bef
 ## Safety model
 
 - Only accepts `https://github.com/{owner}/{repo}/issues/{number}` URLs.
-- Uses read-only GitHub REST API endpoints and never executes repository code.
-- Does not modify files, create branches, or post comments.
+- Uses read-only GitHub REST API endpoints by default and never executes repository code.
+- Repository writes require `WRITE_MODE=true`, a validated proposal, and a separate `confirm=true` request.
 - Treats Issue text and repository content as untrusted prompt data.
 - Limits candidate files and total model context.
 - Limits model output with `MAX_OUTPUT_TOKENS` (4,000 by default).
 - Bounds the planning path index and planning output independently.
-- Serializes requests within each in-memory session and bounds retained source and chat context.
+- Serializes requests within each session and bounds retained source and chat context.
 - Supplies numbered source lines and removes evidence with unknown paths, malformed ranges, or lines
   outside the exact source excerpt given to the model.
 - Returns an evidence audit and forces confidence to `low` when no valid source reference supports the
@@ -73,7 +74,8 @@ OPENAI_MODEL=gpt-4.1-mini
 ```
 
 Set `GITHUB_TOKEN` for private repositories and to avoid GitHub's low anonymous rate limit. Use a
-fine-grained token with read-only access to repository contents and issues.
+fine-grained token with read-only access to repository contents and issues. Only grant contents and
+pull-request write permissions when enabling `WRITE_MODE`.
 
 ### Configuration
 
@@ -93,6 +95,10 @@ fine-grained token with read-only access to repository contents and issues.
 | `MAX_OUTPUT_TOKENS` | `4000` | Max tokens per model response |
 | `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
 | `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
+| `LANGUAGE` | `zh` | Response language (`zh` or `en`) |
+| `API_KEY` | *(optional)* | Require this value in the `X-API-Key` request header |
+| `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |
+| `SESSION_DB_PATH` | `:memory:` | SQLite path for persistent sessions |
 
 ### CLI Usage
 
@@ -164,8 +170,8 @@ pytest -v
 
 - The deterministic fallback file selection is filename-based because GitHub's code search API has stricter
   authentication and indexing constraints.
-- Sessions are stored in one process. Deployments with multiple workers need shared external session
-  storage (Redis, etc.) to continue a conversation reliably across workers.
+- SQLite persists sessions across restarts, but process-local session locks do not coordinate multiple
+  application workers. Multi-worker deployments should use an external transactional session store.
 
 ## License
 

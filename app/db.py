@@ -1,6 +1,5 @@
 """Async SQLite database layer for session persistence."""
 
-import json
 import logging
 from pathlib import Path
 

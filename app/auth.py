@@ -23,6 +23,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Missing X-API-Key header"})
 
         import hmac
+
         if not hmac.compare_digest(api_key, settings.api_key):
             return JSONResponse(status_code=403, content={"detail": "Invalid API key"})
 

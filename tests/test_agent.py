@@ -7,11 +7,10 @@ import pytest
 
 from app.agent import IssueAgent, ModelResponseError, _serialize_message, _trim_session_messages
 from app.models import ChatResponse, SourceFile
+from app.models import IssueData as _IssueData
 from app.sessions import Session
 from app.tools import ToolExecutor
 
-
-from app.models import IssueData as _IssueData
 
 class _MockGitHub:
     def __init__(self, *args, **kwargs):
@@ -19,10 +18,18 @@ class _MockGitHub:
         self.get_file_history = AsyncMock(return_value=[])
         self.list_branches = AsyncMock(return_value=[])
         self.get_file_at_commit = AsyncMock()
-        self.get_issue = AsyncMock(return_value=_IssueData(
-            owner="acme", repo="widget", number=1, title="Test Bug", body="test",
-            labels=["bug"], comments=[], default_branch="main",
-        ))
+        self.get_issue = AsyncMock(
+            return_value=_IssueData(
+                owner="acme",
+                repo="widget",
+                number=1,
+                title="Test Bug",
+                body="test",
+                labels=["bug"],
+                comments=[],
+                default_branch="main",
+            )
+        )
         self.get_tree = AsyncMock(return_value=["src/parser.py", "README.md"])
 
     async def __aenter__(self):
@@ -38,8 +45,14 @@ class _MockGitHub:
 @pytest.mark.parametrize(
     ("lines", "line_count", "expected"),
     [
-        (None, 3, True), ("L1", 3, True), ("L2-L3", 3, True), ("L2-3", 3, True),
-        ("2-3", 3, False), ("L0", 3, False), ("L3-L2", 3, False), ("L1-L4", 3, False),
+        (None, 3, True),
+        ("L1", 3, True),
+        ("L2-L3", 3, True),
+        ("L2-3", 3, True),
+        ("2-3", 3, False),
+        ("L0", 3, False),
+        ("L3-L2", 3, False),
+        ("L1-L4", 3, False),
     ],
 )
 def test_has_valid_lines(lines: str | None, line_count: int, expected: bool) -> None:
@@ -57,7 +70,9 @@ def test_serialize_message_none_content() -> None:
 
 
 def test_serialize_message_with_tool_calls() -> None:
-    tc = SimpleNamespace(id="call_1", type="function", function=SimpleNamespace(name="read_file", arguments='{"path": "src/a.py"}'))
+    tc = SimpleNamespace(
+        id="call_1", type="function", function=SimpleNamespace(name="read_file", arguments='{"path": "src/a.py"}')
+    )
     msg = SimpleNamespace(content="thinking", tool_calls=[tc])
     result = _serialize_message(msg)
     assert result["role"] == "assistant"
@@ -66,14 +81,23 @@ def test_serialize_message_with_tool_calls() -> None:
     assert result["tool_calls"][0]["function"]["name"] == "read_file"
 
 
-async def test_investigate_stream_yields_events(make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue) -> None:
+async def test_investigate_stream_yields_events(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     tc = fake_tool_call("read_file", {"path": "src/parser.py"})
-    report_json = json.dumps({
-        "summary": "Parser bug", "root_cause": "Fails at src/parser.py L1", "confidence": "high",
-        "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
-        "proposed_changes": ["Fix"], "patch": None, "tests": [], "risks": [],
-    })
+    report_json = json.dumps(
+        {
+            "summary": "Parser bug",
+            "root_cause": "Fails at src/parser.py L1",
+            "confidence": "high",
+            "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
+            "proposed_changes": ["Fix"],
+            "patch": None,
+            "tests": [],
+            "risks": [],
+        }
+    )
     responses = [
         fake_response(tool_calls=[tc]),
         fake_response(content="Done"),
@@ -93,14 +117,23 @@ async def test_investigate_stream_yields_events(make_agent, fake_client, fake_re
     assert "done" in types
 
 
-async def test_investigate_returns_report(make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue) -> None:
+async def test_investigate_returns_report(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     tc = fake_tool_call("read_file", {"path": "src/parser.py"})
-    report_json = json.dumps({
-        "summary": "Parser bug", "root_cause": "Fails at src/parser.py L1", "confidence": "high",
-        "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
-        "proposed_changes": ["Fix"], "patch": None, "tests": [], "risks": [],
-    })
+    report_json = json.dumps(
+        {
+            "summary": "Parser bug",
+            "root_cause": "Fails at src/parser.py L1",
+            "confidence": "high",
+            "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
+            "proposed_changes": ["Fix"],
+            "patch": None,
+            "tests": [],
+            "risks": [],
+        }
+    )
     responses = [
         fake_response(tool_calls=[tc]),
         fake_response(content="Done"),
@@ -108,36 +141,57 @@ async def test_investigate_returns_report(make_agent, fake_client, fake_response
     ]
     agent = make_agent(client=fake_client(responses))
     report = await agent.investigate("https://github.com/acme/widget/issues/1")
-    assert report.confidence == "high"
+    assert report.confidence == "medium"
     assert report.summary == "Parser bug"
 
 
 async def test_generate_report_keeps_valid_evidence(make_agent, fake_client, fake_response, make_issue) -> None:
-    report_json = json.dumps({
-        "summary": "Parser bug", "root_cause": "Parser fails at src/parser.py L1", "confidence": "high",
-        "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
-        "proposed_changes": ["Fix parser"], "patch": None, "tests": ["Add regression test"], "risks": [],
-    })
+    report_json = json.dumps(
+        {
+            "summary": "Parser bug",
+            "root_cause": "Parser fails at src/parser.py L1",
+            "confidence": "high",
+            "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
+            "proposed_changes": ["Fix parser"],
+            "patch": None,
+            "tests": ["Add regression test"],
+            "risks": [],
+        }
+    )
     agent = make_agent(client=fake_client([fake_response(content=report_json)]))
     from app.config import Settings
+
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), ["src/parser.py"])
     executor._file_cache["src/parser.py"] = "parse(value)"
     executor.files_read.append("src/parser.py")
     report = await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
-    assert report.confidence == "high"
+    assert report.confidence == "medium"
     assert len(report.evidence) == 1
     assert report.evidence[0].path == "src/parser.py"
     assert report.evidence_audit.valid_references == 1
 
 
-async def test_generate_report_filters_unread_and_invalid_evidence(make_agent, fake_client, fake_response, make_issue) -> None:
-    report_json = json.dumps({
-        "summary": "Bug", "root_cause": "Parser fails", "confidence": "high",
-        "evidence": [{"path": "src/parser.py", "lines": "L99", "reason": "out of range"}, {"path": "src/unread.py", "lines": "L1", "reason": "never read"}],
-        "proposed_changes": ["Fix it"], "patch": None, "tests": [], "risks": [],
-    })
+async def test_generate_report_filters_unread_and_invalid_evidence(
+    make_agent, fake_client, fake_response, make_issue
+) -> None:
+    report_json = json.dumps(
+        {
+            "summary": "Bug",
+            "root_cause": "Parser fails",
+            "confidence": "high",
+            "evidence": [
+                {"path": "src/parser.py", "lines": "L99", "reason": "out of range"},
+                {"path": "src/unread.py", "lines": "L1", "reason": "never read"},
+            ],
+            "proposed_changes": ["Fix it"],
+            "patch": None,
+            "tests": [],
+            "risks": [],
+        }
+    )
     agent = make_agent(client=fake_client([fake_response(content=report_json)]))
     from app.config import Settings
+
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), ["src/parser.py"])
     executor._file_cache["src/parser.py"] = "parse(value)"
     executor.files_read.append("src/parser.py")
@@ -148,9 +202,21 @@ async def test_generate_report_filters_unread_and_invalid_evidence(make_agent, f
 
 
 async def test_generate_report_raises_on_invalid_confidence(make_agent, fake_client, fake_response, make_issue) -> None:
-    report_json = json.dumps({"summary": "Bug", "root_cause": "Fails", "confidence": "very-high", "evidence": [], "proposed_changes": [], "patch": None, "tests": [], "risks": []})
+    report_json = json.dumps(
+        {
+            "summary": "Bug",
+            "root_cause": "Fails",
+            "confidence": "very-high",
+            "evidence": [],
+            "proposed_changes": [],
+            "patch": None,
+            "tests": [],
+            "risks": [],
+        }
+    )
     agent = make_agent(client=fake_client([fake_response(content=report_json)]))
     from app.config import Settings
+
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), [])
     with pytest.raises(ModelResponseError):
         await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
@@ -159,12 +225,15 @@ async def test_generate_report_raises_on_invalid_confidence(make_agent, fake_cli
 async def test_generate_report_raises_on_empty_response(make_agent, fake_client, fake_response, make_issue) -> None:
     agent = make_agent(client=fake_client([fake_response(content=None)]))
     from app.config import Settings
+
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), [])
     with pytest.raises(ModelResponseError):
         await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
 
 
-async def test_chat_returns_reply_without_tools(make_agent, fake_client, fake_response, monkeypatch, make_issue) -> None:
+async def test_chat_returns_reply_without_tools(
+    make_agent, fake_client, fake_response, monkeypatch, make_issue
+) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     agent = make_agent(client=fake_client([fake_response(content="根因是 parser 缺少异常处理")]))
     session = Session(session_id="s1", issue_url="https://github.com/a/b/issues/1")
@@ -177,7 +246,9 @@ async def test_chat_returns_reply_without_tools(make_agent, fake_client, fake_re
     assert result.tools_used == []
 
 
-async def test_chat_uses_tools_and_returns_reply(make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue) -> None:
+async def test_chat_uses_tools_and_returns_reply(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     tc = fake_tool_call("read_file", {"path": "src/parser.py"})
     responses = [fake_response(tool_calls=[tc]), fake_response(content="parser 代码在第 1 行")]
@@ -191,7 +262,9 @@ async def test_chat_uses_tools_and_returns_reply(make_agent, fake_client, fake_r
     assert result.reply == "parser 代码在第 1 行"
 
 
-async def test_chat_returns_depth_limit_message(make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue) -> None:
+async def test_chat_returns_depth_limit_message(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     tc = fake_tool_call("list_directory", {"path": ""})
     responses = [fake_response(tool_calls=[tc]) for _ in range(6)]
@@ -210,7 +283,9 @@ async def test_chat_raises_on_uninitialized_session(make_agent) -> None:
         await agent.chat(session, "hello")
 
 
-async def test_investigate_populates_session(make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue) -> None:
+async def test_investigate_populates_session(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
     issue = make_issue()
 
     class _MockGitHubWithIssue(_MockGitHub):
@@ -221,11 +296,18 @@ async def test_investigate_populates_session(make_agent, fake_client, fake_respo
 
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHubWithIssue)
     tc = fake_tool_call("read_file", {"path": "src/parser.py"})
-    report_json = json.dumps({
-        "summary": "Parser bug", "root_cause": "Parser fails at src/parser.py L1", "confidence": "high",
-        "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
-        "proposed_changes": ["Fix parser"], "patch": "--- a/src/parser.py\n+++ b/src/parser.py\n", "tests": ["Add test"], "risks": [],
-    })
+    report_json = json.dumps(
+        {
+            "summary": "Parser bug",
+            "root_cause": "Parser fails at src/parser.py L1",
+            "confidence": "high",
+            "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
+            "proposed_changes": ["Fix parser"],
+            "patch": "--- a/src/parser.py\n+++ b/src/parser.py\n",
+            "tests": ["Add test"],
+            "risks": [],
+        }
+    )
     responses = [fake_response(tool_calls=[tc]), fake_response(content="Done"), fake_response(content=report_json)]
     agent = make_agent(client=fake_client(responses))
     session = Session(session_id="inv1", issue_url="https://github.com/acme/widget/issues/1")
@@ -266,8 +348,10 @@ def test_build_initial_messages_includes_issue_and_tree(make_agent, make_issue) 
 
 def test_trim_session_messages_keeps_latest_complete_turn() -> None:
     messages = [
-        {"role": "user", "content": "old question"}, {"role": "assistant", "content": "old answer"},
-        {"role": "user", "content": "new question"}, {"role": "assistant", "content": "new answer"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "new question"},
+        {"role": "assistant", "content": "new answer"},
     ]
     _trim_session_messages(messages, max_chars=22)
     assert messages == [{"role": "user", "content": "new question"}, {"role": "assistant", "content": "new answer"}]
@@ -276,7 +360,11 @@ def test_trim_session_messages_keeps_latest_complete_turn() -> None:
 def test_trim_session_messages_compacts_oversized_tool_turn() -> None:
     messages = [
         {"role": "user", "content": "inspect"},
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "function": {"name": "read_file", "arguments": "x" * 100}}]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_1", "function": {"name": "read_file", "arguments": "x" * 100}}],
+        },
         {"role": "tool", "tool_call_id": "call_1", "content": "source" * 20},
         {"role": "assistant", "content": "answer"},
     ]
