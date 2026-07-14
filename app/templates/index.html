@@ -376,7 +376,7 @@ async function restoreSession(id,recordHistory=true){
     sessionId=session.session_id;
     report=session.report;
     resetWorkspace(false);
-    document.getElementById('issueUrl').value=session.issue_url;
+    document.getElementById('issueUrl').value='';
     document.querySelector('.conversation-label').textContent=session.owner&&session.repo?
       session.owner+'/'+session.repo+(session.issue_number?' #'+session.issue_number:''):'Investigation thread';
     session.messages.forEach(function(message){
@@ -547,6 +547,7 @@ async function analyze(){
           switch(evt.type){
             case'session':
               sessionId=evt.data.session_id;
+              document.getElementById('issueUrl').value='';
               updateBackButton();
               loadSessions();
               break;
