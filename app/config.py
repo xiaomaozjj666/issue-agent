@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     language: str = Field(default="zh", pattern=r"^(zh|en)$")
     api_key: str | None = None
     write_mode: bool = False
-    session_db_path: str = ":memory:"
+    session_db_path: str = "data/sessions.db"
 
 
 @lru_cache

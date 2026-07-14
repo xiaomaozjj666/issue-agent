@@ -6,6 +6,7 @@ import logging
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from app.models import AnalysisReport, IssueData
 
@@ -23,6 +24,12 @@ class Session:
     files_read: list[str] = field(default_factory=list)
     report: AnalysisReport | None = None
     pending_pr: dict | None = None
+    display_title: str | None = None
+    status: str = "queued"
+    error_message: str | None = None
+    archived_at: str | None = None
+    created_at: str = field(default_factory=lambda: _now())
+    updated_at: str = field(default_factory=lambda: _now())
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
 
@@ -44,7 +51,7 @@ class MemoryStore:
         return self._sessions.get(session_id)
 
     async def save(self, session: Session) -> None:
-        pass  # already in memory
+        session.updated_at = _now()
 
     async def save_pr_proposal(self, session_id: str, proposal: dict) -> None:
         if session := self._sessions.get(session_id):
@@ -58,6 +65,19 @@ class MemoryStore:
     async def delete_pr_proposal(self, session_id: str) -> None:
         if session := self._sessions.get(session_id):
             session.pending_pr = None
+
+    async def list(self, *, archived: bool, query: str, limit: int) -> list[Session]:
+        normalized_query = query.casefold().strip()
+        sessions = [
+            session
+            for session in self._sessions.values()
+            if (session.archived_at is not None) == archived
+            and (not normalized_query or normalized_query in _session_search_text(session))
+        ]
+        return sorted(sessions, key=lambda session: session.updated_at, reverse=True)[:limit]
+
+    async def delete(self, session_id: str) -> bool:
+        return self._sessions.pop(session_id, None) is not None
 
     def _evict(self) -> None:
         while len(self._sessions) > self._max:
@@ -81,10 +101,14 @@ class SqliteStore:
 
     async def create(self, issue_url: str) -> Session:
         sid = uuid.uuid4().hex[:12]
+        now = _now()
         db = await self._get_conn()
-        await db.execute("INSERT INTO sessions (session_id, issue_url) VALUES (?, ?)", (sid, issue_url))
+        await db.execute(
+            "INSERT INTO sessions (session_id, issue_url, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (sid, issue_url, now, now),
+        )
         await db.commit()
-        return Session(session_id=sid, issue_url=issue_url)
+        return Session(session_id=sid, issue_url=issue_url, created_at=now, updated_at=now)
 
     async def get(self, session_id: str) -> Session | None:
         db = await self._get_conn()
@@ -95,9 +119,11 @@ class SqliteStore:
 
     async def save(self, session: Session) -> None:
         db = await self._get_conn()
+        session.updated_at = _now()
         await db.execute(
             """UPDATE sessions SET issue_json=?, tree_json=?, messages_json=?, file_cache_json=?,
-               files_read_json=?, report_json=?, updated_at=datetime('now')
+               files_read_json=?, report_json=?, display_title=?, status=?, error_message=?,
+               archived_at=?, updated_at=?
                WHERE session_id=?""",
             (
                 session.issue.model_dump_json() if session.issue else None,
@@ -106,6 +132,11 @@ class SqliteStore:
                 json.dumps(session.file_cache, ensure_ascii=False),
                 json.dumps(session.files_read, ensure_ascii=False),
                 session.report.model_dump_json() if session.report else None,
+                session.display_title,
+                session.status,
+                session.error_message,
+                session.archived_at,
+                session.updated_at,
                 session.session_id,
             ),
         )
@@ -141,6 +172,32 @@ class SqliteStore:
         db = await self._get_conn()
         await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
         await db.commit()
+
+    async def list(self, *, archived: bool, query: str, limit: int) -> list[Session]:
+        db = await self._get_conn()
+        clauses: list[str] = []
+        params: list[object] = []
+        clauses.append("archived_at IS NOT NULL" if archived else "archived_at IS NULL")
+        if query.strip():
+            pattern = f"%{query.strip()}%"
+            clauses.append("(issue_url LIKE ? OR display_title LIKE ? OR issue_json LIKE ?)")
+            params.extend([pattern, pattern, pattern])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = await (
+            await db.execute(
+                f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ?",
+                params,
+            )
+        ).fetchall()
+        return [_row_to_session(row) for row in rows]
+
+    async def delete(self, session_id: str) -> bool:
+        db = await self._get_conn()
+        await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
+        cursor = await db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+        await db.commit()
+        return cursor.rowcount > 0
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -182,13 +239,38 @@ class SessionManager:
     async def delete_pr_proposal(self, session_id: str) -> None:
         await self._store.delete_pr_proposal(session_id)
 
+    async def list(self, *, archived: bool = False, query: str = "", limit: int = 50) -> list[Session]:
+        return await self._store.list(
+            archived=archived,
+            query=query,
+            limit=max(1, min(limit, 100)),
+        )
+
+    async def delete(self, session_id: str) -> bool:
+        deleted = await self._store.delete(session_id)
+        if deleted:
+            self._locks.pop(session_id, None)
+        return deleted
+
     async def close(self) -> None:
         if hasattr(self._store, "close"):
             await self._store.close()
 
 
 def _row_to_session(row) -> Session:
-    s = Session(session_id=row["session_id"], issue_url=row["issue_url"])
+    now = _now()
+    raw_status = row["status"] or "queued"
+    status = raw_status if raw_status in {"queued", "running", "completed", "failed"} else "queued"
+    s = Session(
+        session_id=row["session_id"],
+        issue_url=row["issue_url"],
+        display_title=row["display_title"],
+        status=status,
+        error_message=row["error_message"],
+        archived_at=row["archived_at"],
+        created_at=row["created_at"] or now,
+        updated_at=row["updated_at"] or now,
+    )
     if row["issue_json"]:
         with suppress(Exception):
             s.issue = IssueData.model_validate_json(row["issue_json"])
@@ -208,3 +290,13 @@ def _row_to_session(row) -> Session:
         with suppress(Exception):
             s.report = AnalysisReport.model_validate_json(row["report_json"])
     return s
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _session_search_text(session: Session) -> str:
+    issue_title = session.issue.title if session.issue else ""
+    repository = f"{session.issue.owner}/{session.issue.repo}" if session.issue else ""
+    return " ".join((session.issue_url, session.display_title or "", issue_title, repository)).casefold()

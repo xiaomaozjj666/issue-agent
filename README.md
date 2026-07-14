@@ -18,6 +18,7 @@ Every requested file is normalized and validated against the repository tree bef
 - 🛡️ **Evidence audit** — cross-checks model claims against actually-read files, forces `confidence: low` when unsupported
 - 📊 **Structured reports** — JSON output with summary, root cause, code evidence, proposed changes, unified diff patches, tests, and risks
 - 💬 **Interactive chat** — follow-up conversations with session persistence
+- 🗂️ **Session workspace** — searchable Issue history with restore, rename, archive, and status tracking
 - 🖥️ **Dual interface** — REST API (FastAPI) + CLI
 - 🐳 **Docker support** — ready-to-use Dockerfile
 
@@ -42,7 +43,7 @@ Every requested file is normalized and validated against the repository tree bef
 
 ```bash
 docker build -t issue-agent .
-docker run -p 8000:8000 --env-file .env issue-agent
+docker run -p 8000:8000 --env-file .env -v issue-agent-data:/app/data issue-agent
 ```
 
 ### Local Setup
@@ -98,7 +99,7 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `LANGUAGE` | `zh` | Response language (`zh` or `en`) |
 | `API_KEY` | *(optional)* | Require this value in the `X-API-Key` request header |
 | `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |
-| `SESSION_DB_PATH` | `:memory:` | SQLite path for persistent sessions |
+| `SESSION_DB_PATH` | `data/sessions.db` | SQLite path for persistent sessions; use `:memory:` for ephemeral tests |
 
 ### CLI Usage
 
@@ -159,6 +160,13 @@ Continue an existing session:
 ### `GET /health`
 
 Returns `{"status": "ok"}`.
+
+### Session history
+
+- `GET /sessions` lists active or archived Issue sessions and supports `q` search.
+- `GET /session/{session_id}` restores chat messages and the generated report.
+- `PATCH /session/{session_id}` renames, archives, or restores a session.
+- `DELETE /session/{session_id}` permanently deletes a session.
 
 ## Testing
 

@@ -1,9 +1,10 @@
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 ConfidenceLevel = Literal["low", "medium", "high"]
+SessionStatus = Literal["queued", "running", "completed", "failed"]
 
 _LINES_PATTERN = re.compile(r"L\d+(?:-L?\d+)?")
 
@@ -101,3 +102,37 @@ class CreatePRResponse(BaseModel):
 
 class ApplyFixRequest(BaseModel):
     confirm: bool = Field(default=False)
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    issue_url: str
+    owner: str = ""
+    repo: str = ""
+    issue_number: int | None = None
+    title: str
+    status: SessionStatus
+    error_message: str | None = None
+    archived: bool = False
+    created_at: str
+    updated_at: str
+
+
+class SessionDetail(SessionSummary):
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    report: AnalysisReport | None = None
+
+
+class SessionUpdateRequest(BaseModel):
+    display_title: str | None = Field(default=None, max_length=160)
+    archived: bool | None = None
+
+    @field_validator("display_title")
+    @classmethod
+    def _normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("display_title cannot be empty")
+        return normalized

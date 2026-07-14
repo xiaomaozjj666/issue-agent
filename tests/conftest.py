@@ -3,6 +3,7 @@ import os
 from types import SimpleNamespace
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("SESSION_DB_PATH", ":memory:")
 
 import pytest
 

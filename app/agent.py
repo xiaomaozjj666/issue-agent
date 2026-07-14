@@ -73,12 +73,11 @@ class IssueAgent:
         ) as github:
             issue = await github.get_issue(owner, repo, number)
             tree = await github.get_tree(issue)
-            yield start_event(issue.title, len(tree))
-            logger.info("Fetched issue: %r (%d comments, %d files)", issue.title, len(issue.comments), len(tree))
-
             if session is not None:
                 session.issue = issue
                 session.tree = tree
+            yield start_event(issue.title, len(tree))
+            logger.info("Fetched issue: %r (%d comments, %d files)", issue.title, len(issue.comments), len(tree))
 
             executor = self._build_executor(github, issue, tree)
             messages = self._build_initial_messages(issue, tree)

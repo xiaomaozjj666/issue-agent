@@ -2,7 +2,9 @@ import json
 import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("SESSION_DB_PATH", ":memory:")
 
+import httpx
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -11,7 +13,7 @@ from app.config import Settings
 from app.events import done_event
 from app.github import GitHubError, GitHubRateLimitError
 from app.main import app, get_settings
-from app.models import AnalysisReport, ApplyFixRequest, ChatResponse
+from app.models import AnalysisReport, ApplyFixRequest, ChatResponse, IssueData
 from app.sessions import SessionManager
 
 
@@ -27,6 +29,11 @@ def test_web_ui_renders() -> None:
 
     assert response.status_code == 200
     assert "GitHub Issue Agent" in response.text
+    assert 'id="conversation"' in response.text
+    assert 'id="report-panel"' in response.text
+    assert 'id="report-toggle"' in response.text
+    assert 'id="history-list"' in response.text
+    assert 'id="history-search"' in response.text
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:
@@ -173,3 +180,48 @@ def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
 
 def test_apply_fix_requires_explicit_confirmation() -> None:
     assert ApplyFixRequest().confirm is False
+
+
+async def test_session_history_api_supports_restore_rename_archive_and_delete(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+    session = await manager.create("https://github.com/acme/widget/issues/42")
+    session.issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=42,
+        title="Parser crashes on empty input",
+        body="",
+        labels=["bug"],
+        comments=[],
+        default_branch="main",
+    )
+    session.status = "completed"
+    session.messages = [{"role": "user", "content": "Why does this fail?"}]
+    await manager.save(session)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        listing = await client.get("/sessions")
+        detail = await client.get(f"/session/{session.session_id}")
+        renamed = await client.patch(
+            f"/session/{session.session_id}",
+            json={"display_title": "Critical parser bug"},
+        )
+        archived = await client.patch(
+            f"/session/{session.session_id}",
+            json={"archived": True},
+        )
+        active_listing = await client.get("/sessions")
+        archive_listing = await client.get("/sessions?archived=true")
+        deleted = await client.delete(f"/session/{session.session_id}")
+
+    assert listing.json()[0]["title"] == "Parser crashes on empty input"
+    assert detail.json()["messages"][0]["content"] == "Why does this fail?"
+    assert renamed.json()["title"] == "Critical parser bug"
+    assert archived.json()["archived"] is True
+    assert active_listing.json() == []
+    assert archive_listing.json()[0]["session_id"] == session.session_id
+    assert deleted.status_code == 204

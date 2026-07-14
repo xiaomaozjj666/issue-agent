@@ -1,5 +1,8 @@
+import sqlite3
+
 import pytest
 
+from app.db import get_db
 from app.sessions import Session, SessionManager
 
 
@@ -59,6 +62,57 @@ async def test_sqlite_persists_proposal_and_reuses_session_lock(tmp_path) -> Non
     assert first.lock is second.lock
     assert first.pending_pr == session.pending_pr
     await manager.close()
+
+
+async def test_session_history_filters_searches_and_deletes(manager) -> None:
+    active = await manager.create("https://github.com/acme/widget/issues/1")
+    active.display_title = "Parser failure"
+    active.status = "completed"
+    await manager.save(active)
+    archived = await manager.create("https://github.com/acme/api/issues/2")
+    archived.display_title = "Authentication timeout"
+    archived.archived_at = "2026-01-01T00:00:00+00:00"
+    await manager.save(archived)
+
+    assert [item.session_id for item in await manager.list()] == [active.session_id]
+    assert [item.session_id for item in await manager.list(archived=True)] == [archived.session_id]
+    assert [item.session_id for item in await manager.list(query="parser")] == [active.session_id]
+    assert await manager.delete(active.session_id) is True
+    assert await manager.get(active.session_id) is None
+
+
+async def test_sqlite_migrates_legacy_session_schema(tmp_path) -> None:
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                issue_url TEXT NOT NULL,
+                issue_json TEXT,
+                tree_json TEXT DEFAULT '[]',
+                messages_json TEXT DEFAULT '[]',
+                file_cache_json TEXT DEFAULT '{}',
+                files_read_json TEXT DEFAULT '[]',
+                report_json TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE pending_pr (
+                session_id TEXT PRIMARY KEY,
+                branch TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                changes_json TEXT NOT NULL DEFAULT '[]'
+            )"""
+        )
+
+    db = await get_db(str(path))
+    columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(sessions)")).fetchall()}
+    await db.close()
+
+    assert {"display_title", "status", "error_message", "archived_at"} <= columns
 
 
 def test_session_dataclass_defaults() -> None:
