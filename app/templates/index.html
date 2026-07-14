@@ -63,6 +63,10 @@ dialog::backdrop{background:rgba(4,8,12,.72);backdrop-filter:blur(4px)}
 #main{flex:1;min-width:0;min-height:0;display:flex;position:relative;overflow:hidden}
 #conversation{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #conversation-header{height:52px;flex:0 0 52px;padding:0 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:color-mix(in srgb,var(--bg) 88%,transparent)}
+.conversation-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.back-button{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--fg);cursor:pointer;font-size:16px;transition:border-color .15s,background .15s,color .15s}
+.back-button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.back-button:disabled{opacity:.32;cursor:not-allowed}
 .conversation-label{font-family:"Cascadia Code",Consolas,monospace;color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
 #report-toggle,.report-close{border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:999px;padding:7px 12px;cursor:pointer;font-size:12px;font-weight:650}
 #report-toggle{display:none;color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
@@ -153,7 +157,10 @@ dialog::backdrop{background:rgba(4,8,12,.72);backdrop-filter:blur(4px)}
 <div id="main">
   <div id="conversation">
     <div id="conversation-header">
-      <span class="conversation-label">Investigation thread</span>
+      <div class="conversation-heading">
+        <button id="back-button" class="back-button" type="button" onclick="goBack()" title="Back" aria-label="Back to previous view" disabled>←</button>
+        <span class="conversation-label">Investigation thread</span>
+      </div>
       <button id="report-toggle" type="button" onclick="toggleReport(true)" aria-controls="report-panel" aria-expanded="false">View report</button>
     </div>
     <div id="messages"></div>
@@ -189,6 +196,8 @@ let showArchived = false;
 let historySearchTimer = null;
 let dialogSession = null;
 let dialogMode = null;
+let navigationStack = [];
+let backInProgress = false;
 
 function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';localStorage.setItem('ds-theme',h.dataset.theme)}
 (function(){const s=localStorage.getItem('ds-theme');if(s)document.documentElement.dataset.theme=s})()
@@ -197,6 +206,41 @@ function toggleMobileHistory(){
   const sidebar=document.getElementById('sidebar');
   const open=sidebar.classList.toggle('mobile-history-open');
   document.querySelector('.mobile-history-toggle').setAttribute('aria-expanded',String(open));
+  updateBackButton();
+}
+
+function updateBackButton(){
+  const reportOpen=document.getElementById('main').classList.contains('report-open');
+  const historyOpen=document.getElementById('sidebar').classList.contains('mobile-history-open');
+  document.getElementById('back-button').disabled=backInProgress||!(reportOpen||historyOpen||sessionId||navigationStack.length);
+}
+
+async function goBack(){
+  if(backInProgress)return;
+  if(document.getElementById('main').classList.contains('report-open')){
+    toggleReport(false);
+    return;
+  }
+  const sidebar=document.getElementById('sidebar');
+  if(sidebar.classList.contains('mobile-history-open')){
+    sidebar.classList.remove('mobile-history-open');
+    document.querySelector('.mobile-history-toggle').setAttribute('aria-expanded','false');
+    updateBackButton();
+    return;
+  }
+  backInProgress=true;
+  updateBackButton();
+  const target=navigationStack.length?navigationStack.pop():null;
+  if(target){
+    await restoreSession(target,false);
+  }else{
+    sessionId=null;
+    report=null;
+    resetWorkspace(true);
+    await loadSessions();
+  }
+  backInProgress=false;
+  updateBackButton();
 }
 
 function scheduleHistorySearch(){
@@ -317,9 +361,10 @@ function repositoryFromUrl(url){
   return match?match[1]+'/'+match[2]:'GitHub Issue';
 }
 
-async function restoreSession(id){
+async function restoreSession(id,recordHistory=true){
   try{
     const session=await apiJson('/session/'+encodeURIComponent(id));
+    if(recordHistory&&sessionId!==session.session_id)navigationStack.push(sessionId||null);
     sessionId=session.session_id;
     report=session.report;
     resetWorkspace(false);
@@ -341,6 +386,8 @@ async function restoreSession(id){
       addMsg('system','This investigation has not produced a report yet.');
     }
     document.getElementById('sidebar').classList.remove('mobile-history-open');
+    document.querySelector('.mobile-history-toggle').setAttribute('aria-expanded','false');
+    updateBackButton();
     await loadSessions();
   }catch(error){addMsg('error',error.message)}
 }
@@ -435,6 +482,7 @@ function resetWorkspace(showWelcome){
   document.querySelector('.conversation-label').textContent='Investigation thread';
   if(showWelcome)document.getElementById('issueUrl').value='';
   if(showWelcome)addMsg('system','Choose a previous session or start a new Issue analysis.');
+  updateBackButton();
 }
 
 function addMsg(role,content,cls=''){
@@ -461,6 +509,7 @@ function addToolCard(name,args){
 async function analyze(){
   const url=document.getElementById('issueUrl').value.trim();
   if(!url)return;
+  if(sessionId)navigationStack.push(sessionId);
   sessionId=null;
   report=null;
   resetWorkspace(false);
@@ -490,6 +539,7 @@ async function analyze(){
           switch(evt.type){
             case'session':
               sessionId=evt.data.session_id;
+              updateBackButton();
               loadSessions();
               break;
             case'start':
@@ -560,6 +610,7 @@ function toggleReport(open){
   }else if(document.getElementById('input-bar').style.display!=='none'){
     document.getElementById('chatInput').focus();
   }
+  updateBackButton();
 }
 
 document.addEventListener('keydown',function(event){

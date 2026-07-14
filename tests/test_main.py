@@ -34,6 +34,7 @@ def test_web_ui_renders() -> None:
     assert 'id="report-toggle"' in response.text
     assert 'id="history-list"' in response.text
     assert 'id="history-search"' in response.text
+    assert 'id="back-button"' in response.text
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:
