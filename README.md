@@ -27,7 +27,8 @@ Every requested file is normalized and validated against the repository tree bef
 
 - Only accepts `https://github.com/{owner}/{repo}/issues/{number}` URLs.
 - Uses read-only GitHub REST API endpoints by default and never executes repository code.
-- Repository writes require `WRITE_MODE=true`, a validated proposal, and a separate `confirm=true` request.
+- Repository writes happen only through `POST /apply-fix`, which requires `WRITE_MODE=true`, a validated
+  stored proposal, and a separate explicit `confirm=true` request.
 - PR proposals are revalidated before writing; incomplete write flows attempt to roll back their temporary branch.
 - Treats Issue text and repository content as untrusted prompt data.
 - Limits candidate files and total model context.
@@ -144,6 +145,20 @@ Open `http://127.0.0.1:8000/docs` for the Swagger UI.
 
 Returns an `AnalysisReport` with summary, root cause, confidence, evidence, proposed changes, patch, tests, and risks.
 
+### `POST /stream`
+
+Runs the same investigation as `/analyze`, but streams progress as Server-Sent Events. Pass an
+`issue_url` to start a new session, or a `session_id` to re-run an existing one:
+
+```json
+{
+  "issue_url": "https://github.com/owner/repo/issues/123"
+}
+```
+
+The stream begins with a `session` event carrying the session id, followed by investigation progress
+events and a final `report` event; `cancelled` or `error` events are emitted when the run stops early.
+
 ### `POST /chat`
 
 Start a new session:
@@ -170,10 +185,27 @@ Returns `{"status": "ok"}`.
 
 - `GET /sessions` lists active or archived Issue sessions and supports `q` search.
 - `GET /session/{session_id}` restores messages, report, durable events, phase, metrics, and version.
+- `GET /session/{session_id}/report` returns just the stored `AnalysisReport` once the investigation has produced one (404 before that).
 - `PATCH /session/{session_id}` renames, archives, or restores a session.
 - `POST /session/{session_id}/cancel` requests cancellation of a running investigation.
 - `GET /session/{session_id}/proposal` returns a safe PR proposal preview without file contents.
 - `DELETE /session/{session_id}` permanently deletes a session.
+
+### `POST /apply-fix` (write mode)
+
+Creates the pull request for a session's stored proposal. Disabled unless `WRITE_MODE=true`.
+
+```
+POST /apply-fix?session_id=a1b2c3d4e5f6
+{
+  "confirm": true
+}
+```
+
+Requests without `confirm=true` are rejected. The stored proposal is revalidated against the
+repository's default branch before any write; on failure the temporary branch is rolled back.
+Returns the created `pr_url` and `branch`. See the [Safety model](#safety-model) for the full
+write-path guarantees.
 
 ## Testing
 

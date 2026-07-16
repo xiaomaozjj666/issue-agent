@@ -43,6 +43,14 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+filterwarnings = [
+  # Silence third-party deprecation noise only; warnings from our own code still surface.
+  # pytest-asyncio still calls the asyncio event-loop-policy APIs deprecated for Python 3.16.
+  "ignore:'asyncio.get_event_loop_policy' is deprecated:DeprecationWarning",
+  "ignore:'asyncio.set_event_loop_policy' is deprecated:DeprecationWarning",
+  # starlette.testclient prefers httpx2; the httpx shim still works for our test client usage.
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.ruff]
 line-length = 120
