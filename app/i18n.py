@@ -142,7 +142,11 @@ def t(key: str, **kwargs: object) -> str:
 
 
 def get_system_prompt() -> str:
-    return f"{t('system_prompt_investigate')}\n\n{_UNTRUSTED_CONTENT_RULES}"
+    discovery_hint = (
+        "The search_code tool searches content across the whole repository. "
+        "Use it for symbols and error messages, then call read_file before citing a match."
+    )
+    return f"{t('system_prompt_investigate')}\n\n{discovery_hint}\n\n{_UNTRUSTED_CONTENT_RULES}"
 
 
 def get_chat_system_prompt() -> str:
@@ -150,4 +154,9 @@ def get_chat_system_prompt() -> str:
 
 
 def get_final_output_prompt() -> str:
-    return t("final_output_prompt")
+    verification_hint = (
+        "Before producing the JSON, challenge the leading root cause against at least one plausible alternative. "
+        "Only keep claims supported by files you actually read, distinguish an already-fixed issue from an active bug, "
+        "and ensure each proposed test exercises the causal failure path."
+    )
+    return f"{t('final_output_prompt')}\n\n{verification_hint}"

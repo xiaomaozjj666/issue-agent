@@ -131,6 +131,61 @@ async def test_get_file_skips_oversized_file() -> None:
             await github.get_file(issue, "src/huge.py")
 
 
+async def test_repository_code_search_scopes_query_and_returns_fragments() -> None:
+    issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+    )
+    github = GitHubClient()
+    requested_query = ""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requested_query
+        requested_query = request.url.params["q"]
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "path": "src/parser.py",
+                        "text_matches": [{"fragment": "raise ParserError(message)"}],
+                    }
+                ]
+            },
+        )
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        matches = await github.search_code(issue, "ParserError")
+
+    assert requested_query == "ParserError repo:acme/widget"
+    assert matches == [{"path": "src/parser.py", "fragments": ["raise ParserError(message)"]}]
+
+
+async def test_repository_code_search_rejects_scope_override() -> None:
+    issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+    )
+    github = GitHubClient()
+    async with github:
+        with pytest.raises(ValueError, match="scope"):
+            await github.search_code(issue, "secret OR repo:another/private")
+
+
 async def test_write_flow_uses_branch_sha_and_existing_file_sha() -> None:
     github = GitHubClient(write_enabled=True)
     requests: list[httpx.Request] = []

@@ -14,11 +14,12 @@ Every requested file is normalized and validated against the repository tree bef
 
 ## Features
 
-- 🔍 **Tool-calling loop** — LLM autonomously explores the repo with `read_file`, `list_directory`, `search_files`, `grep_content`
+- 🔍 **Tool-calling loop** — explores paths, repository-wide code search, source files, and Git history with bounded tools
 - 🛡️ **Evidence audit** — cross-checks model claims against actually-read files, forces `confidence: low` when unsupported
 - 📊 **Structured reports** — JSON output with summary, root cause, code evidence, proposed changes, unified diff patches, tests, and risks
 - 💬 **Interactive chat** — follow-up conversations with session persistence
-- 🗂️ **Session workspace** — searchable Issue history with restore, rename, archive, and status tracking
+- 🗂️ **Session workspace** — searchable history with durable investigation events, metrics, cancellation, and recovery
+- ⚡ **Concurrency safety** — optimistic session versions prevent silent cross-worker overwrite
 - 🖥️ **Dual interface** — REST API (FastAPI) + CLI
 - 🐳 **Docker support** — ready-to-use Dockerfile
 
@@ -27,6 +28,7 @@ Every requested file is normalized and validated against the repository tree bef
 - Only accepts `https://github.com/{owner}/{repo}/issues/{number}` URLs.
 - Uses read-only GitHub REST API endpoints by default and never executes repository code.
 - Repository writes require `WRITE_MODE=true`, a validated proposal, and a separate `confirm=true` request.
+- PR proposals are revalidated before writing; incomplete write flows attempt to roll back their temporary branch.
 - Treats Issue text and repository content as untrusted prompt data.
 - Limits candidate files and total model context.
 - Limits model output with `MAX_OUTPUT_TOKENS` (4,000 by default).
@@ -100,6 +102,9 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `API_KEY` | *(optional)* | Require this value in the `X-API-Key` request header |
 | `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |
 | `SESSION_DB_PATH` | `data/sessions.db` | SQLite path for persistent sessions; use `:memory:` for ephemeral tests |
+| `SESSION_STALE_AFTER_SECONDS` | `1800` | Mark running sessions older than this heartbeat window as interrupted |
+| `MAX_PR_FILES` | `20` | Maximum number of files allowed in one PR proposal |
+| `MAX_PR_TOTAL_BYTES` | `1000000` | Maximum combined UTF-8 size of proposed file contents |
 
 ### CLI Usage
 
@@ -164,8 +169,10 @@ Returns `{"status": "ok"}`.
 ### Session history
 
 - `GET /sessions` lists active or archived Issue sessions and supports `q` search.
-- `GET /session/{session_id}` restores chat messages and the generated report.
+- `GET /session/{session_id}` restores messages, report, durable events, phase, metrics, and version.
 - `PATCH /session/{session_id}` renames, archives, or restores a session.
+- `POST /session/{session_id}/cancel` requests cancellation of a running investigation.
+- `GET /session/{session_id}/proposal` returns a safe PR proposal preview without file contents.
 - `DELETE /session/{session_id}` permanently deletes a session.
 
 ## Testing
@@ -176,10 +183,12 @@ pytest -v
 
 ## Current limitations
 
-- The deterministic fallback file selection is filename-based because GitHub's code search API has stricter
-  authentication and indexing constraints.
-- SQLite persists sessions across restarts, but process-local session locks do not coordinate multiple
-  application workers. Multi-worker deployments should use an external transactional session store.
+- GitHub code search has stricter authentication, indexing, and rate-limit behavior than repository-tree access;
+  the agent retains deterministic filename selection as a fallback.
+- SQLite uses optimistic versions to reject cross-worker overwrite, but high-volume distributed deployments should
+  still use a dedicated transactional database and background job system.
+- Cancellation is cooperative and takes effect at the next streamed model or tool event; an in-flight provider
+  request may finish before cancellation is observed.
 
 ## License
 

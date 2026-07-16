@@ -22,11 +22,14 @@ class Settings(BaseSettings):
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
     max_chat_tokens: int = Field(default=2_000, ge=500, le=8_000)
 
-    # --- New settings for v0.3.0 ---
+    # Runtime behavior
     language: str = Field(default="zh", pattern=r"^(zh|en)$")
     api_key: str | None = None
     write_mode: bool = False
     session_db_path: str = "data/sessions.db"
+    session_stale_after_seconds: int = Field(default=1800, ge=60, le=86_400)
+    max_pr_files: int = Field(default=20, ge=1, le=50)
+    max_pr_total_bytes: int = Field(default=1_000_000, ge=4_096, le=10_000_000)
 
 
 @lru_cache

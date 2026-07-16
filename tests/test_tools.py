@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from app.config import Settings
 from app.github import GitHubFileSkipped
 from app.models import IssueData, SourceFile
-from app.tools import ToolExecutor, parse_tool_call
+from app.tools import ToolExecutor, parse_tool_call, validate_pr_proposal
 
 _SETTINGS = Settings(openai_api_key="test-key")
 
@@ -113,6 +115,20 @@ async def test_search_files_no_match() -> None:
     executor = ToolExecutor(MagicMock(), _SETTINGS, _make_issue(), ["src/a.py"])
     result = await executor.execute("search_files", {"query": "nonexistent"})
     assert "No files" in result
+
+
+async def test_search_code_uses_repository_wide_github_search() -> None:
+    github = MagicMock()
+    github.search_code = AsyncMock(
+        return_value=[{"path": "src/parser.py", "fragments": ["raise ParserError(message)"]}]
+    )
+    executor = ToolExecutor(github, _SETTINGS, _make_issue(), ["src/parser.py"])
+
+    result = await executor.execute("search_code", {"query": "ParserError"})
+
+    assert "src/parser.py" in result
+    assert "raise ParserError" in result
+    github.search_code.assert_awaited_once()
 
 
 async def test_grep_content_finds_matches_in_cached_files() -> None:
@@ -260,6 +276,34 @@ def test_create_pull_request_tool_rejects_unsafe_paths() -> None:
 
     assert result.startswith("Error:")
     assert executor.pr_proposal is None
+
+
+def test_pr_proposal_rejects_default_branch_and_total_size_limit() -> None:
+    settings = Settings(
+        openai_api_key="test-key",
+        write_mode=True,
+        max_pr_total_bytes=4096,
+        github_max_file_bytes=10_000,
+    )
+
+    with pytest.raises(ValueError, match="default branch"):
+        validate_pr_proposal(
+            settings,
+            branch="main",
+            title="Fix",
+            body="Body",
+            changes=[{"path": "src/a.py", "content": "fixed", "message": "fix: parser"}],
+            default_branch="main",
+        )
+    with pytest.raises(ValueError, match="total PR size"):
+        validate_pr_proposal(
+            settings,
+            branch="fix/issue-1",
+            title="Fix",
+            body="Body",
+            changes=[{"path": "src/a.py", "content": "x" * 4097, "message": "fix: parser"}],
+            default_branch="main",
+        )
 
 
 def test_restored_cache_is_filtered_and_bounded_without_files_read() -> None:

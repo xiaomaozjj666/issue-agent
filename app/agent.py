@@ -10,12 +10,14 @@ from app.config import Settings
 from app.events import (
     AgentEvent,
     done_event,
+    phase_event,
     report_event,
     start_event,
     thinking_event,
     tool_call_event,
     tool_result_event,
 )
+from app.evidence import EvidenceValidator
 from app.github import GitHubClient, parse_issue_url, select_candidate_paths
 from app.i18n import get_chat_system_prompt, get_final_output_prompt, get_system_prompt, t
 from app.models import AnalysisReport, ChatResponse, IssueData
@@ -23,9 +25,6 @@ from app.sessions import Session
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 
 logger = logging.getLogger(__name__)
-
-LINE_RANGE = re.compile(r"^L(\d+)(?:-L?(\d+))?$")
-
 
 class ModelResponseError(RuntimeError):
     pass
@@ -66,6 +65,9 @@ class IssueAgent:
         """Investigate an issue, yielding AgentEvent objects for real-time streaming."""
         owner, repo, number = parse_issue_url(issue_url)
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
+        if session is not None:
+            session.metrics = {"model_calls": 0, "tool_calls": 0, "files_read": 0}
+        yield phase_event("fetching", "Fetching issue and repository tree")
 
         async with GitHubClient(
             self.settings.github_token,
@@ -81,10 +83,13 @@ class IssueAgent:
 
             executor = self._build_executor(github, issue, tree)
             messages = self._build_initial_messages(issue, tree)
+            yield phase_event("exploring", "Investigating candidate files")
 
             tools = get_tool_definitions(self.settings)
             client = self._get_client()
             for iteration in range(self.settings.max_agent_iterations):
+                if session is not None:
+                    session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                 response = await client.chat.completions.create(
                     model=self.settings.openai_model,
                     messages=messages,
@@ -112,6 +117,8 @@ class IssueAgent:
                     name, args = parse_tool_call(tc)
                     logger.info("Tool call %d: %s(%s)", iteration + 1, name, args)
                     yield tool_call_event(name, args, iteration + 1)
+                    if session is not None:
+                        session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     result = await executor.execute(name, args)
                     if session is not None and executor.pr_proposal is not None:
                         session.pending_pr = executor.pr_proposal
@@ -120,13 +127,17 @@ class IssueAgent:
             else:
                 logger.warning("Agent reached max iterations (%d)", self.settings.max_agent_iterations)
 
+            yield phase_event("verifying", "Validating evidence and preparing the report")
+            if session is not None:
+                session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
             report = await self._generate_report(messages, executor)
-            yield report_event(report.model_dump())
-
             if session is not None:
                 session.file_cache = executor.file_cache
                 session.files_read = executor.files_read
                 session.report = report
+                session.metrics["files_read"] = len(executor.files_read)
+
+            yield report_event(report.model_dump())
 
             yield done_event()
 
@@ -179,6 +190,7 @@ class IssueAgent:
             ]
 
             for _ in range(self.settings.max_agent_iterations):
+                session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                 response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
                 if not response.choices:
                     raise ModelResponseError("The model returned no choices")
@@ -203,6 +215,7 @@ class IssueAgent:
                 for tc in msg.tool_calls:
                     name, args = parse_tool_call(tc)
                     result = await executor.execute(name, args)
+                    session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     if executor.pr_proposal is not None:
                         session.pending_pr = executor.pr_proposal
                     tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": result}
@@ -249,30 +262,11 @@ class IssueAgent:
             logger.warning("Report validation failed: %s", error)
             raise ModelResponseError("The model returned an invalid analysis report") from error
 
-        line_counts = executor.line_counts
-        read_paths = set(executor.files_read)
-        report.evidence = [
-            item
-            for item in report.evidence
-            if item.path in read_paths and self._has_valid_lines(item.lines, line_counts.get(item.path, 0))
-        ]
-        report.files_examined = executor.files_read
-        report.evidence_audit.valid_references = len(report.evidence)
-        report.evidence_audit.root_cause_supported = bool(report.evidence) and all(
-            bool(item.reason and item.reason.strip()) for item in report.evidence
+        report = EvidenceValidator().validate(
+            report,
+            files_read=executor.files_read,
+            line_counts=executor.line_counts,
         )
-
-        reference_count = len(report.evidence)
-        confidence_rank = {"low": 0, "medium": 1, "high": 2}
-        maximum_confidence = "low" if reference_count == 0 else "medium" if reference_count < 3 else "high"
-        if confidence_rank[report.confidence] > confidence_rank[maximum_confidence]:
-            report.confidence = maximum_confidence
-
-        if not report.evidence_audit.root_cause_supported:
-            report.confidence = "low"
-            warning = t("evidence_unsupported")
-            if warning not in report.risks:
-                report.risks.append(warning)
 
         logger.info(
             "Analysis complete: confidence=%s, evidence=%d, files=%d",
@@ -306,14 +300,7 @@ class IssueAgent:
 
     @staticmethod
     def _has_valid_lines(lines: str | None, line_count: int) -> bool:
-        if lines is None:
-            return True
-        match = LINE_RANGE.fullmatch(lines)
-        if not match:
-            return False
-        start = int(match.group(1))
-        end = int(match.group(2) or start)
-        return 1 <= start <= end <= line_count
+        return EvidenceValidator.has_valid_lines(lines, line_count)
 
     async def _call_llm(self, messages: list[dict], *, tools: list | None = None, max_tokens: int | None = None):
         client = self._get_client()

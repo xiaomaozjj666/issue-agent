@@ -64,6 +64,23 @@ _READ_ONLY_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_code",
+            "description": (
+                "Search code across the entire repository. Use this to find symbols or error messages "
+                "that may not appear in filenames, then read matching files before citing them."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Symbol, error text, or code fragment to find"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "grep_content",
             "description": (
                 "Search for a pattern in files that have already been read. "
@@ -223,6 +240,8 @@ class ToolExecutor:
                 return self._list_directory(arguments.get("path", ""))
             if name == "search_files":
                 return self._search_files(arguments["query"])
+            if name == "search_code":
+                return await self._search_code(arguments["query"])
             if name == "grep_content":
                 return self._grep_content(arguments["pattern"])
             if name == "get_file_history":
@@ -329,6 +348,18 @@ class ToolExecutor:
             return f"No files matching '{query}'"
         return "\n".join(matches[:_MAX_SEARCH_RESULTS])
 
+    async def _search_code(self, query: str) -> str:
+        matches = await self._github.search_code(self._issue, query, limit=_MAX_SEARCH_RESULTS)
+        if not matches:
+            return f"No repository code matches for '{query}'"
+        lines: list[str] = []
+        for match in matches:
+            path = match["path"]
+            fragments = match.get("fragments", [])
+            lines.append(path)
+            lines.extend(f"  {fragment}" for fragment in fragments)
+        return self._limit_tool_context("\n".join(lines))
+
     def _grep_content(self, pattern: str) -> str:
         try:
             regex = re.compile(pattern, re.IGNORECASE)
@@ -383,43 +414,21 @@ class ToolExecutor:
         if not self._settings.write_mode:
             return "Error: Write mode is disabled. Set WRITE_MODE=true to enable PR creation."
 
-        branch = branch.strip().replace(" ", "-")
-        if (
-            not branch
-            or len(branch) > 120
-            or not re.fullmatch(r"[A-Za-z0-9._/-]+", branch)
-            or branch.startswith(("/", "."))
-            or branch.endswith(("/", "."))
-            or ".." in branch
-        ):
-            return "Error: Invalid branch name"
-        if not title.strip() or not body.strip():
-            return "Error: PR title and body are required"
-        if not changes or len(changes) > 20:
-            return "Error: A PR proposal must contain between 1 and 20 file changes"
-
-        normalized_changes: list[dict] = []
-        seen_paths: set[str] = set()
-        for change in changes:
-            path = str(change.get("path", ""))
-            if not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
-                return f"Error: Invalid change path: {path or '<empty>'}"
-            path = posixpath.normpath(path)
-            content = change.get("content")
-            message = str(change.get("message", "")).strip()
-            if path in seen_paths or not isinstance(content, str) or not message:
-                return f"Error: Invalid or duplicate change for {path}"
-            if len(content.encode("utf-8")) > self._settings.github_max_file_bytes:
-                return f"Error: Proposed content for {path} exceeds the file size limit"
-            seen_paths.add(path)
-            normalized_changes.append({"path": path, "content": content, "message": message})
-
-        self.pr_proposal = {
-            "branch": branch,
-            "title": title.strip(),
-            "body": body.strip(),
-            "changes": normalized_changes,
-        }
+        try:
+            self.pr_proposal = validate_pr_proposal(
+                self._settings,
+                branch=branch,
+                title=title,
+                body=body,
+                changes=changes,
+                default_branch=self._issue.default_branch,
+            )
+        except ValueError as error:
+            return f"Error: {error}"
+        branch = self.pr_proposal["branch"]
+        title = self.pr_proposal["title"]
+        body = self.pr_proposal["body"]
+        normalized_changes = self.pr_proposal["changes"]
         change_list = "\n".join(f"  - {c['path']}: {c['message']}" for c in normalized_changes)
         return (
             "⚠️  PR PROPOSAL — not yet created:\n\n"
@@ -445,3 +454,60 @@ def parse_tool_call(tool_call) -> tuple[str, dict]:
     except (json.JSONDecodeError, TypeError):
         arguments = {}
     return name, arguments
+
+
+def validate_pr_proposal(
+    settings: Settings,
+    *,
+    branch: str,
+    title: str,
+    body: str,
+    changes: list[dict],
+    default_branch: str | None = None,
+) -> dict:
+    normalized_branch = branch.strip().replace(" ", "-")
+    if (
+        not normalized_branch
+        or len(normalized_branch) > 120
+        or not re.fullmatch(r"[A-Za-z0-9._/-]+", normalized_branch)
+        or normalized_branch.startswith(("/", "."))
+        or normalized_branch.endswith(("/", "."))
+        or ".." in normalized_branch
+    ):
+        raise ValueError("Invalid branch name")
+    if default_branch and normalized_branch == default_branch:
+        raise ValueError("The proposal branch must differ from the repository default branch")
+    normalized_title = title.strip()
+    normalized_body = body.strip()
+    if not normalized_title or not normalized_body:
+        raise ValueError("PR title and body are required")
+    if not changes or len(changes) > settings.max_pr_files:
+        raise ValueError(f"A PR proposal must contain between 1 and {settings.max_pr_files} file changes")
+
+    normalized_changes: list[dict] = []
+    seen_paths: set[str] = set()
+    total_bytes = 0
+    for change in changes:
+        path = str(change.get("path", ""))
+        if not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
+            raise ValueError(f"Invalid change path: {path or '<empty>'}")
+        path = posixpath.normpath(path)
+        content = change.get("content")
+        message = str(change.get("message", "")).strip()
+        if path in seen_paths or not isinstance(content, str) or not message:
+            raise ValueError(f"Invalid or duplicate change for {path}")
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > settings.github_max_file_bytes:
+            raise ValueError(f"Proposed content for {path} exceeds the file size limit")
+        total_bytes += content_bytes
+        if total_bytes > settings.max_pr_total_bytes:
+            raise ValueError("Proposed changes exceed the total PR size limit")
+        seen_paths.add(path)
+        normalized_changes.append({"path": path, "content": content, "message": message})
+
+    return {
+        "branch": normalized_branch,
+        "title": normalized_title,
+        "body": normalized_body,
+        "changes": normalized_changes,
+    }

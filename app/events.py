@@ -26,6 +26,10 @@ def start_event(issue_title: str = "", file_count: int = 0) -> AgentEvent:
     return AgentEvent(type="start", data={"title": issue_title, "file_count": file_count})
 
 
+def phase_event(phase: str, label: str) -> AgentEvent:
+    return AgentEvent(type="phase", data={"phase": phase, "label": label})
+
+
 def session_event(session_id: str) -> AgentEvent:
     return AgentEvent(type="session", data={"session_id": session_id})
 
@@ -52,3 +56,7 @@ def error_event(message: str) -> AgentEvent:
 
 def done_event() -> AgentEvent:
     return AgentEvent(type="done")
+
+
+def cancelled_event() -> AgentEvent:
+    return AgentEvent(type="cancelled", message="Investigation cancelled")

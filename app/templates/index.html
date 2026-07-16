@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%235da9ff'/%3E%3Cpath d='M9 9h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/css/runtime.css">
 <title>GitHub Issue Agent</title>
 <style>
 :root{--bg:#0b0f14;--fg:#d6dde5;--muted:#8793a1;--border:#26303b;--accent:#5da9ff;--accent-soft:#13263a;--card:#121820;--panel:#0f151c;--green:#46c26f;--yellow:#e3ad3e;--red:#ff635d;--radius:10px;--text-xs:11px;--text-sm:13px;--text-base:15px;--text-lg:18px;--leading:1.65}
@@ -177,7 +178,10 @@ dialog::backdrop{background:rgba(4,8,12,.72);backdrop-filter:blur(4px)}
         <button id="back-button" class="back-button" type="button" onclick="goBack()" title="Back" aria-label="Back to previous view" disabled>←</button>
         <span class="conversation-label">Investigation thread</span>
       </div>
-      <button id="report-toggle" type="button" onclick="toggleReport(true)" aria-controls="report-panel" aria-expanded="false">View report</button>
+      <div class="header-actions">
+        <button id="cancel-analysis" type="button" onclick="cancelAnalysis()">Cancel</button>
+        <button id="report-toggle" type="button" onclick="toggleReport(true)" aria-controls="report-panel" aria-expanded="false">View report</button>
+      </div>
     </div>
     <div id="messages"></div>
     <div id="progress"></div>
@@ -205,8 +209,10 @@ dialog::backdrop{background:rgba(4,8,12,.72);backdrop-filter:blur(4px)}
     </div>
   </form>
 </dialog>
+<script src="/static/js/core.js"></script>
+<script src="/static/js/session-runtime.js"></script>
 <script>
-let sessionId = null;
+var sessionId = null;
 let report = null;
 let showArchived = false;
 let historySearchTimer = null;
@@ -273,16 +279,6 @@ function toggleArchiveView(){
   loadSessions();
 }
 
-async function apiJson(url,options){
-  const response=await fetch(url,options);
-  if(!response.ok){
-    let detail='Request failed';
-    try{detail=(await response.json()).detail||detail}catch(e){}
-    throw new Error(detail);
-  }
-  return response.status===204?null:response.json();
-}
-
 async function loadSessions(){
   const list=document.getElementById('history-list');
   const query=document.getElementById('history-search').value.trim();
@@ -332,6 +328,7 @@ function createSessionRow(session){
   card.onclick=function(){restoreSession(session.session_id)};
   const repository=session.owner&&session.repo?session.owner+'/'+session.repo:repositoryFromUrl(session.issue_url);
   const issue=session.issue_number?' #'+session.issue_number:'';
+  card.title=session.phase?session.phase.replace(/_/g,' '):session.status;
   card.innerHTML='<div class="session-repo"><span class="status-dot '+session.status+'"></span><span>'+escapeHtml(repository+issue)+'</span></div>'+
     '<div class="session-title">'+escapeHtml(session.title)+'</div><div class="session-time">'+escapeHtml(relativeTime(session.updated_at))+'</div>';
   row.appendChild(card);
@@ -387,6 +384,8 @@ async function restoreSession(id,recordHistory=true){
     document.getElementById('issueUrl').value='';
     document.querySelector('.conversation-label').textContent=session.owner&&session.repo?
       session.owner+'/'+session.repo+(session.issue_number?' #'+session.issue_number:''):'Investigation thread';
+    setCancelVisible(session.status==='running');
+    if(session.events&&session.events.length)addEventTimeline(session.events,session.metrics);
     if(report){
       renderReport(report);
       document.getElementById('report-toggle').style.display='inline-flex';
@@ -396,10 +395,14 @@ async function restoreSession(id,recordHistory=true){
       if((message.role==='user'||message.role==='assistant')&&message.content)addMsg(message.role,message.content);
     });
     if(report){
-      if(!session.archived)document.getElementById('input-bar').style.display='flex';
+      if(!session.archived&&session.status!=='running')document.getElementById('input-bar').style.display='flex';
       if(session.archived)addMsg('system','Archived sessions are read-only. Restore this session from the sidebar to continue.');
     }else if(session.status==='failed'){
       addMsg('error',session.error_message||'This investigation failed before producing a report.');
+    }else if(session.status==='cancelled'){
+      addMsg('system','This investigation was cancelled. Start a new analysis when you are ready.');
+    }else if(session.status==='running'){
+      addMsg('system','This investigation is still running. Its durable event history is shown above.');
     }else{
       addMsg('system','This investigation has not produced a report yet.');
     }
@@ -496,6 +499,7 @@ function resetWorkspace(showWelcome){
   document.getElementById('report-toggle').style.display='none';
   document.getElementById('report').innerHTML='';
   document.getElementById('input-bar').style.display='none';
+  setCancelVisible(false);
   document.getElementById('progress').textContent='';
   document.querySelector('.conversation-label').textContent='Investigation thread';
   if(showWelcome)document.getElementById('issueUrl').value='';
@@ -570,12 +574,16 @@ async function analyze(){
         try{
           const evt=JSON.parse(data);
           switch(evt.type){
-            case'session':
-              sessionId=evt.data.session_id;
-              document.getElementById('issueUrl').value='';
+    case'session':
+      sessionId=evt.data.session_id;
+      document.getElementById('issueUrl').value='';
+      setCancelVisible(true);
               updateBackButton();
               loadSessions();
-              break;
+      break;
+    case'phase':
+      document.getElementById('progress').textContent=evt.data.label||evt.data.phase;
+      break;
             case'start':
               document.getElementById('progress').textContent='Exploring '+evt.data.file_count+' files...';
               document.querySelector('.conversation-label').textContent=evt.data.title||'Investigation thread';
@@ -600,21 +608,29 @@ async function analyze(){
               document.getElementById('chatInput').focus();
               loadSessions();
               break;
-            case'error':
+    case'error':
               addMsg('error',evt.message||'Error');
               document.getElementById('progress').textContent='';
-              loadSessions();
-              break;
-            case'done':
-              loadSessions();
+      loadSessions();
+      break;
+    case'cancelled':
+      addMsg('system','Investigation cancelled.');
+      document.getElementById('progress').textContent='';
+      setCancelVisible(false);
+      loadSessions();
+      break;
+    case'done':
+      setCancelVisible(false);
+      loadSessions();
               break;
           }
-        }catch(e){}
+        }catch(e){console.warn('Ignored malformed stream event',e)}
       }
     }
   }catch(e){
     addMsg('error','Connection error: '+e.message);
     document.getElementById('progress').textContent='';
+    setCancelVisible(false);
   }
 }
 
@@ -672,7 +688,6 @@ async function chat(){
   }
 }
 
-function escapeHtml(s){if(!s)return'';return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 loadSessions();
 </script>
 </body>

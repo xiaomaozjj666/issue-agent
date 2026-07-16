@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.agent import IssueAgent, ModelResponseError
 from app.config import Settings
-from app.events import done_event
+from app.events import done_event, phase_event
 from app.github import GitHubError, GitHubRateLimitError
 from app.main import app, get_settings
 from app.models import AnalysisReport, ApplyFixRequest, ChatResponse, IssueData
@@ -35,6 +35,22 @@ def test_web_ui_renders() -> None:
     assert 'id="history-list"' in response.text
     assert 'id="history-search"' in response.text
     assert 'id="back-button"' in response.text
+    assert 'id="cancel-analysis"' in response.text
+    assert '/static/js/core.js' in response.text
+
+
+def test_static_frontend_modules_are_served() -> None:
+    client = TestClient(app)
+    script = client.get("/static/js/core.js")
+    runtime = client.get("/static/js/session-runtime.js")
+    stylesheet = client.get("/static/css/runtime.css")
+
+    assert script.status_code == 200
+    assert "window.apiJson" in script.text
+    assert runtime.status_code == 200
+    assert "window.cancelAnalysis" in runtime.text
+    assert stylesheet.status_code == 200
+    assert ".investigation-timeline" in stylesheet.text
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:
@@ -226,3 +242,76 @@ async def test_session_history_api_supports_restore_rename_archive_and_delete(mo
     assert active_listing.json() == []
     assert archive_listing.json()[0]["session_id"] == session.session_id
     assert deleted.status_code == 204
+
+
+async def test_session_detail_exposes_durable_events_and_metrics(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+    session = await manager.create("https://github.com/acme/widget/issues/7")
+    session.metrics = {"model_calls": 3, "duration_ms": 1200}
+    await manager.save(session)
+    await manager.append_event(
+        session.session_id,
+        {"type": "phase", "data": {"phase": "verifying", "label": "Verifying"}, "message": ""},
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/session/{session.session_id}")
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["model_calls"] == 3
+    assert response.json()["events"][0]["data"]["phase"] == "verifying"
+
+
+async def test_cancel_endpoint_marks_running_session_for_cancellation(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+    session = await manager.create("https://github.com/acme/widget/issues/8")
+    session.status = "running"
+    await manager.save(session)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(f"/session/{session.session_id}/cancel")
+
+    assert response.status_code == 200
+    assert await manager.is_cancel_requested(session.session_id) is True
+
+
+def test_stream_persists_phase_events(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+
+    async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
+        yield phase_event("exploring", "Exploring repository")
+        yield done_event()
+
+    monkeypatch.setattr(IssueAgent, "investigate_stream", fake_stream)
+    client = TestClient(app)
+    response = client.post("/stream", json={"issue_url": "https://github.com/acme/widget/issues/9"})
+    session_line = next(line for line in response.text.splitlines() if '"type": "session"' in line)
+    session_id = json.loads(session_line.removeprefix("data: "))["data"]["session_id"]
+
+    detail = client.get(f"/session/{session_id}").json()
+    assert [event["type"] for event in detail["events"]] == ["session", "phase", "done"]
+    assert detail["status"] == "completed"
+
+
+def test_stream_honors_cooperative_cancellation(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+
+    async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
+        assert session is not None
+        await manager.request_cancel(session.session_id)
+        yield phase_event("exploring", "Exploring repository")
+
+    monkeypatch.setattr(IssueAgent, "investigate_stream", fake_stream)
+    client = TestClient(app)
+    response = client.post("/stream", json={"issue_url": "https://github.com/acme/widget/issues/10"})
+    session_line = next(line for line in response.text.splitlines() if '"type": "session"' in line)
+    session_id = json.loads(session_line.removeprefix("data: "))["data"]["session_id"]
+
+    assert '"type": "cancelled"' in response.text
+    detail = client.get(f"/session/{session_id}").json()
+    assert detail["status"] == "cancelled"
+    assert detail["phase"] == "cancelled"

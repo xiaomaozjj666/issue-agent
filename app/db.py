@@ -19,11 +19,27 @@ CREATE TABLE IF NOT EXISTS sessions (
     report_json  TEXT,
     display_title TEXT,
     status       TEXT NOT NULL DEFAULT 'queued',
+    phase        TEXT NOT NULL DEFAULT 'queued',
+    version      INTEGER NOT NULL DEFAULT 0,
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
     archived_at  TEXT,
     created_at   TEXT DEFAULT (datetime('now')),
     updated_at   TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS session_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id   TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    event_type   TEXT NOT NULL,
+    data_json    TEXT,
+    message      TEXT NOT NULL DEFAULT '',
+    created_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_events_session_id
+    ON session_events(session_id, id);
 
 CREATE TABLE IF NOT EXISTS pending_pr (
     session_id   TEXT PRIMARY KEY REFERENCES sessions(session_id),
@@ -59,6 +75,10 @@ async def _migrate_sessions(conn: aiosqlite.Connection) -> None:
     additions = {
         "display_title": "TEXT",
         "status": "TEXT NOT NULL DEFAULT 'queued'",
+        "phase": "TEXT NOT NULL DEFAULT 'queued'",
+        "version": "INTEGER NOT NULL DEFAULT 0",
+        "metrics_json": "TEXT NOT NULL DEFAULT '{}'",
+        "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
         "error_message": "TEXT",
         "archived_at": "TEXT",
     }

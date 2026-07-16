@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from app.db import get_db
-from app.sessions import Session, SessionManager
+from app.sessions import Session, SessionConflictError, SessionManager
 
 
 @pytest.fixture
@@ -23,6 +23,9 @@ async def test_create_returns_session_with_id_and_url(manager) -> None:
     assert session.files_read == []
     assert session.report is None
     assert session.pending_pr is None
+    assert session.phase == "queued"
+    assert session.version == 0
+    assert session.metrics == {}
 
 
 async def test_create_generates_unique_ids(manager) -> None:
@@ -62,6 +65,62 @@ async def test_sqlite_persists_proposal_and_reuses_session_lock(tmp_path) -> Non
     assert first.lock is second.lock
     assert first.pending_pr == session.pending_pr
     await manager.close()
+
+
+async def test_sqlite_persists_event_history_and_metrics(tmp_path) -> None:
+    manager = SessionManager(db_path=str(tmp_path / "sessions.db"))
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.phase = "exploring"
+    session.metrics = {"model_calls": 2, "tool_calls": 1}
+    await manager.save(session)
+    await manager.append_event(
+        session.session_id,
+        {"type": "phase", "data": {"phase": "exploring", "label": "Exploring"}, "message": ""},
+    )
+
+    restored = await manager.get(session.session_id)
+    events = await manager.list_events(session.session_id)
+
+    assert restored is not None
+    assert restored.phase == "exploring"
+    assert restored.metrics == {"model_calls": 2, "tool_calls": 1}
+    assert events[0]["type"] == "phase"
+    assert events[0]["data"]["label"] == "Exploring"
+    await manager.close()
+
+
+async def test_sqlite_detects_concurrent_session_updates(tmp_path) -> None:
+    manager = SessionManager(db_path=str(tmp_path / "sessions.db"))
+    created = await manager.create("https://github.com/acme/widget/issues/1")
+    first = await manager.get(created.session_id)
+    second = await manager.get(created.session_id)
+    assert first is not None and second is not None
+
+    first.display_title = "First writer"
+    await manager.save(first)
+    second.display_title = "Stale writer"
+    with pytest.raises(SessionConflictError):
+        await manager.save(second)
+
+    restored = await manager.get(created.session_id)
+    assert restored is not None
+    assert restored.display_title == "First writer"
+    await manager.close()
+
+
+async def test_cancel_request_and_stale_recovery(manager) -> None:
+    running = await manager.create("https://github.com/acme/widget/issues/1")
+    running.status = "running"
+    running.updated_at = "2020-01-01T00:00:00+00:00"
+
+    assert await manager.request_cancel(running.session_id) is True
+    assert await manager.is_cancel_requested(running.session_id) is True
+
+    running.cancel_requested = False
+    running.updated_at = "2020-01-01T00:00:00+00:00"
+    assert await manager.recover_stale("2021-01-01T00:00:00+00:00") == 1
+    assert running.status == "failed"
+    assert running.phase == "interrupted"
 
 
 async def test_session_history_filters_searches_and_deletes(manager) -> None:
@@ -112,7 +171,16 @@ async def test_sqlite_migrates_legacy_session_schema(tmp_path) -> None:
     columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(sessions)")).fetchall()}
     await db.close()
 
-    assert {"display_title", "status", "error_message", "archived_at"} <= columns
+    assert {
+        "display_title",
+        "status",
+        "phase",
+        "version",
+        "metrics_json",
+        "cancel_requested",
+        "error_message",
+        "archived_at",
+    } <= columns
 
 
 def test_session_dataclass_defaults() -> None:
@@ -124,6 +192,8 @@ def test_session_dataclass_defaults() -> None:
     assert session.files_read == []
     assert session.report is None
     assert session.pending_pr is None
+    assert session.phase == "queued"
+    assert session.metrics == {}
 
 
 def test_session_dataclass_mutable_defaults_are_independent() -> None:

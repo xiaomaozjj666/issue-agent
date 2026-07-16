@@ -13,6 +13,10 @@ from app.models import AnalysisReport, IssueData
 logger = logging.getLogger(__name__)
 
 
+class SessionConflictError(RuntimeError):
+    """Raised when another process updated a session first."""
+
+
 @dataclass
 class Session:
     session_id: str
@@ -26,6 +30,10 @@ class Session:
     pending_pr: dict | None = None
     display_title: str | None = None
     status: str = "queued"
+    phase: str = "queued"
+    version: int = 0
+    metrics: dict[str, int | float] = field(default_factory=dict)
+    cancel_requested: bool = False
     error_message: str | None = None
     archived_at: str | None = None
     created_at: str = field(default_factory=lambda: _now())
@@ -38,12 +46,14 @@ class MemoryStore:
 
     def __init__(self, max_sessions: int = 100) -> None:
         self._sessions: dict[str, Session] = {}
+        self._events: dict[str, list[dict]] = {}
         self._max = max_sessions
 
     async def create(self, issue_url: str) -> Session:
         sid = uuid.uuid4().hex[:12]
         session = Session(session_id=sid, issue_url=issue_url)
         self._sessions[sid] = session
+        self._events[sid] = []
         self._evict()
         return session
 
@@ -52,6 +62,41 @@ class MemoryStore:
 
     async def save(self, session: Session) -> None:
         session.updated_at = _now()
+        session.version += 1
+
+    async def append_event(self, session_id: str, event: dict) -> dict:
+        records = self._events.setdefault(session_id, [])
+        record = {**event, "sequence": len(records) + 1, "created_at": _now()}
+        records.append(record)
+        return record
+
+    async def list_events(self, session_id: str) -> list[dict]:
+        return list(self._events.get(session_id, []))
+
+    async def request_cancel(self, session_id: str) -> bool:
+        session = self._sessions.get(session_id)
+        if session is None or session.status != "running":
+            return False
+        session.cancel_requested = True
+        session.updated_at = _now()
+        session.version += 1
+        return True
+
+    async def is_cancel_requested(self, session_id: str) -> bool:
+        session = self._sessions.get(session_id)
+        return bool(session and session.cancel_requested)
+
+    async def recover_stale(self, cutoff: str) -> int:
+        recovered = 0
+        for session in self._sessions.values():
+            if session.status == "running" and session.updated_at < cutoff:
+                session.status = "failed"
+                session.phase = "interrupted"
+                session.error_message = "Investigation was interrupted before completion"
+                session.updated_at = _now()
+                session.version += 1
+                recovered += 1
+        return recovered
 
     async def save_pr_proposal(self, session_id: str, proposal: dict) -> None:
         if session := self._sessions.get(session_id):
@@ -77,12 +122,14 @@ class MemoryStore:
         return sorted(sessions, key=lambda session: session.updated_at, reverse=True)[:limit]
 
     async def delete(self, session_id: str) -> bool:
+        self._events.pop(session_id, None)
         return self._sessions.pop(session_id, None) is not None
 
     def _evict(self) -> None:
         while len(self._sessions) > self._max:
             oldest = next(iter(self._sessions))
             del self._sessions[oldest]
+            self._events.pop(oldest, None)
 
 
 class SqliteStore:
@@ -120,11 +167,11 @@ class SqliteStore:
     async def save(self, session: Session) -> None:
         db = await self._get_conn()
         session.updated_at = _now()
-        await db.execute(
+        cursor = await db.execute(
             """UPDATE sessions SET issue_json=?, tree_json=?, messages_json=?, file_cache_json=?,
-               files_read_json=?, report_json=?, display_title=?, status=?, error_message=?,
-               archived_at=?, updated_at=?
-               WHERE session_id=?""",
+               files_read_json=?, report_json=?, display_title=?, status=?, phase=?, metrics_json=?,
+               cancel_requested=?, error_message=?, archived_at=?, updated_at=?, version=version+1
+               WHERE session_id=? AND version=?""",
             (
                 session.issue.model_dump_json() if session.issue else None,
                 json.dumps(session.tree, ensure_ascii=False),
@@ -134,13 +181,94 @@ class SqliteStore:
                 session.report.model_dump_json() if session.report else None,
                 session.display_title,
                 session.status,
+                session.phase,
+                json.dumps(session.metrics, ensure_ascii=False),
+                int(session.cancel_requested),
                 session.error_message,
                 session.archived_at,
                 session.updated_at,
                 session.session_id,
+                session.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            await db.rollback()
+            raise SessionConflictError(f"Session {session.session_id} was updated concurrently")
+        await db.commit()
+        session.version += 1
+
+    async def append_event(self, session_id: str, event: dict) -> dict:
+        db = await self._get_conn()
+        cursor = await db.execute(
+            "INSERT INTO session_events (session_id, event_type, data_json, message, created_at) VALUES (?,?,?,?,?)",
+            (
+                session_id,
+                event["type"],
+                (
+                    json.dumps(event.get("data"), ensure_ascii=False, default=str)
+                    if event.get("data") is not None
+                    else None
+                ),
+                event.get("message", ""),
+                _now(),
             ),
         )
         await db.commit()
+        return {
+            **event,
+            "sequence": cursor.lastrowid,
+            "created_at": _now(),
+        }
+
+    async def list_events(self, session_id: str) -> list[dict]:
+        db = await self._get_conn()
+        rows = await (
+            await db.execute(
+                "SELECT id, event_type, data_json, message, created_at FROM session_events "
+                "WHERE session_id=? ORDER BY id",
+                (session_id,),
+            )
+        ).fetchall()
+        return [
+            {
+                "sequence": row["id"],
+                "type": row["event_type"],
+                "data": json.loads(row["data_json"]) if row["data_json"] else None,
+                "message": row["message"] or "",
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    async def request_cancel(self, session_id: str) -> bool:
+        db = await self._get_conn()
+        cursor = await db.execute(
+            "UPDATE sessions SET cancel_requested=1, updated_at=?, version=version+1 "
+            "WHERE session_id=? AND status='running'",
+            (_now(), session_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+    async def is_cancel_requested(self, session_id: str) -> bool:
+        db = await self._get_conn()
+        row = await (
+            await db.execute("SELECT cancel_requested FROM sessions WHERE session_id=?", (session_id,))
+        ).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    async def recover_stale(self, cutoff: str) -> int:
+        db = await self._get_conn()
+        cursor = await db.execute(
+            """UPDATE sessions
+               SET status='failed', phase='interrupted',
+                   error_message='Investigation was interrupted before completion',
+                   updated_at=?, version=version+1
+               WHERE status='running' AND updated_at < ?""",
+            (_now(), cutoff),
+        )
+        await db.commit()
+        return cursor.rowcount
 
     async def save_pr_proposal(self, session_id: str, proposal: dict) -> None:
         db = await self._get_conn()
@@ -230,6 +358,21 @@ class SessionManager:
         if session.pending_pr is not None:
             await self._store.save_pr_proposal(session.session_id, session.pending_pr)
 
+    async def append_event(self, session_id: str, event: dict) -> dict:
+        return await self._store.append_event(session_id, event)
+
+    async def list_events(self, session_id: str) -> list[dict]:
+        return await self._store.list_events(session_id)
+
+    async def request_cancel(self, session_id: str) -> bool:
+        return await self._store.request_cancel(session_id)
+
+    async def is_cancel_requested(self, session_id: str) -> bool:
+        return await self._store.is_cancel_requested(session_id)
+
+    async def recover_stale(self, cutoff: str) -> int:
+        return await self._store.recover_stale(cutoff)
+
     async def save_pr_proposal(self, session_id: str, proposal: dict) -> None:
         await self._store.save_pr_proposal(session_id, proposal)
 
@@ -260,17 +403,23 @@ class SessionManager:
 def _row_to_session(row) -> Session:
     now = _now()
     raw_status = row["status"] or "queued"
-    status = raw_status if raw_status in {"queued", "running", "completed", "failed"} else "queued"
+    status = raw_status if raw_status in {"queued", "running", "completed", "failed", "cancelled"} else "queued"
     s = Session(
         session_id=row["session_id"],
         issue_url=row["issue_url"],
         display_title=row["display_title"],
         status=status,
+        phase=row["phase"] or "queued",
+        version=row["version"] or 0,
+        cancel_requested=bool(row["cancel_requested"]),
         error_message=row["error_message"],
         archived_at=row["archived_at"],
         created_at=row["created_at"] or now,
         updated_at=row["updated_at"] or now,
     )
+    if row["metrics_json"]:
+        with suppress(Exception):
+            s.metrics = json.loads(row["metrics_json"])
     if row["issue_json"]:
         with suppress(Exception):
             s.issue = IssueData.model_validate_json(row["issue_json"])

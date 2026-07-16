@@ -1,5 +1,6 @@
 from app.agent import IssueAgent, ModelResponseError
 from app.config import Settings, get_settings
+from app.evidence import EvidenceValidator
 from app.github import GitHubClient, GitHubError, GitHubFileSkipped, GitHubRateLimitError
 from app.main import app
 from app.models import (
@@ -10,9 +11,10 @@ from app.models import (
     CodeReference,
     EvidenceAudit,
     IssueData,
+    SessionEventRecord,
     SourceFile,
 )
-from app.sessions import Session, SessionManager
+from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 
 __all__ = [
@@ -22,6 +24,7 @@ __all__ = [
     "ChatResponse",
     "CodeReference",
     "EvidenceAudit",
+    "EvidenceValidator",
     "GitHubClient",
     "GitHubError",
     "GitHubFileSkipped",
@@ -31,6 +34,8 @@ __all__ = [
     "ModelResponseError",
     "Settings",
     "Session",
+    "SessionConflictError",
+    "SessionEventRecord",
     "SessionManager",
     "SourceFile",
     "get_tool_definitions",

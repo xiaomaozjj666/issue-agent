@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 ConfidenceLevel = Literal["low", "medium", "high"]
-SessionStatus = Literal["queued", "running", "completed", "failed"]
+SessionStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 _LINES_PATTERN = re.compile(r"L\d+(?:-L?\d+)?")
 
@@ -112,15 +112,27 @@ class SessionSummary(BaseModel):
     issue_number: int | None = None
     title: str
     status: SessionStatus
+    phase: str = "queued"
     error_message: str | None = None
     archived: bool = False
+    version: int = 0
+    metrics: dict[str, int | float] = Field(default_factory=dict)
     created_at: str
     updated_at: str
+
+
+class SessionEventRecord(BaseModel):
+    sequence: int
+    type: str
+    data: dict[str, Any] | None = None
+    message: str = ""
+    created_at: str
 
 
 class SessionDetail(SessionSummary):
     messages: list[dict[str, Any]] = Field(default_factory=list)
     report: AnalysisReport | None = None
+    events: list[SessionEventRecord] = Field(default_factory=list)
 
 
 class SessionUpdateRequest(BaseModel):

@@ -278,6 +278,33 @@ class GitHubClient:
             for c in commits
         ]
 
+    async def search_code(self, issue: IssueData, query: str, limit: int = 20) -> list[dict]:
+        """Search repository-wide code without requiring the agent to read every candidate file."""
+        normalized = " ".join(query.split()).strip()
+        if not normalized or len(normalized) > 120:
+            raise ValueError("Code search query must contain between 1 and 120 characters")
+        if re.search(r"\b(?:repo|org|user|fork):", normalized, re.IGNORECASE):
+            raise ValueError("Code search query cannot override repository scope")
+        repo_filter = f"repo:{issue.owner}/{issue.repo}"
+        response = await self._get(
+            "/search/code",
+            params={"q": f"{normalized} {repo_filter}", "per_page": max(1, min(limit, 30))},
+            headers={"Accept": "application/vnd.github.text-match+json"},
+        )
+        payload = response.json()
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        results: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                continue
+            fragments = [
+                match.get("fragment", "")[:500]
+                for match in item.get("text_matches", [])
+                if isinstance(match, dict) and match.get("fragment")
+            ]
+            results.append({"path": item["path"], "fragments": fragments[:3]})
+        return results
+
     async def list_branches(self, owner: str, repo: str) -> list[dict]:
         repo_segment = self._repo_segment(owner, repo)
         response = await self._get(f"/repos/{repo_segment}/branches", params={"per_page": 30})
@@ -351,6 +378,15 @@ class GitHubClient:
             raise GitHubError(f"Failed to create branch: {response.text}")
         return response.json()
 
+    async def delete_branch(self, owner: str, repo: str, branch: str) -> None:
+        """Best-effort rollback for a branch created by an incomplete PR workflow."""
+        self._check_write_mode()
+        repo_segment = self._repo_segment(owner, repo)
+        encoded_branch = quote(branch, safe="")
+        response = await self._client.delete(f"/repos/{repo_segment}/git/refs/heads/{encoded_branch}")
+        if response.status_code not in {204, 404}:
+            raise GitHubError(f"Failed to roll back branch: {response.text}")
+
     async def create_or_update_file(
         self,
         owner: str,
@@ -396,7 +432,10 @@ class GitHubClient:
         if response.status_code >= 400:
             raise GitHubError(f"Failed to create PR: {response.text}")
         data = response.json()
-        return {"pr_url": data.get("html_url", ""), "number": data.get("number", 0)}
+        pr_url = data.get("html_url", "")
+        if not isinstance(pr_url, str) or not pr_url.startswith("https://github.com/"):
+            raise GitHubError("GitHub returned an invalid pull request URL")
+        return {"pr_url": pr_url, "number": data.get("number", 0)}
 
 
 def select_candidate_paths(paths: list[str], issue: IssueData, limit: int) -> list[str]:
