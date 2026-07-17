@@ -45,6 +45,19 @@ Every requested file is normalized and validated against the repository tree bef
 
 ## Quick Start
 
+### Windows one-click launcher
+
+After completing Local Setup once, open the project folder and double-click:
+
+```text
+打开 Issue Agent.cmd
+```
+
+The launcher checks the local environment, starts the service, and opens
+`http://127.0.0.1:8000/` automatically. Keep its terminal window open while using the agent;
+press `Ctrl+C` in that window to stop it. If the service is already running, the launcher only
+opens the existing page instead of starting a duplicate process.
+
 ### Docker
 
 ```bash
