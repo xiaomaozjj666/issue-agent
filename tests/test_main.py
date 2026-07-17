@@ -36,6 +36,8 @@ def test_web_ui_renders() -> None:
     assert 'id="history-search"' in response.text
     assert 'id="back-button"' in response.text
     assert 'id="cancel-analysis"' in response.text
+    assert 'class="brand-identity"' in response.text
+    assert '/static/css/github-theme.css' in response.text
     assert '/static/js/core.js' in response.text
     assert "case'review'" in response.text
 
@@ -45,6 +47,7 @@ def test_static_frontend_modules_are_served() -> None:
     script = client.get("/static/js/core.js")
     runtime = client.get("/static/js/session-runtime.js")
     stylesheet = client.get("/static/css/runtime.css")
+    github_theme = client.get("/static/css/github-theme.css")
 
     assert script.status_code == 200
     assert "window.apiJson" in script.text
@@ -53,6 +56,9 @@ def test_static_frontend_modules_are_served() -> None:
     assert stylesheet.status_code == 200
     assert ".investigation-timeline" in stylesheet.text
     assert ".review-chip" in stylesheet.text
+    assert github_theme.status_code == 200
+    assert "--canvas-inset" in github_theme.text
+    assert ".brand-identity" in github_theme.text
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:
