@@ -31,7 +31,7 @@ from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import validate_pr_proposal
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="GitHub Issue Agent", version="0.4.0")
+app = FastAPI(title="GitHub Issue Agent", version="0.5.0")
 app.add_middleware(AuthMiddleware)
 
 _session_manager: SessionManager | None = None
@@ -451,6 +451,13 @@ def format_report_text(report: AnalysisReport) -> str:
         lines.append("Risks:")
         for risk in report.risks:
             lines.append(f"  - {risk}")
+    if report.review_audit.status != "not_run":
+        lines.append("")
+        lines.append(f"Independent Review: {report.review_audit.status}")
+        if report.review_audit.summary:
+            lines.append(report.review_audit.summary)
+        for finding in report.review_audit.findings:
+            lines.append(f"  - {finding}")
     return "\n".join(lines)
 
 

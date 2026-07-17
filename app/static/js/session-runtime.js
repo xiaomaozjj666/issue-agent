@@ -3,7 +3,7 @@
 
   window.addEventTimeline = function addEventTimeline(events, metrics) {
     const meaningful = events.filter(function (event) {
-      return ["phase", "tool_call", "interrupted", "cancelled"].includes(event.type);
+      return ["phase", "tool_call", "review", "interrupted", "cancelled"].includes(event.type);
     });
     if (!meaningful.length) return null;
 
@@ -14,6 +14,7 @@
     if (metrics && metrics.duration_ms !== undefined) metricItems.push(formatDuration(metrics.duration_ms));
     if (metrics && metrics.model_calls !== undefined) metricItems.push(countLabel(metrics.model_calls, "model call"));
     if (metrics && metrics.tool_calls !== undefined) metricItems.push(countLabel(metrics.tool_calls, "tool call"));
+    if (metrics && metrics.review_calls !== undefined) metricItems.push(countLabel(metrics.review_calls, "review"));
     if (metrics && metrics.files_read !== undefined) metricItems.push(countLabel(metrics.files_read, "file read", "files read"));
     const steps = meaningful
       .slice(-10)
@@ -21,6 +22,7 @@
         let label = event.message || event.type;
         if (event.type === "phase" && event.data) label = event.data.label || event.data.phase;
         if (event.type === "tool_call" && event.data) label = `Tool: ${event.data.name}`;
+        if (event.type === "review" && event.data) label = `Independent review: ${event.data.status}`;
         return `<div class="timeline-step"><span>${escapeHtml(label)}</span></div>`;
       })
       .join("");

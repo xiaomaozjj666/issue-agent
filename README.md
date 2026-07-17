@@ -16,6 +16,7 @@ Every requested file is normalized and validated against the repository tree bef
 
 - 🔍 **Tool-calling loop** — explores paths, repository-wide code search, source files, and Git history with bounded tools
 - 🛡️ **Evidence audit** — cross-checks model claims against actually-read files, forces `confidence: low` when unsupported
+- 🧭 **Independent review** — a separate reviewer agent challenges the root cause, alternatives, fix status, and tests
 - 📊 **Structured reports** — JSON output with summary, root cause, code evidence, proposed changes, unified diff patches, tests, and risks
 - 💬 **Interactive chat** — follow-up conversations with session persistence
 - 🗂️ **Session workspace** — searchable history with durable investigation events, metrics, cancellation, and recovery
@@ -39,6 +40,8 @@ Every requested file is normalized and validated against the repository tree bef
   outside the exact source excerpt given to the model.
 - Returns an evidence audit and forces confidence to `low` when no valid source reference supports the
   reported root cause.
+- Runs a bounded independent reviewer after deterministic evidence validation; reviewer output is validated again
+  and safely degrades to the investigator report if the review provider is unavailable.
 
 ## Quick Start
 
@@ -99,6 +102,10 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `MAX_OUTPUT_TOKENS` | `4000` | Max tokens per model response |
 | `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
 | `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
+| `INDEPENDENT_REVIEW` | `true` | Run the independent reviewer before publishing the final report |
+| `REVIEW_MODEL` | *(same as `OPENAI_MODEL`)* | Optional separate model for independent review |
+| `REVIEW_MAX_TOKENS` | `4000` | Maximum output tokens for the reviewer decision |
+| `MAX_REVIEW_CONTEXT_CHARS` | `32000` | Maximum issue, report, and source context supplied to the reviewer |
 | `LANGUAGE` | `zh` | Response language (`zh` or `en`) |
 | `API_KEY` | *(optional)* | Require this value in the `X-API-Key` request header |
 | `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |

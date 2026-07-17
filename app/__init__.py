@@ -11,9 +11,12 @@ from app.models import (
     CodeReference,
     EvidenceAudit,
     IssueData,
+    ReviewAudit,
+    ReviewOutcome,
     SessionEventRecord,
     SourceFile,
 )
+from app.reviewer import ReviewerAgent, ReviewResponseError
 from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 
@@ -32,6 +35,10 @@ __all__ = [
     "IssueAgent",
     "IssueData",
     "ModelResponseError",
+    "ReviewAudit",
+    "ReviewerAgent",
+    "ReviewOutcome",
+    "ReviewResponseError",
     "Settings",
     "Session",
     "SessionConflictError",

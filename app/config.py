@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     max_output_tokens: int = Field(default=4_000, ge=500, le=8_000)
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
     max_chat_tokens: int = Field(default=2_000, ge=500, le=8_000)
+    independent_review: bool = True
+    review_model: str | None = None
+    review_max_tokens: int = Field(default=4_000, ge=500, le=8_000)
+    max_review_context_chars: int = Field(default=32_000, ge=4_000, le=100_000)
 
     # Runtime behavior
     language: str = Field(default="zh", pattern=r"^(zh|en)$")

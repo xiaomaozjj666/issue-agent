@@ -521,10 +521,12 @@ function addReportPreview(data){
   const container=document.getElementById('messages');
   const card=document.createElement('article');
   card.className='msg assistant report-preview';
+  const review=data.review_audit||{status:'not_run'};
+  const reviewChip=review.status!=='not_run'?'<span class="review-chip '+escapeHtml(review.status)+'">review '+escapeHtml(review.status)+'</span>':'';
   card.innerHTML='<div class="report-preview-label">Analysis complete</div>'+
     '<h3 class="report-preview-title">'+escapeHtml(data.summary)+'</h3>'+
     '<p class="report-preview-root"><strong>Root cause</strong><br>'+escapeHtml(data.root_cause)+'</p>'+
-    '<div class="report-preview-footer"><span class="badge '+escapeHtml(data.confidence)+'">'+escapeHtml(data.confidence)+'</span>'+
+    '<div class="report-preview-footer"><span class="badge '+escapeHtml(data.confidence)+'">'+escapeHtml(data.confidence)+'</span>'+reviewChip+
     '<button class="report-preview-button" type="button">Open full report</button></div>';
   card.querySelector('.report-preview-button').onclick=function(){toggleReport(true)};
   container.appendChild(card);
@@ -598,6 +600,9 @@ async function analyze(){
             case'thinking':
               addMsg('assistant',evt.data.content);
               break;
+            case'review':
+              document.getElementById('progress').textContent='Independent review: '+evt.data.status;
+              break;
             case'report':
               report=evt.data;
               renderReport(report);
@@ -638,6 +643,13 @@ function renderReport(r){
   const d=document.getElementById('report');
   let h='<h3>'+escapeHtml(r.summary)+'</h3>';
   h+='<div class="report-meta"><span>Confidence</span><span class="badge '+r.confidence+'">'+r.confidence+'</span></div>';
+  const review=r.review_audit||{status:'not_run',summary:'',findings:[]};
+  if(review.status!=='not_run'){
+    h+='<section class="report-section review-section '+escapeHtml(review.status)+'"><span class="review-chip '+escapeHtml(review.status)+'">Independent review · '+escapeHtml(review.status)+'</span>';
+    if(review.summary)h+='<p class="review-summary">'+escapeHtml(review.summary)+'</p>';
+    if(review.findings&&review.findings.length)h+='<ul class="review-findings">'+review.findings.map(function(f){return'<li>'+escapeHtml(f)+'</li>'}).join('')+'</ul>';
+    h+='</section>';
+  }
   h+='<section class="report-section"><h4>Root cause</h4><p>'+escapeHtml(r.root_cause)+'</p></section>';
   if(r.evidence&&r.evidence.length){
     h+='<section class="report-section"><h4>Code evidence</h4><div class="evidence-list">';

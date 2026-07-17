@@ -37,6 +37,7 @@ def test_web_ui_renders() -> None:
     assert 'id="back-button"' in response.text
     assert 'id="cancel-analysis"' in response.text
     assert '/static/js/core.js' in response.text
+    assert "case'review'" in response.text
 
 
 def test_static_frontend_modules_are_served() -> None:
@@ -51,6 +52,7 @@ def test_static_frontend_modules_are_served() -> None:
     assert "window.cancelAnalysis" in runtime.text
     assert stylesheet.status_code == 200
     assert ".investigation-timeline" in stylesheet.text
+    assert ".review-chip" in stylesheet.text
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:

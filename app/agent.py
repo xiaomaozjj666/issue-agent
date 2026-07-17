@@ -12,6 +12,7 @@ from app.events import (
     done_event,
     phase_event,
     report_event,
+    review_event,
     start_event,
     thinking_event,
     tool_call_event,
@@ -19,8 +20,15 @@ from app.events import (
 )
 from app.evidence import EvidenceValidator
 from app.github import GitHubClient, parse_issue_url, select_candidate_paths
-from app.i18n import get_chat_system_prompt, get_final_output_prompt, get_system_prompt, t
-from app.models import AnalysisReport, ChatResponse, IssueData
+from app.i18n import (
+    get_chat_system_prompt,
+    get_final_output_prompt,
+    get_review_unavailable_message,
+    get_system_prompt,
+    t,
+)
+from app.models import AnalysisReport, ChatResponse, IssueData, ReviewAudit
+from app.reviewer import ReviewerAgent
 from app.sessions import Session
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 
@@ -66,7 +74,7 @@ class IssueAgent:
         owner, repo, number = parse_issue_url(issue_url)
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
         if session is not None:
-            session.metrics = {"model_calls": 0, "tool_calls": 0, "files_read": 0}
+            session.metrics = {"model_calls": 0, "tool_calls": 0, "review_calls": 0, "files_read": 0}
         yield phase_event("fetching", "Fetching issue and repository tree")
 
         async with GitHubClient(
@@ -131,6 +139,31 @@ class IssueAgent:
             if session is not None:
                 session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
             report = await self._generate_report(messages, executor)
+            if self.settings.independent_review:
+                yield phase_event("reviewing", "Running independent evidence review")
+                if session is not None:
+                    session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
+                    session.metrics["review_calls"] = int(session.metrics.get("review_calls", 0)) + 1
+                try:
+                    outcome = await ReviewerAgent(self.settings, client).review(
+                        issue=issue,
+                        report=report,
+                        file_cache=executor.file_cache,
+                        files_read=executor.files_read,
+                        line_counts=executor.line_counts,
+                    )
+                    report = outcome.report
+                except Exception:
+                    logger.exception("Independent review failed; preserving deterministically validated report")
+                    message = get_review_unavailable_message(self.settings.language)
+                    report.review_audit = ReviewAudit(status="unavailable", summary=message)
+                    if message not in report.risks:
+                        report.risks.append(message)
+                yield review_event(
+                    report.review_audit.status,
+                    report.review_audit.summary,
+                    report.review_audit.findings,
+                )
             if session is not None:
                 session.file_cache = executor.file_cache
                 session.files_read = executor.files_read

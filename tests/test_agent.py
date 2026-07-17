@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.agent import IssueAgent, ModelResponseError, _serialize_message, _trim_session_messages
+from app.config import Settings
 from app.models import ChatResponse, SourceFile
 from app.models import IssueData as _IssueData
 from app.sessions import Session
@@ -115,6 +116,89 @@ async def test_investigate_stream_yields_events(
     assert "tool_result" in types
     assert "report" in types
     assert "done" in types
+
+
+async def test_investigation_runs_independent_reviewer(
+    fake_client, fake_response, fake_tool_call, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    tc = fake_tool_call("read_file", {"path": "src/parser.py"})
+    report_data = {
+        "summary": "Parser bug",
+        "root_cause": "Fails at src/parser.py L1",
+        "confidence": "medium",
+        "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse definition"}],
+        "proposed_changes": ["Fix"],
+        "patch": None,
+        "tests": ["Add regression test"],
+        "risks": [],
+    }
+    review_data = {
+        "verdict": "approved",
+        "summary": "The evidence supports the report.",
+        "findings": ["The regression test covers the failure path."],
+        "report": report_data,
+    }
+    client = fake_client(
+        [
+            fake_response(tool_calls=[tc]),
+            fake_response(content="Done"),
+            fake_response(content=json.dumps(report_data)),
+            fake_response(content=json.dumps(review_data)),
+        ]
+    )
+    agent = IssueAgent(
+        Settings(openai_api_key="test-key", max_agent_iterations=5, independent_review=True),
+        client=client,
+    )
+    session = Session(session_id="reviewed", issue_url="https://github.com/acme/widget/issues/1")
+
+    events = [
+        event
+        async for event in agent.investigate_stream(
+            "https://github.com/acme/widget/issues/1",
+            session=session,
+        )
+    ]
+
+    assert "review" in [event.type for event in events]
+    assert session.report is not None
+    assert session.report.review_audit.status == "approved"
+    assert session.metrics["review_calls"] == 1
+    assert session.metrics["model_calls"] == 4
+
+
+async def test_investigation_degrades_safely_when_reviewer_fails(
+    fake_client, fake_response, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    report_data = {
+        "summary": "Parser bug",
+        "root_cause": "Unverified parser failure",
+        "confidence": "low",
+        "evidence": [],
+        "proposed_changes": ["Investigate further"],
+        "patch": None,
+        "tests": [],
+        "risks": [],
+    }
+    client = fake_client(
+        [
+            fake_response(content="Done"),
+            fake_response(content=json.dumps(report_data)),
+            fake_response(content="{}"),
+        ]
+    )
+    agent = IssueAgent(
+        Settings(openai_api_key="test-key", max_agent_iterations=5, independent_review=True),
+        client=client,
+    )
+
+    report = await agent.investigate("https://github.com/acme/widget/issues/1")
+
+    assert report.summary == "Parser bug"
+    assert report.review_audit.status == "unavailable"
+    assert report.review_audit.summary in report.risks
 
 
 async def test_investigate_returns_report(

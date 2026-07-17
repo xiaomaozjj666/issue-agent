@@ -50,6 +50,13 @@ def report_event(report: dict) -> AgentEvent:
     return AgentEvent(type="report", data=report)
 
 
+def review_event(status: str, summary: str, findings: list[str]) -> AgentEvent:
+    return AgentEvent(
+        type="review",
+        data={"status": status, "summary": summary, "findings": findings[:10]},
+    )
+
+
 def error_event(message: str) -> AgentEvent:
     return AgentEvent(type="error", message=message)
 

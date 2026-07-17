@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 ConfidenceLevel = Literal["low", "medium", "high"]
 SessionStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+ReviewStatus = Literal["not_run", "approved", "revised", "unavailable"]
 
 _LINES_PATTERN = re.compile(r"L\d+(?:-L?\d+)?")
 
@@ -45,6 +46,13 @@ class EvidenceAudit(BaseModel):
     root_cause_supported: bool = False
 
 
+class ReviewAudit(BaseModel):
+    status: ReviewStatus = "not_run"
+    summary: str = ""
+    findings: list[str] = Field(default_factory=list)
+    reviewer_model: str | None = None
+
+
 class AnalysisReport(BaseModel):
     summary: str
     root_cause: str
@@ -56,6 +64,14 @@ class AnalysisReport(BaseModel):
     risks: list[str]
     files_examined: list[str] = Field(default_factory=list)
     evidence_audit: EvidenceAudit = Field(default_factory=EvidenceAudit)
+    review_audit: ReviewAudit = Field(default_factory=ReviewAudit)
+
+
+class ReviewOutcome(BaseModel):
+    verdict: Literal["approved", "revised"]
+    summary: str
+    findings: list[str] = Field(default_factory=list)
+    report: AnalysisReport
 
 
 class IssueData(BaseModel):

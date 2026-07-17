@@ -91,6 +91,70 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.review-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font: 10px "Cascadia Code", Consolas, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.review-chip.approved {
+  border-color: color-mix(in srgb, var(--green) 52%, var(--border));
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+
+.review-chip.revised {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.review-chip.unavailable {
+  border-color: color-mix(in srgb, var(--yellow) 52%, var(--border));
+  color: var(--yellow);
+}
+
+.review-section {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: color-mix(in srgb, var(--card) 86%, var(--accent-soft));
+}
+
+.review-section::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.review-section.approved::before {
+  background: var(--green);
+}
+
+.review-section.unavailable::before {
+  background: var(--yellow);
+}
+
+.review-summary {
+  margin-top: 8px;
+  color: var(--fg);
+}
+
+.review-findings {
+  margin-top: 10px;
+  color: var(--muted);
+}
+
 @media (max-width: 640px) {
   #cancel-analysis,
   #report-toggle {

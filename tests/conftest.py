@@ -58,19 +58,19 @@ class _FakeClient:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(openai_api_key="test-key", max_agent_iterations=5)
+    return Settings(openai_api_key="test-key", max_agent_iterations=5, independent_review=False)
 
 
 @pytest.fixture
 def make_settings() -> Settings:
-    return Settings(openai_api_key="test-key")
+    return Settings(openai_api_key="test-key", independent_review=False)
 
 
 @pytest.fixture
 def make_agent():
     def _factory(**kwargs: object) -> IssueAgent:
         return IssueAgent(
-            Settings(openai_api_key="test-key", max_agent_iterations=5),
+            Settings(openai_api_key="test-key", max_agent_iterations=5, independent_review=False),
             **kwargs,
         )
 
