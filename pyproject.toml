@@ -1,6 +1,6 @@
 [project]
 name = "github-issue-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "GitHub Issue analysis agent with safe, opt-in pull request creation"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,8 +35,10 @@ Repository = "https://github.com/xiaomaozjj666/issue-agent"
 [project.optional-dependencies]
 dev = [
   "httpx2>=2,<3",
+  "mypy>=1.15,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.25,<1",
+  "pytest-cov>=6,<8",
   "ruff>=0.8,<1",
 ]
 
@@ -61,6 +63,20 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_configs = true
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true
+skip_covered = true
+precision = 1
 
 [tool.setuptools.package-data]
 app = ["py.typed", "templates/*.html", "static/css/*.css", "static/js/*.js"]

@@ -34,7 +34,7 @@ async def test_reviewer_approves_and_records_independent_audit(
     )
     client = fake_client([fake_response(content=payload)])
     reviewer = ReviewerAgent(
-        Settings(openai_api_key="test-key", openai_model="review-test-model", language="en"),
+        Settings(openai_api_key="test-key", review_model="review-test-model", language="en"),
         client,
     )
 
@@ -51,7 +51,8 @@ async def test_reviewer_approves_and_records_independent_audit(
     assert outcome.report.review_audit.reviewer_model == "review-test-model"
     assert outcome.report.evidence_audit.valid_references == 1
     call = client.chat.completions.calls[0]
-    assert call["temperature"] == 0
+    assert call["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert call["reasoning_effort"] == "high"
     assert "Write every human-readable field in English" in call["messages"][0]["content"]
     assert "SOURCE EXCERPTS" in call["messages"][1]["content"]
 

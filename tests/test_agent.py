@@ -82,6 +82,17 @@ def test_serialize_message_with_tool_calls() -> None:
     assert result["tool_calls"][0]["function"]["name"] == "read_file"
 
 
+def test_serialize_message_preserves_reasoning_content_for_deepseek_tool_turns() -> None:
+    tc = SimpleNamespace(
+        id="call_1", type="function", function=SimpleNamespace(name="read_file", arguments='{"path":"a.py"}')
+    )
+    msg = SimpleNamespace(content="", reasoning_content="I should inspect a.py", tool_calls=[tc])
+
+    result = _serialize_message(msg)
+
+    assert result["reasoning_content"] == "I should inspect a.py"
+
+
 async def test_investigate_stream_yields_events(
     make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
 ) -> None:
@@ -100,7 +111,7 @@ async def test_investigate_stream_yields_events(
         }
     )
     responses = [
-        fake_response(tool_calls=[tc]),
+        fake_response(tool_calls=[tc], reasoning_content="The parser source is relevant."),
         fake_response(content="Done"),
         fake_response(content=report_json),
     ]
@@ -116,6 +127,13 @@ async def test_investigate_stream_yields_events(
     assert "tool_result" in types
     assert "report" in types
     assert "done" in types
+    calls = agent._client.chat.completions.calls
+    assert calls[0]["model"] == "deepseek-v4-pro"
+    assert calls[0]["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert calls[0]["reasoning_effort"] == "high"
+    assert "tool_choice" not in calls[0]
+    assistant_tool_turn = next(message for message in calls[1]["messages"] if message.get("tool_calls"))
+    assert assistant_tool_turn["reasoning_content"] == "The parser source is relevant."
 
 
 async def test_investigation_runs_independent_reviewer(
@@ -313,6 +331,121 @@ async def test_generate_report_raises_on_empty_response(make_agent, fake_client,
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), [])
     with pytest.raises(ModelResponseError):
         await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
+
+
+def test_build_report_messages_skips_tool_history_and_keeps_system_issue_and_files(
+    make_issue,
+) -> None:
+    from app.config import Settings
+
+    agent = IssueAgent(Settings(openai_api_key="test-key", max_total_context_chars=80_000))
+    issue = make_issue(title="Crash", body="steps")
+    executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), issue, ["src/parser.py"])
+    executor._file_cache["src/parser.py"] = "def parse():\n    return None\n"
+    executor.files_read.append("src/parser.py")
+
+    messages = [
+        {"role": "system", "content": "SYSTEM_PROMPT"},
+        {"role": "user", "content": "ISSUE_CONTEXT"},
+        {"role": "assistant", "content": "thinking", "tool_calls": [{"id": "c1"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "TOOL_RESULT"},
+        {"role": "assistant", "content": "more thinking", "tool_calls": [{"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c2", "content": "TOOL_RESULT_2"},
+    ]
+
+    final_messages = agent._build_report_messages(messages, executor)
+
+    assert len(final_messages) == 2
+    assert final_messages[0] == {"role": "system", "content": "SYSTEM_PROMPT"}
+    user_content = final_messages[1]["content"]
+    assert "ISSUE_CONTEXT" in user_content
+    assert "TOOL_RESULT" not in user_content
+    assert "TOOL_RESULT_2" not in user_content
+    assert "src/parser.py" in user_content
+    assert "L1: def parse():" in user_content
+    assert "L2:     return None" in user_content
+    assert "Source files examined (with line numbers):" in user_content
+
+
+def test_build_report_messages_truncates_files_when_budget_exhausted(make_issue) -> None:
+    from app.config import Settings
+
+    # 用最小允许的 max_total_context_chars 和巨大的文件内容，触发预算耗尽分支
+    agent = IssueAgent(Settings(openai_api_key="test-key", max_total_context_chars=5_000))
+    issue = make_issue()
+    executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), issue, ["src/a.py", "src/b.py"])
+    executor._file_cache["src/a.py"] = "a" * 8_000
+    executor._file_cache["src/b.py"] = "b" * 8_000
+    executor.files_read.extend(["src/a.py", "src/b.py"])
+
+    messages = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "ISSUE"},
+    ]
+    final_messages = agent._build_report_messages(messages, executor)
+
+    assert len(final_messages) == 2
+    user_content = final_messages[1]["content"]
+    # 即使文件被截断或跳过，最终输出指令仍应附加在末尾
+    assert "Based on your investigation" in user_content or "基于以上调查" in user_content
+
+
+def test_build_report_messages_handles_missing_system_prompt(make_issue) -> None:
+    from app.config import Settings
+
+    agent = IssueAgent(Settings(openai_api_key="test-key"))
+    issue = make_issue()
+    executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), issue, [])
+
+    messages = [{"role": "user", "content": "investigate"}]
+    final_messages = agent._build_report_messages(messages, executor)
+
+    # 无 system prompt 时只产出一条 user 消息
+    assert len(final_messages) == 1
+    assert final_messages[0]["role"] == "user"
+    assert "investigate" in final_messages[0]["content"]
+
+
+def test_build_report_messages_handles_no_files_read(make_issue) -> None:
+    from app.config import Settings
+
+    agent = IssueAgent(Settings(openai_api_key="test-key"))
+    issue = make_issue()
+    executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), issue, [])
+
+    messages = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "ISSUE"},
+    ]
+    final_messages = agent._build_report_messages(messages, executor)
+
+    assert len(final_messages) == 2
+    assert final_messages[0] == {"role": "system", "content": "SYS"}
+    assert "ISSUE" in final_messages[1]["content"]
+    # 即使没有已读文件，也应附加 final output prompt
+    user_content = final_messages[1]["content"]
+    assert "Based on your investigation" in user_content or "基于以上调查" in user_content
+
+
+def test_build_report_messages_keeps_bounded_tool_findings(make_issue) -> None:
+    settings = Settings(openai_api_key="test-key", max_total_context_chars=20_000)
+    agent = IssueAgent(settings)
+    issue = make_issue()
+    executor = ToolExecutor(MagicMock(), settings, issue, ["src/parser.py"])
+    executor._record_observation(
+        "get_file_history",
+        {"path": "src/parser.py"},
+        "History for src/parser.py: abc1234 fix parser regression",
+    )
+
+    final_messages = agent._build_report_messages(
+        [{"role": "system", "content": "SYS"}, {"role": "user", "content": "ISSUE"}],
+        executor,
+    )
+
+    user_content = final_messages[-1]["content"]
+    assert "Investigation ledger" in user_content
+    assert "abc1234 fix parser regression" in user_content
 
 
 async def test_chat_returns_reply_without_tools(

@@ -117,6 +117,39 @@ async def test_search_files_no_match() -> None:
     assert "No files" in result
 
 
+async def test_tool_observations_are_bounded_and_read_files_are_not_duplicated() -> None:
+    settings = Settings(openai_api_key="test-key", max_investigation_ledger_chars=1_000)
+    github = _make_github({"src/a.py": "line1\nline2"})
+    executor = ToolExecutor(github, settings, _make_issue(), ["src/a.py", "src/b.py"])
+
+    await executor.execute("read_file", {"path": "src/a.py"})
+    await executor.execute("search_files", {"query": "src"})
+
+    ledger = "\n".join(executor.investigation_ledger)
+    assert "source captured" in ledger
+    assert "L1: line1" not in ledger
+    assert "search_files" in ledger
+    assert "src/a.py" in ledger
+    assert len(ledger) <= settings.max_investigation_ledger_chars
+
+
+def test_pr_observation_never_copies_proposed_file_contents() -> None:
+    settings = Settings(openai_api_key="test-key", write_mode=True)
+    executor = ToolExecutor(MagicMock(), settings, _make_issue(), ["src/a.py"])
+    arguments = {
+        "branch": "fix/issue-1",
+        "title": "fix: parser",
+        "body": "Fixes the parser.",
+        "changes": [{"path": "src/a.py", "content": "SECRET-CONTENT", "message": "fix parser"}],
+    }
+
+    executor._record_observation("create_pull_request", arguments, "proposal stored")
+
+    ledger = "\n".join(executor.investigation_ledger)
+    assert "src/a.py" in ledger
+    assert "SECRET-CONTENT" not in ledger
+
+
 async def test_search_code_uses_repository_wide_github_search() -> None:
     github = MagicMock()
     github.search_code = AsyncMock(

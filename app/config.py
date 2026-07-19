@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,8 +9,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: str = Field(min_length=1)
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4.1-mini"
+    openai_base_url: str = "https://api.deepseek.com"
+    openai_model: str = Field(default="deepseek-v4-pro", min_length=1)
+    openai_thinking: Literal["enabled", "disabled"] = "enabled"
+    openai_reasoning_effort: Literal["high", "max"] = "high"
     openai_timeout: float = Field(default=60.0, gt=0, le=300)
     openai_max_retries: int = Field(default=2, ge=0, le=5)
     github_token: str | None = None
@@ -20,6 +23,7 @@ class Settings(BaseSettings):
     max_total_context_chars: int = Field(default=80_000, ge=5_000, le=200_000)
     max_output_tokens: int = Field(default=4_000, ge=500, le=8_000)
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
+    max_investigation_ledger_chars: int = Field(default=12_000, ge=1_000, le=50_000)
     max_chat_tokens: int = Field(default=2_000, ge=500, le=8_000)
     independent_review: bool = True
     review_model: str | None = None

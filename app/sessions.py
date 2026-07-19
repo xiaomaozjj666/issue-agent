@@ -7,8 +7,11 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import cast
 
-from app.models import AnalysisReport, IssueData
+import aiosqlite
+
+from app.models import AnalysisReport, IssueData, SessionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,7 @@ class Session:
     report: AnalysisReport | None = None
     pending_pr: dict | None = None
     display_title: str | None = None
-    status: str = "queued"
+    status: SessionStatus = "queued"
     phase: str = "queued"
     version: int = 0
     metrics: dict[str, int | float] = field(default_factory=dict)
@@ -137,9 +140,9 @@ class SqliteStore:
 
     def __init__(self, db_path: str) -> None:
         self._path = db_path
-        self._conn: object = None
+        self._conn: aiosqlite.Connection | None = None
 
-    async def _get_conn(self):
+    async def _get_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
             from app.db import get_db
 
@@ -335,6 +338,7 @@ class SqliteStore:
 
 class SessionManager:
     def __init__(self, db_path: str | None = None) -> None:
+        self._store: SqliteStore | MemoryStore
         if db_path and db_path != ":memory:":
             self._store = SqliteStore(db_path)
         else:
@@ -396,14 +400,18 @@ class SessionManager:
         return deleted
 
     async def close(self) -> None:
-        if hasattr(self._store, "close"):
+        if isinstance(self._store, SqliteStore):
             await self._store.close()
 
 
 def _row_to_session(row) -> Session:
     now = _now()
     raw_status = row["status"] or "queued"
-    status = raw_status if raw_status in {"queued", "running", "completed", "failed", "cancelled"} else "queued"
+    status = (
+        cast(SessionStatus, raw_status)
+        if raw_status in {"queued", "running", "completed", "failed", "cancelled"}
+        else "queued"
+    )
     s = Session(
         session_id=row["session_id"],
         issue_url=row["issue_url"],

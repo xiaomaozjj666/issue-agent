@@ -1,6 +1,8 @@
 import base64
+import binascii
 import logging
 import re
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -176,7 +178,7 @@ class GitHubClient:
     async def __aexit__(self, *args: object) -> None:
         await self._client.aclose()
 
-    async def _get(self, path: str, **kwargs: object) -> httpx.Response:
+    async def _get(self, path: str, **kwargs: Any) -> httpx.Response:
         response = await self._client.get(path, **kwargs)
         if response.status_code in RATE_LIMIT_STATUSES:
             retry_after = response.headers.get("Retry-After") or response.headers.get("X-RateLimit-Reset")
@@ -251,7 +253,7 @@ class GitHubClient:
             raise GitHubFileSkipped(f"Unsupported file response for {path}")
         try:
             raw = base64.b64decode("".join(data["content"].split()), validate=True)
-        except (ValueError, base64.binascii.Error) as error:
+        except (ValueError, binascii.Error) as error:
             raise GitHubFileSkipped(f"Invalid file content for {path}") from error
         if b"\x00" in raw:
             raise GitHubFileSkipped(f"Binary file skipped: {path}")
@@ -332,7 +334,7 @@ class GitHubClient:
             raise GitHubFileSkipped(f"Unsupported file response for {path} at {sha}")
         try:
             raw = base64.b64decode("".join(data["content"].split()), validate=True)
-        except (ValueError, base64.binascii.Error) as error:
+        except (ValueError, binascii.Error) as error:
             raise GitHubFileSkipped(f"Invalid file content for {path}") from error
         if b"\x00" in raw:
             raise GitHubFileSkipped(f"Binary file skipped: {path}")

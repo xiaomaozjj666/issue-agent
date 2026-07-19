@@ -28,7 +28,7 @@ Every requested file is normalized and validated against the repository tree bef
 
 - Only accepts `https://github.com/{owner}/{repo}/issues/{number}` URLs.
 - Uses read-only GitHub REST API endpoints by default and never executes repository code.
-- Repository writes happen only through `POST /apply-fix`, which requires `WRITE_MODE=true`, a validated
+- Repository writes happen only through `POST /session/{session_id}/apply-fix`, which requires `WRITE_MODE=true`, a validated
   stored proposal, and a separate explicit `confirm=true` request.
 - PR proposals are revalidated before writing; incomplete write flows attempt to roll back their temporary branch.
 - Treats Issue text and repository content as untrusted prompt data.
@@ -89,8 +89,8 @@ Edit `.env` and set at least:
 
 ```dotenv
 OPENAI_API_KEY=your-key
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-pro
 ```
 
 Set `GITHUB_TOKEN` for private repositories and to avoid GitHub's low anonymous rate limit. Use a
@@ -102,10 +102,14 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | Variable | Default | Description |
 |---|---|---|
 | `OPENAI_API_KEY` | *(required)* | API key for the LLM provider |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible API |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | Model name |
+| `OPENAI_BASE_URL` | `https://api.deepseek.com` | Base URL for the OpenAI-compatible API |
+| `OPENAI_MODEL` | `deepseek-v4-pro` | Investigator model name |
+| `OPENAI_THINKING` | `enabled` | DeepSeek thinking mode (`enabled` or `disabled`) |
+| `OPENAI_REASONING_EFFORT` | `high` | DeepSeek reasoning effort (`high` or `max`) |
 | `OPENAI_TIMEOUT` | `60` | Request timeout in seconds |
 | `OPENAI_MAX_RETRIES` | `2` | Retry attempts for transient errors |
+| `LOG_LEVEL` | `INFO` | Application log level |
+| `LOG_FORMAT` | `console` | Log format (`console` or newline-delimited `json`) |
 | `GITHUB_TOKEN` | *(optional)* | GitHub PAT for higher rate limits |
 | `GITHUB_MAX_FILE_BYTES` | `512000` | Skip files larger than this |
 | `MAX_CANDIDATE_FILES` | `12` | Max distinct source files per investigation |
@@ -114,9 +118,10 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `MAX_TOTAL_CONTEXT_CHARS` | `80000` | Max retained source + chat characters |
 | `MAX_OUTPUT_TOKENS` | `4000` | Max tokens per model response |
 | `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
+| `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | Bounded search, history, branch, and tool findings retained for report synthesis |
 | `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
 | `INDEPENDENT_REVIEW` | `true` | Run the independent reviewer before publishing the final report |
-| `REVIEW_MODEL` | *(same as `OPENAI_MODEL`)* | Optional separate model for independent review |
+| `REVIEW_MODEL` | *(same as investigator)* | Optional separate model for independent review |
 | `REVIEW_MAX_TOKENS` | `4000` | Maximum output tokens for the reviewer decision |
 | `MAX_REVIEW_CONTEXT_CHARS` | `32000` | Maximum issue, report, and source context supplied to the reviewer |
 | `LANGUAGE` | `zh` | Response language (`zh` or `en`) |
@@ -211,12 +216,12 @@ Returns `{"status": "ok"}`.
 - `GET /session/{session_id}/proposal` returns a safe PR proposal preview without file contents.
 - `DELETE /session/{session_id}` permanently deletes a session.
 
-### `POST /apply-fix` (write mode)
+### `POST /session/{session_id}/apply-fix` (write mode)
 
 Creates the pull request for a session's stored proposal. Disabled unless `WRITE_MODE=true`.
 
 ```
-POST /apply-fix?session_id=a1b2c3d4e5f6
+POST /session/a1b2c3d4e5f6/apply-fix
 {
   "confirm": true
 }
@@ -227,10 +232,15 @@ repository's default branch before any write; on failure the temporary branch is
 Returns the created `pr_url` and `branch`. See the [Safety model](#safety-model) for the full
 write-path guarantees.
 
+The legacy `POST /apply-fix?session_id=...` route remains available for compatibility but is hidden
+from the OpenAPI schema; new integrations should use the session-scoped endpoint above.
+
 ## Testing
 
 ```bash
-pytest -v
+ruff check app/ tests/
+mypy app/
+pytest -v --cov=app --cov-report=term-missing
 ```
 
 ## Current limitations

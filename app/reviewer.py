@@ -11,10 +11,10 @@ from app.config import Settings
 from app.evidence import EvidenceValidator
 from app.i18n import get_review_output_prompt, get_review_system_prompt
 from app.models import AnalysisReport, IssueData, ReviewAudit, ReviewOutcome
+from app.provider import chat_request_options
 
 logger = logging.getLogger(__name__)
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
-
 
 class ReviewResponseError(RuntimeError):
     """Raised when the independent reviewer cannot return a valid decision."""
@@ -45,13 +45,16 @@ class ReviewerAgent:
             self.settings.max_review_context_chars,
         )
         response = await self._client.chat.completions.create(
-            model=self.settings.review_model or self.settings.openai_model,
+            **chat_request_options(
+                self.settings,
+                model=self.settings.review_model or self.settings.openai_model,
+                temperature=0,
+            ),
             messages=[
                 {"role": "system", "content": get_review_system_prompt(self.settings.language)},
                 {"role": "user", "content": f"{context}\n\n{get_review_output_prompt()}"},
             ],
             response_format={"type": "json_object"},
-            temperature=0,
             max_tokens=self.settings.review_max_tokens,
         )
         if not response.choices:

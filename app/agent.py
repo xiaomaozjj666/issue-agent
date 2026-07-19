@@ -28,6 +28,7 @@ from app.i18n import (
     t,
 )
 from app.models import AnalysisReport, ChatResponse, IssueData, ReviewAudit
+from app.provider import chat_request_options
 from app.reviewer import ReviewerAgent
 from app.sessions import Session
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
@@ -99,11 +100,9 @@ class IssueAgent:
                 if session is not None:
                     session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                 response = await client.chat.completions.create(
-                    model=self.settings.openai_model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    temperature=0.1,
+                    **chat_request_options(self.settings),
+                    messages=messages,  # type: ignore[arg-type]
+                    tools=tools,  # type: ignore[arg-type]
                     max_tokens=self.settings.max_output_tokens,
                 )
 
@@ -271,13 +270,12 @@ class IssueAgent:
 
     async def _generate_report(self, messages: list[dict], executor: ToolExecutor) -> AnalysisReport:
         client = self._get_client()
-        final_messages = [*messages, {"role": "user", "content": get_final_output_prompt()}]
+        final_messages = self._build_report_messages(messages, executor)
 
-        response = await client.chat.completions.create(
-            model=self.settings.openai_model,
+        response = await client.chat.completions.create(  # type: ignore[call-overload]
+            **chat_request_options(self.settings),
             messages=final_messages,
             response_format={"type": "json_object"},
-            temperature=0.1,
             max_tokens=self.settings.max_output_tokens,
         )
 
@@ -331,6 +329,71 @@ class IssueAgent:
             },
         ]
 
+    def _build_report_messages(self, messages: list[dict], executor: ToolExecutor) -> list[dict]:
+        # 用有界调查事实和已读源码替代重复的原始工具 transcript，控制上下文同时保留关键结论。
+        system_prompt = ""
+        issue_context = ""
+        for message in messages:
+            role = message.get("role")
+            if role == "system" and not system_prompt:
+                system_prompt = str(message.get("content", ""))
+            elif role == "user" and not issue_context:
+                issue_context = str(message.get("content", ""))
+            if system_prompt and issue_context:
+                break
+
+        final_output_prompt = get_final_output_prompt()
+        # 预留输出预算和分隔符开销，剩余空间用于附加已读文件内容
+        budget = max(
+            self.settings.max_total_context_chars
+            - len(system_prompt)
+            - len(issue_context)
+            - len(final_output_prompt)
+            - 256,
+            0,
+        )
+
+        user_parts: list[str] = []
+        if issue_context:
+            user_parts.append(issue_context)
+
+        ledger_text = "\n".join(executor.investigation_ledger)
+        if ledger_text and budget > 0:
+            ledger_budget = min(self.settings.max_investigation_ledger_chars, budget // 4)
+            if ledger_budget > 0:
+                limited_ledger = ledger_text[:ledger_budget]
+                user_parts.append("")
+                user_parts.append("Investigation ledger (bounded tool findings):")
+                user_parts.append(limited_ledger)
+                budget -= len(limited_ledger)
+
+        if executor.files_read:
+            user_parts.append("")
+            user_parts.append("Source files examined (with line numbers):")
+            for path in executor.files_read:
+                content = executor.file_cache.get(path)
+                if not content or budget <= 0:
+                    continue
+                numbered = "\n".join(
+                    f"L{number}: {line}" for number, line in enumerate(content.splitlines(), 1)
+                )
+                block = f"\n--- {path} ---\n{numbered}\n"
+                if len(block) > budget:
+                    block = block[:budget]
+                user_parts.append(block)
+                budget -= len(block)
+                if budget <= 0:
+                    break
+
+        user_parts.append("")
+        user_parts.append(final_output_prompt)
+
+        final_messages: list[dict] = []
+        if system_prompt:
+            final_messages.append({"role": "system", "content": system_prompt})
+        final_messages.append({"role": "user", "content": "\n".join(user_parts)})
+        return final_messages
+
     @staticmethod
     def _has_valid_lines(lines: str | None, line_count: int) -> bool:
         return EvidenceValidator.has_valid_lines(lines, line_count)
@@ -338,9 +401,8 @@ class IssueAgent:
     async def _call_llm(self, messages: list[dict], *, tools: list | None = None, max_tokens: int | None = None):
         client = self._get_client()
         kwargs: dict = {
-            "model": self.settings.openai_model,
+            **chat_request_options(self.settings),
             "messages": messages,
-            "temperature": 0.1,
             "max_tokens": max_tokens or self.settings.max_output_tokens,
         }
         if tools:
@@ -366,6 +428,9 @@ class IssueAgent:
 
 def _serialize_message(message) -> dict:
     msg: dict = {"role": "assistant", "content": message.content or ""}
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content:
+        msg["reasoning_content"] = reasoning_content
     if message.tool_calls:
         msg["tool_calls"] = [
             {

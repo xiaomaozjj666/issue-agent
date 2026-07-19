@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
@@ -15,6 +17,7 @@ from app.auth import AuthMiddleware
 from app.config import get_settings
 from app.events import AgentEvent, cancelled_event, error_event, session_event
 from app.github import GitHubClient, GitHubError, GitHubRateLimitError
+from app.logging_config import setup_logging
 from app.models import (
     AnalysisReport,
     AnalyzeRequest,
@@ -23,6 +26,7 @@ from app.models import (
     ChatResponse,
     CreatePRResponse,
     SessionDetail,
+    SessionEventRecord,
     SessionSummary,
     SessionUpdateRequest,
     StreamRequest,
@@ -31,16 +35,30 @@ from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import validate_pr_proposal
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="GitHub Issue Agent", version="0.5.0")
-app.add_middleware(AuthMiddleware)
-
 _session_manager: SessionManager | None = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    setup_logging()
+    try:
+        yield
+    finally:
+        global _session_manager
+        manager = _session_manager
+        _session_manager = None
+        if manager is not None:
+            await manager.close()
+
+
+app = FastAPI(title="GitHub Issue Agent", version="0.6.0", lifespan=lifespan)
+app.add_middleware(AuthMiddleware)
 
 
 def _get_session_manager() -> SessionManager:
     global _session_manager
     if _session_manager is None:
-        db_path = get_settings().session_db_path
+        db_path: str | None = get_settings().session_db_path
         if db_path == ":memory:":
             db_path = None
         _session_manager = SessionManager(db_path=db_path)
@@ -91,7 +109,7 @@ async def stream_analysis(request: StreamRequest) -> StreamingResponse:
     agent = IssueAgent(settings)
     session_mgr = _get_session_manager()
 
-    async def event_generator():
+    async def event_generator() -> AsyncIterator[str]:
         session: Session | None = None
         started_at = monotonic()
         try:
@@ -254,7 +272,7 @@ async def get_session(session_id: str) -> SessionDetail:
         **_session_summary(session).model_dump(),
         messages=session.messages,
         report=session.report,
-        events=await manager.list_events(session_id),
+        events=[SessionEventRecord.model_validate(event) for event in await manager.list_events(session_id)],
     )
 
 
@@ -310,8 +328,18 @@ async def get_session_report(session_id: str) -> AnalysisReport:
     return session.report
 
 
-@app.post("/apply-fix", response_model=CreatePRResponse)
-async def apply_fix(request: ApplyFixRequest, session_id: str) -> CreatePRResponse:
+@app.post("/session/{session_id}/apply-fix", response_model=CreatePRResponse)
+async def apply_fix(session_id: str, request: ApplyFixRequest) -> CreatePRResponse:
+    return await _apply_fix(session_id, request)
+
+
+@app.post("/apply-fix", response_model=CreatePRResponse, include_in_schema=False, deprecated=True)
+async def apply_fix_legacy(request: ApplyFixRequest, session_id: str) -> CreatePRResponse:
+    """Compatibility route for clients created before the session-scoped endpoint."""
+    return await _apply_fix(session_id, request)
+
+
+async def _apply_fix(session_id: str, request: ApplyFixRequest) -> CreatePRResponse:
     settings = get_settings()
     if not settings.write_mode:
         raise HTTPException(status_code=403, detail="Write mode is disabled")

@@ -1,6 +1,7 @@
 """Deterministic validation for model-generated investigation evidence."""
 
 import re
+from typing import Literal
 
 from app.i18n import t
 from app.models import AnalysisReport
@@ -43,7 +44,9 @@ class EvidenceValidator:
 
         reference_count = len(report.evidence)
         confidence_rank = {"low": 0, "medium": 1, "high": 2}
-        maximum_confidence = "low" if reference_count == 0 else "medium" if reference_count < 3 else "high"
+        maximum_confidence: Literal["low", "medium", "high"] = (
+            "low" if reference_count == 0 else "medium" if reference_count < 3 else "high"
+        )
         if confidence_rank[report.confidence] > confidence_rank[maximum_confidence]:
             report.confidence = maximum_confidence
 

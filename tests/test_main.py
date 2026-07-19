@@ -24,6 +24,26 @@ def test_health() -> None:
     assert response.json() == {"status": "ok"}
 
 
+async def test_lifespan_closes_global_session_manager(monkeypatch) -> None:
+    manager = SessionManager()
+    closed = False
+    original_close = manager.close
+
+    async def close() -> None:
+        nonlocal closed
+        closed = True
+        await original_close()
+
+    monkeypatch.setattr(manager, "close", close)
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+
+    async with main_module.lifespan(app):
+        pass
+
+    assert closed is True
+    assert main_module._session_manager is None
+
+
 def test_web_ui_renders() -> None:
     response = TestClient(app).get("/")
 
@@ -37,15 +57,18 @@ def test_web_ui_renders() -> None:
     assert 'id="back-button"' in response.text
     assert 'id="cancel-analysis"' in response.text
     assert 'class="brand-identity"' in response.text
+    assert '/static/css/base.css' in response.text
     assert '/static/css/github-theme.css' in response.text
     assert '/static/js/core.js' in response.text
-    assert "case'review'" in response.text
+    assert '/static/js/app.js' in response.text
 
 
 def test_static_frontend_modules_are_served() -> None:
     client = TestClient(app)
     script = client.get("/static/js/core.js")
     runtime = client.get("/static/js/session-runtime.js")
+    app_script = client.get("/static/js/app.js")
+    base_stylesheet = client.get("/static/css/base.css")
     stylesheet = client.get("/static/css/runtime.css")
     github_theme = client.get("/static/css/github-theme.css")
 
@@ -53,6 +76,11 @@ def test_static_frontend_modules_are_served() -> None:
     assert "window.apiJson" in script.text
     assert runtime.status_code == 200
     assert "window.cancelAnalysis" in runtime.text
+    assert app_script.status_code == 200
+    assert "case'review'" in app_script.text
+    assert "loadSessions();" in app_script.text
+    assert base_stylesheet.status_code == 200
+    assert "#report-panel" in base_stylesheet.text
     assert stylesheet.status_code == 200
     assert ".investigation-timeline" in stylesheet.text
     assert ".review-chip" in stylesheet.text
@@ -205,6 +233,60 @@ def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
 
 def test_apply_fix_requires_explicit_confirmation() -> None:
     assert ApplyFixRequest().confirm is False
+
+
+async def test_apply_fix_new_and_legacy_routes_require_confirmation(monkeypatch) -> None:
+    manager = SessionManager()
+    monkeypatch.setattr(main_module, "_session_manager", manager)
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        lambda: Settings(openai_api_key="test-key", write_mode=True),
+    )
+    session = await manager.create("https://github.com/acme/widget/issues/42")
+    session.issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=42,
+        title="Parser bug",
+        body="",
+        labels=["bug"],
+        comments=[],
+        default_branch="main",
+    )
+    await manager.save(session)
+    await manager.save_pr_proposal(
+        session.session_id,
+        {
+            "branch": "fix/parser-bug",
+            "title": "fix: guard empty parser input",
+            "body": "Prevents the parser crash.",
+            "changes": [{"path": "src/parser.py", "content": "fixed\n", "message": "fix parser"}],
+        },
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        current = await client.post(f"/session/{session.session_id}/apply-fix", json={"confirm": False})
+        legacy = await client.post(f"/apply-fix?session_id={session.session_id}", json={"confirm": False})
+
+    assert current.status_code == 400
+    assert current.json() == {"detail": "Set confirm=true to create the PR"}
+    assert legacy.status_code == 400
+    assert legacy.json() == current.json()
+
+
+def test_apply_fix_is_disabled_by_default() -> None:
+    response = TestClient(app).post("/session/missing/apply-fix", json={"confirm": True})
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Write mode is disabled"}
+
+
+def test_openapi_exposes_only_the_session_scoped_apply_fix_route() -> None:
+    paths = TestClient(app).get("/openapi.json").json()["paths"]
+
+    assert "/session/{session_id}/apply-fix" in paths
+    assert "/apply-fix" not in paths
 
 
 async def test_session_history_api_supports_restore_rename_archive_and_delete(monkeypatch) -> None:

@@ -1,5 +1,7 @@
 """API key authentication middleware."""
 
+import hmac
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,8 +23,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         api_key = request.headers.get("X-API-Key")
         if api_key is None:
             return JSONResponse(status_code=401, content={"detail": "Missing X-API-Key header"})
-
-        import hmac
 
         if not hmac.compare_digest(api_key, settings.api_key):
             return JSONResponse(status_code=403, content={"detail": "Invalid API key"})

@@ -3,6 +3,13 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.playwright-cli/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
 *.egg-info/
 *.py[cod]
 reports/

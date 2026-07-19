@@ -208,6 +208,8 @@ class ToolExecutor:
         self._max_file_chars = max_file_chars
         self._max_total_context_chars = max_total_context_chars
         self._tool_context_chars = 0
+        self._ledger_chars = 0
+        self._investigation_ledger: list[str] = []
         self._file_cache: dict[str, str] = {}
         self.files_read: list[str] = []
         cached_paths = files_read if files_read is not None else list((file_cache or {}).keys())
@@ -235,29 +237,60 @@ class ToolExecutor:
         self.tools_used.append(name)
         try:
             if name == "read_file":
-                return await self._read_file(**arguments)
-            if name == "list_directory":
-                return self._list_directory(arguments.get("path", ""))
-            if name == "search_files":
-                return self._search_files(arguments["query"])
-            if name == "search_code":
-                return await self._search_code(arguments["query"])
-            if name == "grep_content":
-                return self._grep_content(arguments["pattern"])
-            if name == "get_file_history":
-                return await self._get_file_history(**arguments)
-            if name == "list_branches":
-                return await self._list_branches()
-            if name == "get_file_at_commit":
-                return await self._get_file_at_commit(**arguments)
-            if name == "create_pull_request":
-                return self._create_pull_request_proposal(**arguments)
-            return f"Unknown tool: {name}"
+                result = await self._read_file(**arguments)
+            elif name == "list_directory":
+                result = self._list_directory(arguments.get("path", ""))
+            elif name == "search_files":
+                result = self._search_files(arguments["query"])
+            elif name == "search_code":
+                result = await self._search_code(arguments["query"])
+            elif name == "grep_content":
+                result = self._grep_content(arguments["pattern"])
+            elif name == "get_file_history":
+                result = await self._get_file_history(**arguments)
+            elif name == "list_branches":
+                result = await self._list_branches()
+            elif name == "get_file_at_commit":
+                result = await self._get_file_at_commit(**arguments)
+            elif name == "create_pull_request":
+                result = self._create_pull_request_proposal(**arguments)
+            else:
+                result = f"Unknown tool: {name}"
         except GitHubFileSkipped as error:
-            return f"File skipped: {error}"
+            result = f"File skipped: {error}"
         except Exception as error:
             logger.warning("Tool %s failed: %s", name, error)
-            return f"Error: {error}"
+            result = f"Error: {error}"
+        self._record_observation(name, arguments, result)
+        return result
+
+    @property
+    def investigation_ledger(self) -> list[str]:
+        return list(self._investigation_ledger)
+
+    def _record_observation(self, name: str, arguments: dict, result: str) -> None:
+        remaining = self._settings.max_investigation_ledger_chars - self._ledger_chars
+        if remaining <= 0:
+            return
+        safe_arguments = arguments
+        if name == "create_pull_request":
+            safe_arguments = {
+                "branch": arguments.get("branch"),
+                "title": arguments.get("title"),
+                "changes": [
+                    {"path": change.get("path"), "message": change.get("message")}
+                    for change in arguments.get("changes", [])
+                    if isinstance(change, dict)
+                ],
+            }
+        rendered_arguments = json.dumps(safe_arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if name == "read_file" and not result.startswith(("Error:", "File skipped:")):
+            observation = f"{name}({rendered_arguments}) -> source captured ({len(result)} characters returned)"
+        else:
+            observation = f"{name}({rendered_arguments}) -> {result}"
+        limited = observation[: min(remaining, 2_500)]
+        self._investigation_ledger.append(limited)
+        self._ledger_chars += len(limited)
 
     # ── core tools (unchanged) ──────────────────────────────────────
 
@@ -437,7 +470,7 @@ class ToolExecutor:
             f"Description: {body}\n\n"
             f"Files to change:\n{change_list}\n\n"
             "---\n"
-            "To create this PR, POST to /apply-fix with confirm=true"
+            "To create this PR, use the session's apply-fix action and explicitly confirm the write."
         )
 
     @property

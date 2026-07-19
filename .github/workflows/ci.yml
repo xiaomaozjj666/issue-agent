@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -9,6 +12,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -29,11 +33,15 @@ jobs:
       - name: Lint with ruff
         run: ruff check app/ tests/
 
+      - name: Type-check application
+        run: mypy app/
+
       - name: Run tests
-        run: pytest -v
+        run: pytest -v --cov=app --cov-report=term-missing
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: test
     steps:
       - uses: actions/checkout@v4

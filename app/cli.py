@@ -14,6 +14,7 @@ from rich.table import Table
 from app.agent import IssueAgent, ModelResponseError
 from app.config import get_settings
 from app.github import GitHubError, parse_issue_url
+from app.logging_config import setup_logging
 from app.models import AnalysisReport
 from app.sessions import SessionManager
 
@@ -83,13 +84,14 @@ async def cmd_analyze(url: str, save_patch: str | None = None) -> None:
             events = []
             async for event in agent.investigate_stream(url):
                 events.append(event)
+                data = event.data or {}
                 if event.type == "start":
                     progress.update(
-                        task, description=f"[cyan]Fetched issue, exploring {event.data.get('file_count', 0)} files..."
+                        task, description=f"[cyan]Fetched issue, exploring {data.get('file_count', 0)} files..."
                     )
                 elif event.type == "tool_call":
-                    name = event.data.get("name", "")
-                    args = event.data.get("args", {})
+                    name = data.get("name", "")
+                    args = data.get("args", {})
                     progress.update(task, description=f"[yellow]{name}({str(args)[:60]})")
                 elif event.type == "report":
                     progress.update(task, description="[green]Analysis complete!")
@@ -112,15 +114,16 @@ async def cmd_chat(url: str, save_patch: str | None = None) -> None:
     session_manager = SessionManager()
     try:
         parse_issue_url(url)
-        session = session_manager.create(url)
+        session = await session_manager.create(url)
 
         with Progress(
             SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console
         ) as progress:
             task = progress.add_task(f"[cyan]Analyzing {url}...", total=None)
             async for event in agent.investigate_stream(url, session=session):
+                data = event.data or {}
                 if event.type == "tool_call":
-                    progress.update(task, description=f"[yellow]Reading {event.data.get('name', '')}...")
+                    progress.update(task, description=f"[yellow]Reading {data.get('name', '')}...")
                 elif event.type == "report":
                     progress.update(task, description="[green]Analysis complete!")
                     if event.data:
@@ -172,6 +175,7 @@ async def cmd_chat(url: str, save_patch: str | None = None) -> None:
 
 
 def main() -> None:
+    setup_logging()
     parser = argparse.ArgumentParser(description="GitHub Issue Agent — LLM-powered code investigation")
     sub = parser.add_subparsers(dest="command", required=True)
 

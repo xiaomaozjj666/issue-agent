@@ -142,7 +142,8 @@ async def test_session_history_filters_searches_and_deletes(manager) -> None:
 
 async def test_sqlite_migrates_legacy_session_schema(tmp_path) -> None:
     path = tmp_path / "legacy.db"
-    with sqlite3.connect(path) as connection:
+    connection = sqlite3.connect(path)
+    try:
         connection.execute(
             """CREATE TABLE sessions (
                 session_id TEXT PRIMARY KEY,
@@ -166,6 +167,9 @@ async def test_sqlite_migrates_legacy_session_schema(tmp_path) -> None:
                 changes_json TEXT NOT NULL DEFAULT '[]'
             )"""
         )
+        connection.commit()
+    finally:
+        connection.close()
 
     db = await get_db(str(path))
     columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(sessions)")).fetchall()}

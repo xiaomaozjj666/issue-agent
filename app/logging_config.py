@@ -1,6 +1,8 @@
 import logging
 import os
 
+_ISSUE_AGENT_HANDLER = "_issue_agent_handler"
+
 
 def setup_logging(*, level: int | str | None = None) -> None:
     """Configure structured-ish logging for the application.
@@ -23,7 +25,11 @@ def setup_logging(*, level: int | str | None = None) -> None:
 
     root = logging.getLogger()
     root.setLevel(level)
-    root.handlers.clear()
+    for existing in list(root.handlers):
+        if getattr(existing, _ISSUE_AGENT_HANDLER, False):
+            root.removeHandler(existing)
+            existing.close()
+    setattr(handler, _ISSUE_AGENT_HANDLER, True)
     root.addHandler(handler)
 
 

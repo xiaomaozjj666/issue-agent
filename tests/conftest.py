@@ -23,9 +23,15 @@ class _FakeToolCall:
 
 
 class _FakeMessage:
-    def __init__(self, content: str | None = None, tool_calls: list | None = None) -> None:
+    def __init__(
+        self,
+        content: str | None = None,
+        tool_calls: list | None = None,
+        reasoning_content: str | None = None,
+    ) -> None:
         self.content = content
         self.tool_calls = tool_calls
+        self.reasoning_content = reasoning_content
 
 
 class _FakeResponse:
@@ -106,8 +112,14 @@ def fake_tool_call():
 
 @pytest.fixture
 def fake_response():
-    def _factory(content: str | None = None, tool_calls: list | None = None) -> _FakeResponse:
-        return _FakeResponse(_FakeMessage(content=content, tool_calls=tool_calls))
+    def _factory(
+        content: str | None = None,
+        tool_calls: list | None = None,
+        reasoning_content: str | None = None,
+    ) -> _FakeResponse:
+        return _FakeResponse(
+            _FakeMessage(content=content, tool_calls=tool_calls, reasoning_content=reasoning_content)
+        )
 
     return _factory
 
