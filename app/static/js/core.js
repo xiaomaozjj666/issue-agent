@@ -12,7 +12,13 @@
     history_title_archive: "Archive",
     archive_toggle_show: "Archived",
     archive_toggle_active: "Active",
+    archive_session: "Archive session",
+    restore_session: "Restore session",
+    history_toggle: "Session history",
+    theme_toggle: "Toggle theme",
     history_search_placeholder: "Search issues and repositories",
+    history_search_label: "Search sessions",
+    session_list_label: "Session list",
     history_empty_active: "No sessions yet.<br>Paste an Issue URL to begin.",
     history_empty_archive: "No archived sessions.",
     history_group_running: "Running",
@@ -21,6 +27,7 @@
     history_group_older: "Older",
     conversation_label: "Investigation thread",
     back_button_title: "Back",
+    back_button_label: "Back to previous view",
     cancel_button: "Cancel",
     cancelling: "Cancelling…",
     report_toggle: "View report",
@@ -28,6 +35,10 @@
     report_title: "Analysis report",
     input_placeholder: "Ask follow-up questions...",
     send_button: "Send",
+    messages_label: "Conversation messages",
+    speaker_you: "You",
+    speaker_agent: "Issue Agent",
+    dialog_input_label: "Session title",
     dialog_rename_title: "Rename session",
     dialog_rename_message: "Choose a concise title that will be easy to find later.",
     dialog_delete_title: "Delete session permanently?",
@@ -54,13 +65,21 @@
     analysis_complete_label: "Analysis complete",
     open_full_report: "Open full report",
     report_confidence: "Confidence",
+    confidence_high: "High",
+    confidence_medium: "Medium",
+    confidence_low: "Low",
     report_root_cause: "Root cause",
     report_evidence: "Code evidence",
     report_proposed_changes: "Proposed changes",
     report_patch: "View generated patch",
+    report_patch_export: "Patch",
     report_tests: "Suggested tests",
     report_risks: "Risks",
     report_independent_review: "Independent review \u00b7 {status}",
+    review_status_approved: "Approved",
+    review_status_revised: "Revised",
+    review_status_rejected: "Rejected",
+    review_status_unavailable: "Unavailable",
     investigation_trail: "Investigation trail",
     copy_button: "Copy",
     copied: "Copied",
@@ -79,6 +98,7 @@
     timeline_files_read: "{count} file(s) read",
     view_source: "View source",
     toc_title: "Contents",
+    report_panel_label: "Analysis report",
   };
 
   function loadI18n() {
@@ -108,12 +128,22 @@
     scope.querySelectorAll("[data-i18n]").forEach(function (node) {
       const key = node.getAttribute("data-i18n");
       const value = translate(key);
-      // 允许 i18n 字符串中包含 <br> 等基础换行标签
-      node.innerHTML = value;
+      const fragments = String(value).split(/<br\s*\/?\s*>/i);
+      node.replaceChildren();
+      fragments.forEach(function (fragment, index) {
+        if (index) node.appendChild(document.createElement("br"));
+        node.appendChild(document.createTextNode(fragment));
+      });
     });
     scope.querySelectorAll("[data-i18n-placeholder]").forEach(function (node) {
       const key = node.getAttribute("data-i18n-placeholder");
       node.setAttribute("placeholder", translate(key));
+    });
+    scope.querySelectorAll("[data-i18n-title]").forEach(function (node) {
+      node.setAttribute("title", translate(node.getAttribute("data-i18n-title")));
+    });
+    scope.querySelectorAll("[data-i18n-aria-label]").forEach(function (node) {
+      node.setAttribute("aria-label", translate(node.getAttribute("data-i18n-aria-label")));
     });
     const titleKey = i18nTable.doc_title;
     if (titleKey) document.title = titleKey;
@@ -158,12 +188,16 @@
   }
 
   function formatRelativeTime(value) {
-    const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
-    if (seconds < 60) return "just now";
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
-    return new Date(value).toLocaleDateString();
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const locale = document.documentElement.lang || navigator.language || "en";
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+    if (seconds < 60) return formatter.format(0, "second");
+    if (seconds < 3600) return formatter.format(-Math.floor(seconds / 60), "minute");
+    if (seconds < 86400) return formatter.format(-Math.floor(seconds / 3600), "hour");
+    if (seconds < 604800) return formatter.format(-Math.floor(seconds / 86400), "day");
+    return new Intl.DateTimeFormat(locale).format(date);
   }
 
   const ICONS = {
@@ -243,11 +277,21 @@
 
   function buildGitHubUrl(session, path, lines) {
     if (!session || !session.owner || !session.repo) return null;
-    const base = `https://github.com/${session.owner}/${session.repo}`;
+    const owner = encodeURIComponent(String(session.owner));
+    const repo = encodeURIComponent(String(session.repo));
+    const base = `https://github.com/${owner}/${repo}`;
     if (!path) return base;
-    const linePart = lines ? String(lines).replace(/[^\dL,\-]/g, "") : "";
-    if (!linePart) return `${base}/blob/HEAD/${path}`;
-    return `${base}/blob/HEAD/${path}#L${linePart}`;
+    const encodedPath = String(path)
+      .split("/")
+      .filter(Boolean)
+      .map(function (segment) {
+        return encodeURIComponent(segment);
+      })
+      .join("/");
+    const numbers = lines ? String(lines).match(/\d+/g) : null;
+    if (!numbers || !numbers.length) return `${base}/blob/HEAD/${encodedPath}`;
+    const linePart = numbers.length > 1 ? `#L${numbers[0]}-L${numbers[1]}` : `#L${numbers[0]}`;
+    return `${base}/blob/HEAD/${encodedPath}${linePart}`;
   }
 
   const ns = {

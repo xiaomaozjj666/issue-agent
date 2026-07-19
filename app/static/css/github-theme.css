@@ -578,12 +578,12 @@ svg {
 }
 
 .msg.user::before {
-  content: "You";
+  content: attr(data-speaker);
   color: var(--accent);
 }
 
 .msg.assistant:not(.report-preview):not(.investigation-timeline)::before {
-  content: "Issue Agent";
+  content: attr(data-speaker);
 }
 
 .msg.report-preview {

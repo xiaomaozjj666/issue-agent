@@ -1,10 +1,13 @@
 .env
 .venv/
+node_modules/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .playwright-cli/
+playwright-report/
+test-results/
 .coverage
 coverage.xml
 htmlcov/

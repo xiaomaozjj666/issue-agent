@@ -56,7 +56,9 @@ After completing Local Setup once, open the project folder and double-click:
 The launcher checks the local environment, starts the service, and opens
 `http://127.0.0.1:8000/` automatically. Keep its terminal window open while using the agent;
 press `Ctrl+C` in that window to stop it. If the service is already running, the launcher only
-opens the existing page instead of starting a duplicate process.
+opens the existing page instead of starting a duplicate process. After updating the project, the
+launcher compares build identities and automatically replaces a stale local process. To force a
+clean restart manually, run `./start-issue-agent.ps1 -Restart` from PowerShell.
 
 ### Docker
 
@@ -241,7 +243,14 @@ from the OpenAPI schema; new integrations should use the session-scoped endpoint
 ruff check app/ tests/
 mypy app/
 pytest -v --cov=app --cov-report=term-missing
+npm install
+npx playwright install chromium
+npm run test:e2e
 ```
+
+The Playwright suite starts an isolated local server and verifies desktop and mobile layouts,
+localized accessibility labels, report navigation, source links, XSS escaping, input clearing, and
+network-failure recovery. CI installs Chromium and runs the same suite on every push and pull request.
 
 ## Current limitations
 

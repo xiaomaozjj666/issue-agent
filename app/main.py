@@ -14,6 +14,7 @@ from openai import APIError
 
 from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
+from app.build import BUILD_ID
 from app.config import get_settings
 from app.events import AgentEvent, cancelled_event, error_event, session_event
 from app.github import GitHubClient, GitHubError, GitHubRateLimitError
@@ -81,7 +82,7 @@ async def session_conflict_handler(request: Request, error: SessionConflictError
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "app": "issue-agent", "build_id": BUILD_ID}
 
 
 @app.post("/analyze", response_model=AnalysisReport)
@@ -452,6 +453,7 @@ async def root(request: Request):
         context={
             "language": settings.language,
             "frontend_strings": get_frontend_strings(settings.language),
+            "build_id": BUILD_ID,
         },
     )
 

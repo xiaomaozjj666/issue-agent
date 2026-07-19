@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.agent import IssueAgent, ModelResponseError
+from app.build import BUILD_ID
 from app.config import Settings
 from app.events import done_event, phase_event
 from app.github import GitHubError, GitHubRateLimitError
@@ -21,7 +22,7 @@ def test_health() -> None:
     response = TestClient(app).get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "app": "issue-agent", "build_id": BUILD_ID}
 
 
 async def test_lifespan_closes_global_session_manager(monkeypatch) -> None:
@@ -61,6 +62,7 @@ def test_web_ui_renders() -> None:
     assert '/static/css/github-theme.css' in response.text
     assert '/static/js/core.js' in response.text
     assert '/static/js/app.js' in response.text
+    assert f"?v={BUILD_ID}" in response.text
 
 
 def test_static_frontend_modules_are_served() -> None:

@@ -10,6 +10,7 @@
   let report = null;
   let showArchived = false;
   let historySearchTimer = null;
+  let sessionsRequestId = 0;
   let dialogSession = null;
   let dialogMode = null;
   let navigationStack = [];
@@ -17,6 +18,12 @@
   let currentStream = null;
   let lastFailedChat = null;
   let activeSession = null; // 当前活跃会话详情（用于生成 GitHub 链接）
+
+  function enumLabel(prefix, value) {
+    const key = `${prefix}_${IA.safeClass(value)}`;
+    const translated = t(key);
+    return translated === key ? String(value || "") : translated;
+  }
 
   // 主题切换
   function applyStoredTheme() {
@@ -68,18 +75,22 @@
     backInProgress = true;
     updateBackButton();
     const target = navigationStack.length ? navigationStack.pop() : null;
-    if (target) {
-      await restoreSession(target, false);
-    } else {
-      sessionId = null;
-      IA.sessionId = null;
-      report = null;
-      activeSession = null;
-      resetWorkspace(true);
-      await loadSessions();
+    try {
+      if (target) {
+        const restored = await restoreSession(target, false);
+        if (!restored) navigationStack.push(target);
+      } else {
+        sessionId = null;
+        IA.sessionId = null;
+        report = null;
+        activeSession = null;
+        resetWorkspace(true);
+        await loadSessions();
+      }
+    } finally {
+      backInProgress = false;
+      updateBackButton();
     }
-    backInProgress = false;
-    updateBackButton();
   }
 
   function scheduleHistorySearch() {
@@ -101,6 +112,7 @@
   const SESSION_ROW_KEY = "session-row-";
 
   async function loadSessions() {
+    const requestId = ++sessionsRequestId;
     const list = document.getElementById("history-list");
     const query = (document.getElementById("history-search").value || "").trim();
     if (!list.querySelector(".history-loading")) {
@@ -108,9 +120,11 @@
     }
     try {
       const sessions = await IA.apiJson("/sessions?archived=" + showArchived + "&q=" + encodeURIComponent(query));
+      if (requestId !== sessionsRequestId) return;
       sessionsCache = sessions || [];
       renderSessions(sessionsCache);
     } catch (error) {
+      if (requestId !== sessionsRequestId) return;
       list.innerHTML = `<div class="history-empty history-error">${IA.escapeHtml(error.message)}</div>`;
     }
   }
@@ -169,7 +183,7 @@
     actions.appendChild(sessionAction("rename", t("dialog_rename_title").split(" ")[0] || "Rename", function () {
       renameSession(session);
     }));
-    actions.appendChild(sessionAction(showArchived ? "restore" : "archive", showArchived ? t("archive_toggle_active") : t("archive_toggle_show"), function () {
+    actions.appendChild(sessionAction(showArchived ? "restore" : "archive", showArchived ? t("restore_session") : t("archive_session"), function () {
       archiveSession(session, !showArchived);
     }));
     if (showArchived) actions.appendChild(sessionAction("delete", t("dialog_delete_forever"), function () {
@@ -249,9 +263,11 @@
       if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
       updateBackButton();
       await loadSessions();
+      return true;
     } catch (error) {
       messagesContainer.innerHTML = "";
       addMsg("error", error.message);
+      return false;
     }
   }
 
@@ -384,6 +400,8 @@
     const d = document.getElementById("messages");
     const m = document.createElement("div");
     m.className = "msg " + role + (cls ? " " + cls : "");
+    if (role === "user") m.dataset.speaker = t("speaker_you");
+    if (role === "assistant") m.dataset.speaker = t("speaker_agent");
     m.textContent = content;
     d.appendChild(m);
     // requestAnimationFrame 避免同步回流
@@ -400,13 +418,15 @@
     const review = data.review_audit || { status: "not_run" };
     const reviewChip =
       review.status !== "not_run"
-        ? `<span class="review-chip ${IA.safeClass(review.status)}">review ${IA.escapeHtml(review.status)}</span>`
+        ? `<span class="review-chip ${IA.safeClass(review.status)}">${IA.escapeHtml(
+            t("report_independent_review", { status: enumLabel("review_status", review.status) }),
+          )}</span>`
         : "";
     card.innerHTML =
       `<div class="report-preview-label">${IA.escapeHtml(t("analysis_complete_label"))}</div>` +
       `<h3 class="report-preview-title">${IA.escapeHtml(data.summary)}</h3>` +
       `<p class="report-preview-root"><strong>${IA.escapeHtml(t("report_root_cause"))}</strong><br>${IA.escapeHtml(data.root_cause)}</p>` +
-      `<div class="report-preview-footer"><span class="badge ${IA.safeClass(data.confidence)}">${IA.escapeHtml(data.confidence)}</span>${reviewChip}` +
+      `<div class="report-preview-footer"><span class="badge ${IA.safeClass(data.confidence)}">${IA.escapeHtml(enumLabel("confidence", data.confidence))}</span>${reviewChip}` +
       `<button class="report-preview-button" type="button">${IA.escapeHtml(t("open_full_report"))}</button></div>`;
     card.querySelector(".report-preview-button").addEventListener("click", function () {
       toggleReport(true);
@@ -599,7 +619,7 @@
     parts.push(`<h3>${IA.escapeHtml(r.summary)}</h3>`);
     const confClass = IA.safeClass(r.confidence);
     parts.push(
-      `<div class="report-meta"><span>${IA.escapeHtml(t("report_confidence"))}</span><span class="badge ${confClass}">${IA.escapeHtml(r.confidence)}</span></div>`,
+      `<div class="report-meta"><span>${IA.escapeHtml(t("report_confidence"))}</span><span class="badge ${confClass}">${IA.escapeHtml(enumLabel("confidence", r.confidence))}</span></div>`,
     );
 
     // 报告工具栏：复制 JSON、下载 JSON、下载 Markdown
@@ -614,7 +634,9 @@
     const review = r.review_audit || { status: "not_run", summary: "", findings: [] };
     if (review.status !== "not_run") {
       const reviewClass = IA.safeClass(review.status);
-      let body = `<span class="review-chip ${reviewClass}">${IA.escapeHtml(t("report_independent_review", { status: review.status }))}</span>`;
+      let body = `<span class="review-chip ${reviewClass}">${IA.escapeHtml(
+        t("report_independent_review", { status: enumLabel("review_status", review.status) }),
+      )}</span>`;
       if (review.summary) body += `<p class="review-summary">${IA.escapeHtml(review.summary)}</p>`;
       if (review.findings && review.findings.length) {
         body += `<ul class="review-findings">${review.findings
@@ -751,14 +773,14 @@
     const lines = [];
     lines.push(`# ${r.summary}`);
     lines.push("");
-    lines.push(`**Confidence:** ${r.confidence}`);
+    lines.push(`**${t("report_confidence")}:** ${enumLabel("confidence", r.confidence)}`);
     lines.push("");
-    lines.push(`## Root cause`);
+    lines.push(`## ${t("report_root_cause")}`);
     lines.push("");
     lines.push(r.root_cause);
     lines.push("");
     if (r.evidence && r.evidence.length) {
-      lines.push(`## Code evidence`);
+      lines.push(`## ${t("report_evidence")}`);
       lines.push("");
       r.evidence.forEach(function (e) {
         lines.push(`- \`${e.path}\` ${e.lines || ""}: ${e.reason || ""}`);
@@ -766,7 +788,7 @@
       lines.push("");
     }
     if (r.proposed_changes && r.proposed_changes.length) {
-      lines.push(`## Proposed changes`);
+      lines.push(`## ${t("report_proposed_changes")}`);
       lines.push("");
       r.proposed_changes.forEach(function (c, idx) {
         lines.push(`${idx + 1}. ${c}`);
@@ -774,7 +796,7 @@
       lines.push("");
     }
     if (r.patch) {
-      lines.push(`## Patch`);
+      lines.push(`## ${t("report_patch_export")}`);
       lines.push("");
       lines.push("```diff");
       lines.push(r.patch);
@@ -782,7 +804,7 @@
       lines.push("");
     }
     if (r.tests && r.tests.length) {
-      lines.push(`## Suggested tests`);
+      lines.push(`## ${t("report_tests")}`);
       lines.push("");
       r.tests.forEach(function (item, idx) {
         lines.push(`${idx + 1}. ${item}`);
@@ -790,7 +812,7 @@
       lines.push("");
     }
     if (r.risks && r.risks.length) {
-      lines.push(`## Risks`);
+      lines.push(`## ${t("report_risks")}`);
       lines.push("");
       r.risks.forEach(function (item) {
         lines.push(`- ${item}`);
@@ -799,7 +821,7 @@
     }
     const review = r.review_audit || { status: "not_run", summary: "", findings: [] };
     if (review.status !== "not_run") {
-      lines.push(`## Independent review: ${review.status}`);
+      lines.push(`## ${t("report_independent_review", { status: enumLabel("review_status", review.status) })}`);
       if (review.summary) lines.push("", review.summary);
       if (review.findings && review.findings.length) {
         lines.push("");
