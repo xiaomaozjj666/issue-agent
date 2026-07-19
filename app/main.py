@@ -17,6 +17,7 @@ from app.auth import AuthMiddleware
 from app.config import get_settings
 from app.events import AgentEvent, cancelled_event, error_event, session_event
 from app.github import GitHubClient, GitHubError, GitHubRateLimitError
+from app.i18n import get_frontend_strings
 from app.logging_config import setup_logging
 from app.models import (
     AnalysisReport,
@@ -444,7 +445,15 @@ async def get_pr_proposal(session_id: str) -> dict:
 async def root(request: Request):
     if templates is None:
         raise HTTPException(status_code=404, detail="Web UI templates not found")
-    return templates.TemplateResponse(request=request, name="index.html")
+    settings = get_settings()
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "language": settings.language,
+            "frontend_strings": get_frontend_strings(settings.language),
+        },
+    )
 
 
 def format_report_text(report: AnalysisReport) -> str:
