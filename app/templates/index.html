@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh" data-theme="dark">
+<html lang="{{ language }}" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +8,7 @@
 <title>GitHub Issue Agent</title>
 <link rel="stylesheet" href="/static/css/base.css">
 <link rel="stylesheet" href="/static/css/github-theme.css">
+<script id="i18n-payload" type="application/json">{{ frontend_strings | tojson }}</script>
 </head>
 <body>
 <div id="sidebar">
@@ -16,66 +17,66 @@
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 16 16" width="20" height="20"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 0 13A6.5 6.5 0 0 0 8 1.5ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm9 3.75a.75.75 0 0 1-.75.75h-.5A.75.75 0 0 1 7 11.75v-.5a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 .75.75v.5ZM6.5 6.25a1.5 1.5 0 1 1 2.54 1.08c-.28.27-.54.45-.72.63-.17.17-.22.29-.22.54a.75.75 0 0 1-1.5 0c0-.78.33-1.27.67-1.61.27-.27.58-.5.76-.68a.5.5 0 1 0-.85-.36.75.75 0 0 1-1.5 0c0-.9.73-1.6 1.62-1.6h.2Z"/></svg>
       </span>
-      <div class="brand-copy"><strong>Issue Agent</strong><span>Repository intelligence</span></div>
+      <div class="brand-copy"><strong data-i18n="brand_title">Issue Agent</strong><span data-i18n="brand_subtitle">Repository intelligence</span></div>
     </div>
     <div class="brand-actions">
-      <button class="mobile-history-toggle icon-button" type="button" onclick="toggleMobileHistory()" title="Session history" aria-label="Session history" aria-expanded="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2.75 2.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Zm0 4.75a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Zm0 4.75a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Z"/></svg></button>
-      <button class="theme-toggle icon-button" type="button" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM8 0a.75.75 0 0 1 .75.75V2a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0Zm0 13.25a.75.75 0 0 1 .75.75v1.25a.75.75 0 0 1-1.5 0V14a.75.75 0 0 1 .75-.75ZM16 8a.75.75 0 0 1-.75.75H14a.75.75 0 0 1 0-1.5h1.25A.75.75 0 0 1 16 8ZM2.75 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5H2A.75.75 0 0 1 2.75 8Zm10.907-5.657a.75.75 0 0 1 0 1.06l-.884.884a.75.75 0 1 1-1.06-1.06l.884-.884a.75.75 0 0 1 1.06 0ZM4.287 11.713a.75.75 0 0 1 0 1.06l-.884.884a.75.75 0 0 1-1.06-1.06l.884-.884a.75.75 0 0 1 1.06 0Zm9.37 1.944a.75.75 0 0 1-1.06 0l-.884-.884a.75.75 0 0 1 1.06-1.06l.884.884a.75.75 0 0 1 0 1.06ZM4.287 4.287a.75.75 0 0 1-1.06 0l-.884-.884a.75.75 0 0 1 1.06-1.06l.884.884a.75.75 0 0 1 0 1.06Z"/></svg></button>
+      <button class="mobile-history-toggle icon-button" type="button" id="toggle-history-btn" title="Session history" aria-label="Session history" aria-expanded="false" aria-controls="history-list"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2.75 2.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Zm0 4.75a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Zm0 4.75a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Z"/></svg></button>
+      <button class="theme-toggle icon-button" type="button" id="theme-toggle-btn" title="Toggle theme" aria-label="Toggle theme" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM8 0a.75.75 0 0 1 .75.75V2a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0Zm0 13.25a.75.75 0 0 1 .75.75v1.25a.75.75 0 0 1-1.5 0V14a.75.75 0 0 1 .75-.75ZM16 8a.75.75 0 0 1-.75.75H14a.75.75 0 0 1 0-1.5h1.25A.75.75 0 0 1 16 8ZM2.75 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5H2A.75.75 0 0 1 2.75 8Zm10.907-5.657a.75.75 0 0 1 0 1.06l-.884.884a.75.75 0 1 1-1.06-1.06l.884-.884a.75.75 0 0 1 1.06 0ZM4.287 11.713a.75.75 0 0 1 0 1.06l-.884.884a.75.75 0 0 1-1.06-1.06l.884-.884a.75.75 0 0 1 1.06 0Zm9.37 1.944a.75.75 0 0 1-1.06 0l-.884-.884a.75.75 0 0 1 1.06-1.06l.884.884a.75.75 0 0 1 0 1.06ZM4.287 4.287a.75.75 0 0 1-1.06 0l-.884-.884a.75.75 0 0 1 1.06-1.06l.884.884a.75.75 0 0 1 0 1.06Z"/></svg></button>
     </div>
   </div>
   <div class="issue-compose">
-    <label for="issueUrl">GitHub Issue URL</label>
+    <label for="issueUrl" data-i18n="issue_label">GitHub Issue URL</label>
     <div class="compose-row">
-      <input id="issueUrl" placeholder="https://github.com/owner/repo/issues/123" value="">
-      <button class="primary-action" type="button" onclick="analyze()"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7.25 1.75a.75.75 0 0 1 1.5 0v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5Z"/></svg><span>New analysis</span></button>
+      <input id="issueUrl" placeholder="https://github.com/owner/repo/issues/123" value="" autocomplete="off">
+      <button class="primary-action" type="button" id="analyze-btn"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7.25 1.75a.75.75 0 0 1 1.5 0v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5Z"/></svg><span data-i18n="new_analysis">New analysis</span></button>
     </div>
   </div>
   <div class="history-panel">
     <div class="history-toolbar">
       <div class="history-heading">
-        <span id="history-title">Issue history</span>
-        <button id="archive-toggle" class="archive-toggle" type="button" onclick="toggleArchiveView()">Archived</button>
+        <span id="history-title" data-i18n="history_title_sessions">Issue history</span>
+        <button id="archive-toggle" class="archive-toggle" type="button" data-i18n="archive_toggle_show">Archived</button>
       </div>
-      <input id="history-search" type="search" maxlength="160" placeholder="Search issues and repositories" oninput="scheduleHistorySearch()">
+      <input id="history-search" type="search" maxlength="160" placeholder="Search issues and repositories" data-i18n-placeholder="history_search_placeholder" aria-label="Search sessions">
     </div>
-    <div id="history-list" aria-live="polite"></div>
+    <div id="history-list" aria-live="polite" aria-label="Session list"></div>
   </div>
 </div>
 <div id="main">
   <div id="conversation">
     <div id="conversation-header">
       <div class="conversation-heading">
-        <button id="back-button" class="back-button" type="button" onclick="goBack()" title="Back" aria-label="Back to previous view" disabled><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7.78 12.53a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 0 1 0-1.06l4-4a.75.75 0 0 1 1.06 1.06L5.06 7.25h7.19a.75.75 0 0 1 0 1.5H5.06l2.72 2.72a.75.75 0 0 1 0 1.06Z"/></svg></button>
-        <span class="conversation-label">Investigation thread</span>
+        <button id="back-button" class="back-button" type="button" title="Back" aria-label="Back to previous view" disabled><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7.78 12.53a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 0 1 0-1.06l4-4a.75.75 0 0 1 1.06 1.06L5.06 7.25h7.19a.75.75 0 0 1 0 1.5H5.06l2.72 2.72a.75.75 0 0 1 0 1.06Z"/></svg></button>
+        <span class="conversation-label" data-i18n="conversation_label">Investigation thread</span>
       </div>
       <div class="header-actions">
-        <button id="cancel-analysis" type="button" onclick="cancelAnalysis()">Cancel</button>
-        <button id="report-toggle" type="button" onclick="toggleReport(true)" aria-label="View report" aria-controls="report-panel" aria-expanded="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3.75 1.5h5.5c.2 0 .39.08.53.22l3.5 3.5c.14.14.22.33.22.53v8.5a.75.75 0 0 1-.75.75h-9.5a.75.75 0 0 1-.75-.75v-12.5a.75.75 0 0 1 .75-.75Zm.25 1v11h8V6.06L8.94 3H4Zm1.75 5.25A.75.75 0 0 1 6.5 7h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1-.75-.75Zm0 3A.75.75 0 0 1 6.5 10h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1-.75-.75Z"/></svg><span>View report</span></button>
+        <button id="cancel-analysis" type="button" data-i18n="cancel_button">Cancel</button>
+        <button id="report-toggle" type="button" aria-label="View report" aria-controls="report-panel" aria-expanded="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3.75 1.5h5.5c.2 0 .39.08.53.22l3.5 3.5c.14.14.22.33.22.53v8.5a.75.75 0 0 1-.75.75h-9.5a.75.75 0 0 1-.75-.75v-12.5a.75.75 0 0 1 .75-.75Zm.25 1v11h8V6.06L8.94 3H4Zm1.75 5.25A.75.75 0 0 1 6.5 7h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1-.75-.75Zm0 3A.75.75 0 0 1 6.5 10h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1-.75-.75Z"/></svg><span data-i18n="report_toggle">View report</span></button>
       </div>
     </div>
-    <div id="messages"></div>
-    <div id="progress"></div>
+    <div id="messages" aria-live="polite" aria-label="Conversation messages"></div>
+    <div id="progress" role="status" aria-live="polite"></div>
     <div id="input-bar" style="display:none">
-      <input id="chatInput" placeholder="Ask follow-up questions..." onkeydown="if(event.key==='Enter')chat()">
-      <button onclick="chat()" aria-label="Send"><span>Send</span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M1.29 1.17a1 1 0 0 1 1.05-.1l12 6a1 1 0 0 1 0 1.79l-12 6A1 1 0 0 1 .9 13.8l1.24-4.56 6.48-1.24-6.48-1.24L.9 2.2a1 1 0 0 1 .39-1.03Z"/></svg></button>
+      <input id="chatInput" placeholder="Ask follow-up questions..." data-i18n-placeholder="input_placeholder" autocomplete="off">
+      <button id="chat-send-btn" aria-label="Send"><span data-i18n="send_button">Send</span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M1.29 1.17a1 1 0 0 1 1.05-.1l12 6a1 1 0 0 1 0 1.79l-12 6A1 1 0 0 1 .9 13.8l1.24-4.56 6.48-1.24-6.48-1.24L.9 2.2a1 1 0 0 1 .39-1.03Z"/></svg></button>
     </div>
   </div>
   <aside id="report-panel" aria-label="Analysis report">
     <div class="report-header">
-      <h2>Analysis report</h2>
-      <button class="report-close" type="button" onclick="toggleReport(false)" aria-label="Close report">Close</button>
+      <h2 data-i18n="report_title">Analysis report</h2>
+      <button class="report-close" type="button" id="report-close-btn" aria-label="Close report" data-i18n="report_close">Close</button>
     </div>
     <div id="report"></div>
   </aside>
   </div>
-<dialog id="session-dialog">
-  <form class="dialog-body" onsubmit="submitSessionDialog(event)">
+<dialog id="session-dialog" aria-labelledby="dialog-title">
+  <form class="dialog-body" id="session-dialog-form">
     <h3 id="dialog-title">Rename session</h3>
     <p id="dialog-message"></p>
     <input id="dialog-input" maxlength="160" autocomplete="off">
     <div class="dialog-actions">
-      <button type="button" onclick="closeSessionDialog()">Cancel</button>
-      <button id="dialog-confirm" class="confirm" type="submit">Save</button>
+      <button type="button" id="dialog-cancel-btn" data-i18n="dialog_cancel">Cancel</button>
+      <button id="dialog-confirm" class="confirm" type="submit" data-i18n="dialog_save">Save</button>
     </div>
   </form>
 </dialog>

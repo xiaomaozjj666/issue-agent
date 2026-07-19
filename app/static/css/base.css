@@ -82,9 +82,8 @@ dialog::backdrop{background:rgba(4,8,12,.72);backdrop-filter:blur(4px)}
 .msg.tool.expanded .full{display:block}
 .msg.tool.expanded .preview{display:none}
 .msg.error{align-self:center;background:var(--red);color:#fff}
-#report-panel{display:none;width:min(460px,42vw);flex:0 0 min(460px,42vw);min-width:340px;border-left:1px solid var(--border);background:var(--panel);min-height:0;flex-direction:column;box-shadow:-20px 0 60px rgba(0,0,0,.18)}
+#report-panel{display:none;width:min(480px,42vw);flex:0 0 min(480px,42vw);min-width:340px;border-left:1px solid var(--border);background:var(--panel);min-height:0;flex-direction:column;box-shadow:-20px 0 60px rgba(0,0,0,.18)}
 #main.report-open #report-panel{display:flex}
-#report-panel{width:min(480px,42vw);flex-basis:min(480px,42vw)}
 .report-header{height:56px;flex:0 0 56px;padding:0 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .report-header h2{font-family:"Bahnschrift","Microsoft YaHei UI",sans-serif;font-size:16px;letter-spacing:.04em}
 #report{padding:24px;overflow-y:auto;min-height:0;line-height:1.68}

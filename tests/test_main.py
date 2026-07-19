@@ -77,7 +77,7 @@ def test_static_frontend_modules_are_served() -> None:
     assert runtime.status_code == 200
     assert "window.cancelAnalysis" in runtime.text
     assert app_script.status_code == 200
-    assert "case'review'" in app_script.text
+    assert 'case "review"' in app_script.text
     assert "loadSessions();" in app_script.text
     assert base_stylesheet.status_code == 200
     assert "#report-panel" in base_stylesheet.text
