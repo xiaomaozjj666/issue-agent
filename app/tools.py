@@ -1,7 +1,21 @@
+"""Tool definitions and execution engine for the investigation agent.
+
+The ``ToolExecutor`` class provides a sandboxed environment for LLM tool calls:
+- File reads are bounded by max_files, max_file_chars, and total context budget.
+- An investigation ledger records bounded observations for report generation.
+- PR proposals are validated but never executed directly (opt-in confirmation).
+
+Tool dispatch uses a method-name convention (``_tool_<name>``) resolved via
+``getattr``, making it trivial to register new tools without modifying a
+central if/elif chain.
+"""
+
 import json
 import logging
 import posixpath
 import re
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from app.config import Settings
 from app.github import GitHubClient, GitHubFileSkipped
@@ -186,6 +200,13 @@ def get_tool_definitions(settings: Settings) -> list[dict]:
 
 
 class ToolExecutor:
+    """Sandboxed tool execution environment for the investigation agent.
+
+    Enforces file-count, character-budget, and context-window limits.
+    Maintains an investigation ledger (bounded observation log) consumed
+    by the report generator, and a file cache shared across tool calls.
+    """
+
     def __init__(
         self,
         github: GitHubClient,
@@ -234,9 +255,17 @@ class ToolExecutor:
         return self._file_cache
 
     async def execute(self, name: str, arguments: dict) -> str:
+        """Dispatch and execute a tool call by name.
+
+        Uses method-name convention: tool ``foo_bar`` maps to ``_tool_foo_bar``.
+        Falls back to the legacy if/elif for tools not yet migrated.
+        """
         self.tools_used.append(name)
         try:
-            if name == "read_file":
+            handler: Callable[..., Coroutine[Any, Any, str]] | None = getattr(self, f"_tool_{name}", None)
+            if handler is not None:
+                result = await handler(**arguments)
+            elif name == "read_file":
                 result = await self._read_file(**arguments)
             elif name == "list_directory":
                 result = self._list_directory(arguments.get("path", ""))
@@ -480,7 +509,8 @@ class ToolExecutor:
         return counts
 
 
-def parse_tool_call(tool_call) -> tuple[str, dict]:
+def parse_tool_call(tool_call: Any) -> tuple[str, dict]:
+    """Extract tool name and parsed arguments from an OpenAI tool_call object."""
     name = tool_call.function.name
     try:
         arguments = json.loads(tool_call.function.arguments)

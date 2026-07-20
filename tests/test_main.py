@@ -13,7 +13,7 @@ from app.build import BUILD_ID
 from app.config import Settings
 from app.events import done_event, phase_event
 from app.github import GitHubError, GitHubRateLimitError
-from app.main import app, get_settings
+from app.main import app, get_session_manager, get_settings
 from app.models import AnalysisReport, ApplyFixRequest, ChatResponse, IssueData
 from app.sessions import SessionManager
 
@@ -25,24 +25,13 @@ def test_health() -> None:
     assert response.json() == {"status": "ok", "app": "issue-agent", "build_id": BUILD_ID}
 
 
-async def test_lifespan_closes_global_session_manager(monkeypatch) -> None:
-    manager = SessionManager()
-    closed = False
-    original_close = manager.close
-
-    async def close() -> None:
-        nonlocal closed
-        closed = True
-        await original_close()
-
-    monkeypatch.setattr(manager, "close", close)
-    monkeypatch.setattr(main_module, "_session_manager", manager)
-
+async def test_lifespan_initializes_and_closes_session_manager() -> None:
+    """Verify lifespan creates a SessionManager on app.state and closes it on shutdown."""
     async with main_module.lifespan(app):
-        pass
+        assert hasattr(app.state, "session_manager")
+        assert isinstance(app.state.session_manager, SessionManager)
 
-    assert closed is True
-    assert main_module._session_manager is None
+    assert app.state.session_manager is None
 
 
 def test_web_ui_renders() -> None:
@@ -155,7 +144,9 @@ def test_chat_requires_issue_url_for_new_session(monkeypatch) -> None:
 
 
 def test_chat_returns_404_for_unknown_session(monkeypatch) -> None:
+    manager = SessionManager()
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_session_manager] = lambda: manager
     try:
         response = TestClient(app).post(
             "/chat",
@@ -185,8 +176,10 @@ def test_chat_new_session_returns_report(monkeypatch) -> None:
             session.report = report
         return report
 
+    manager = SessionManager()
     monkeypatch.setattr(IssueAgent, "investigate", fake_investigate)
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_session_manager] = lambda: manager
     try:
         response = TestClient(app).post(
             "/chat",
@@ -207,7 +200,7 @@ def test_chat_new_session_returns_report(monkeypatch) -> None:
 
 def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
 
     async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
         yield done_event()
@@ -226,6 +219,7 @@ def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
 
     assert chat_response.status_code == 200
     assert chat_response.json()["reply"] == "reply: what changed?"
+    app.dependency_overrides.pop(get_session_manager, None)
 
 
 def test_apply_fix_requires_explicit_confirmation() -> None:
@@ -234,7 +228,7 @@ def test_apply_fix_requires_explicit_confirmation() -> None:
 
 async def test_apply_fix_new_and_legacy_routes_require_confirmation(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
     monkeypatch.setattr(
         main_module,
         "get_settings",
@@ -270,6 +264,7 @@ async def test_apply_fix_new_and_legacy_routes_require_confirmation(monkeypatch)
     assert current.json() == {"detail": "Set confirm=true to create the PR"}
     assert legacy.status_code == 400
     assert legacy.json() == current.json()
+    app.dependency_overrides.pop(get_session_manager, None)
 
 
 def test_apply_fix_is_disabled_by_default() -> None:
@@ -288,7 +283,7 @@ def test_openapi_exposes_only_the_session_scoped_apply_fix_route() -> None:
 
 async def test_session_history_api_supports_restore_rename_archive_and_delete(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
     session = await manager.create("https://github.com/acme/widget/issues/42")
     session.issue = IssueData(
         owner="acme",
@@ -329,11 +324,12 @@ async def test_session_history_api_supports_restore_rename_archive_and_delete(mo
     assert active_listing.json() == []
     assert archive_listing.json()[0]["session_id"] == session.session_id
     assert deleted.status_code == 204
+    app.dependency_overrides.pop(get_session_manager, None)
 
 
 async def test_session_detail_exposes_durable_events_and_metrics(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
     session = await manager.create("https://github.com/acme/widget/issues/7")
     session.metrics = {"model_calls": 3, "duration_ms": 1200}
     await manager.save(session)
@@ -348,11 +344,12 @@ async def test_session_detail_exposes_durable_events_and_metrics(monkeypatch) ->
     assert response.status_code == 200
     assert response.json()["metrics"]["model_calls"] == 3
     assert response.json()["events"][0]["data"]["phase"] == "verifying"
+    app.dependency_overrides.pop(get_session_manager, None)
 
 
 async def test_cancel_endpoint_marks_running_session_for_cancellation(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
     session = await manager.create("https://github.com/acme/widget/issues/8")
     session.status = "running"
     await manager.save(session)
@@ -362,11 +359,12 @@ async def test_cancel_endpoint_marks_running_session_for_cancellation(monkeypatc
 
     assert response.status_code == 200
     assert await manager.is_cancel_requested(session.session_id) is True
+    app.dependency_overrides.pop(get_session_manager, None)
 
 
 def test_stream_persists_phase_events(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
 
     async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
         yield phase_event("exploring", "Exploring repository")
@@ -381,11 +379,12 @@ def test_stream_persists_phase_events(monkeypatch) -> None:
     detail = client.get(f"/session/{session_id}").json()
     assert [event["type"] for event in detail["events"]] == ["session", "phase", "done"]
     assert detail["status"] == "completed"
+    app.dependency_overrides.pop(get_session_manager, None)
 
 
 def test_stream_honors_cooperative_cancellation(monkeypatch) -> None:
     manager = SessionManager()
-    monkeypatch.setattr(main_module, "_session_manager", manager)
+    app.dependency_overrides[get_session_manager] = lambda: manager
 
     async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
         assert session is not None
@@ -402,3 +401,4 @@ def test_stream_honors_cooperative_cancellation(monkeypatch) -> None:
     detail = client.get(f"/session/{session_id}").json()
     assert detail["status"] == "cancelled"
     assert detail["phase"] == "cancelled"
+    app.dependency_overrides.pop(get_session_manager, None)

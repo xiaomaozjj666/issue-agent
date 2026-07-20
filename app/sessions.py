@@ -1,4 +1,13 @@
-"""Session management with optional SQLite persistence."""
+"""Session management with optional SQLite persistence.
+
+Provides two storage backends:
+- ``MemoryStore``: in-memory, for development and testing.
+- ``SqliteStore``: durable, for production deployments.
+
+``SessionManager`` is the public facade used by the rest of the application;
+it selects the backend based on the configured ``db_path`` and manages
+per-session asyncio locks for in-process mutual exclusion.
+"""
 
 import asyncio
 import json
@@ -330,6 +339,30 @@ class SqliteStore:
         await db.commit()
         return cursor.rowcount > 0
 
+    async def purge_old(self, retention_days: int) -> int:
+        """Delete terminal-state sessions older than retention_days."""
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat(timespec="seconds")
+        db = await self._get_conn()
+        # Delete associated events and PR proposals first (FK cascade may not cover pending_pr)
+        await db.execute(
+            "DELETE FROM pending_pr WHERE session_id IN "
+            "(SELECT session_id FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?)",
+            (cutoff,),
+        )
+        await db.execute(
+            "DELETE FROM session_events WHERE session_id IN "
+            "(SELECT session_id FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?)",
+            (cutoff,),
+        )
+        cursor = await db.execute(
+            "DELETE FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?",
+            (cutoff,),
+        )
+        await db.commit()
+        return cursor.rowcount
+
     async def close(self) -> None:
         if self._conn is not None:
             await self._conn.close()
@@ -399,12 +432,23 @@ class SessionManager:
             self._locks.pop(session_id, None)
         return deleted
 
+    async def purge_old_sessions(self, retention_days: int) -> int:
+        """Delete completed/failed/cancelled sessions older than retention_days.
+
+        Returns the number of sessions purged.  Only supported on SqliteStore;
+        MemoryStore is a no-op (returns 0).
+        """
+        if isinstance(self._store, SqliteStore):
+            return await self._store.purge_old(retention_days)
+        return 0
+
     async def close(self) -> None:
         if isinstance(self._store, SqliteStore):
             await self._store.close()
 
 
-def _row_to_session(row) -> Session:
+def _row_to_session(row: aiosqlite.Row) -> Session:
+    """Deserialize a SQLite row into a Session dataclass instance."""
     now = _now()
     raw_status = row["status"] or "queued"
     status = (

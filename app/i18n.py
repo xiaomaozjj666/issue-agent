@@ -1,4 +1,12 @@
-"""Internationalization strings for the GitHub Issue Agent."""
+"""Internationalization strings and prompt templates for the GitHub Issue Agent.
+
+Contains both backend prompts (system, report, review) and frontend UI strings.
+Prompt engineering decisions:
+- Tool-calling strategy section guides the LLM to use search_code first for
+  symbol location, then read_file for verification, reducing wasted iterations.
+- Causal-chain verification instruction ensures root_cause is a complete
+  trigger-to-symptom chain rather than a surface-level observation.
+"""
 
 from app.config import get_settings
 
@@ -17,12 +25,18 @@ STRINGS = {
     "zh": {
         "system_prompt_investigate": (
             "你是一位资深软件工程师，正在调查一个 GitHub issue。\n"
-            "你可以使用以下工具探索代码库：read_file, list_directory, search_files, grep_content,\n"
-            "get_file_history, list_branches, get_file_at_commit。\n\n"
+            "你可以使用以下工具探索代码库：read_file, list_directory, search_files, search_code,\n"
+            "grep_content, get_file_history, list_branches, get_file_at_commit。\n\n"
+            "工具调用策略（按优先级）：\n"
+            "1. search_code 定位符号/错误消息所在文件\n"
+            "2. read_file 读取并验证代码逻辑\n"
+            "3. grep_content 在已读文件中精确定位行号\n"
+            "4. get_file_history 查看相关变更历史\n"
+            "避免重复 list_directory 或 search_files 已能确定的信息。\n\n"
             "调查流程：\n"
             "1. 仔细阅读 issue 描述和评论\n"
             "2. 如果 issue 文本明确提到文件路径（如 src/foo/bar.py 或 models.py），优先 read_file 这些路径\n"
-            "3. 使用 search_files 和 list_directory 查找相关文件\n"
+            "3. 使用 search_code 查找相关符号和错误消息\n"
             "4. 使用 read_file 检查代码 —— 务必在做出任何断言前先读代码\n"
             "5. 使用 grep_content 在已读文件中搜索模式\n"
             "6. 用实际代码证据验证每个假设\n"
@@ -47,7 +61,7 @@ STRINGS = {
             "基于以上调查，提供最终分析 JSON 对象：\n\n"
             "{\n"
             '  "summary": "问题摘要（简体中文）",\n'
-            '  "root_cause": "根因分析（简体中文，引用具体文件和行号）",\n'
+            '  "root_cause": "根因分析（简体中文，必须是完整的因果链：触发条件 → 代码缺陷 → 最终症状）",\n'
             '  "confidence": "high" | "medium" | "low",\n'
             '  "evidence": [\n'
             '    {"path": "实际读过的文件路径", "lines": "L12-L18", "reason": "该证据说明了什么（简体中文）"}\n'
@@ -58,7 +72,9 @@ STRINGS = {
             '  "risks": ["风险提示（简体中文）"]\n'
             "}\n\n"
             "置信度规则: high=3条以上, medium=1-2条, low=0条\n"
-            "质量检查: 每项证据引用实际读过的文件, 行号精确, 根因是因果链, 修复具体可执行, 风险考虑兼容性"
+            "质量检查: 每项证据引用实际读过的文件, 行号精确, "
+            "root_cause 必须形成从触发条件到最终症状的完整因果链（而非表面现象描述）, "
+            "修复具体可执行, 风险考虑兼容性"
         ),
         "chat_system_prompt": (
             "你是一位资深软件工程师，正在讨论一个 GitHub issue 的调查结果。\n\n"
@@ -102,13 +118,19 @@ STRINGS = {
     "en": {
         "system_prompt_investigate": (
             "You are a senior software engineer investigating a GitHub issue.\n"
-            "You have tools: read_file, list_directory, search_files, grep_content,\n"
-            "get_file_history, list_branches, get_file_at_commit.\n\n"
+            "You have tools: read_file, list_directory, search_files, search_code,\n"
+            "grep_content, get_file_history, list_branches, get_file_at_commit.\n\n"
+            "Tool-calling strategy (by priority):\n"
+            "1. search_code to locate symbols/error messages across the repository\n"
+            "2. read_file to examine and verify code logic\n"
+            "3. grep_content to pinpoint exact line numbers in already-read files\n"
+            "4. get_file_history to understand recent changes\n"
+            "Avoid redundant list_directory or search_files when search_code can answer directly.\n\n"
             "Investigation process:\n"
             "1. Read the issue description and comments carefully\n"
             "2. If the issue text explicitly cites file paths (e.g. src/foo/bar.py or models.py), "
             "read_file those paths first\n"
-            "3. Use search_files and list_directory to find relevant files\n"
+            "3. Use search_code to find relevant symbols and error messages\n"
             "4. Use read_file to examine code — always read before claiming anything\n"
             "5. Use grep_content to search patterns in files already read\n"
             "6. Verify every hypothesis with actual code evidence\n"
@@ -133,7 +155,7 @@ STRINGS = {
             "Based on your investigation, provide the final analysis as JSON:\n\n"
             "{\n"
             '  "summary": "Brief issue summary",\n'
-            '  "root_cause": "Root cause (cite specific files and line numbers)",\n'
+            '  "root_cause": "Root cause as a complete causal chain: trigger → code defect → observed symptom",\n'
             '  "confidence": "high" | "medium" | "low",\n'
             '  "evidence": [\n'
             '    {"path": "file actually read", "lines": "L12-L18", "reason": "What this shows"}\n'
@@ -144,8 +166,9 @@ STRINGS = {
             '  "risks": ["Risk warnings"]\n'
             "}\n\n"
             "Confidence: high=3+ references, medium=1-2, low=0\n"
-            "Quality: every evidence from actually-read files, exact line numbers, causal chain root cause, "
-            "actionable fixes, backward-compatibility risks"
+            "Quality: every evidence from actually-read files, exact line numbers, "
+            "root_cause must form a complete causal chain from trigger condition to final symptom "
+            "(not a surface-level description), actionable fixes, backward-compatibility risks"
         ),
         "chat_system_prompt": (
             "You are a senior software engineer discussing a GitHub issue investigation.\n\n"

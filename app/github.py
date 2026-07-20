@@ -1,3 +1,14 @@
+"""GitHub REST API client with retry, connection pooling, and tree analysis.
+
+Design decisions:
+- Transient failures (5xx, network errors) are retried with exponential
+  back-off; rate-limit responses (403/429) are surfaced immediately so
+  callers can react.
+- Connection pool limits prevent file-descriptor exhaustion under load.
+- All file content is validated (base64, binary sniff) before returning.
+"""
+
+import asyncio
 import base64
 import binascii
 import logging
@@ -154,11 +165,21 @@ def parse_issue_url(url: str) -> tuple[str, str, int]:
 
 
 class GitHubClient:
+    """Async GitHub REST API client with retry and connection pooling.
+
+    Usage::
+
+        async with GitHubClient(token, timeout=30) as gh:
+            issue = await gh.get_issue(owner, repo, number)
+    """
+
     def __init__(
         self,
         token: str | None = None,
         max_file_bytes: int = 512_000,
         *,
+        timeout: float = 30.0,
+        max_retries: int = 3,
         write_enabled: bool = False,
     ) -> None:
         headers = {
@@ -168,8 +189,14 @@ class GitHubClient:
         }
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        self._client = httpx.AsyncClient(base_url="https://api.github.com", headers=headers, timeout=30.0)
+        self._client = httpx.AsyncClient(
+            base_url="https://api.github.com",
+            headers=headers,
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
         self._max_file_bytes = max_file_bytes
+        self._max_retries = max_retries
         self._write_enabled = write_enabled
 
     async def __aenter__(self) -> "GitHubClient":
@@ -179,21 +206,55 @@ class GitHubClient:
         await self._client.aclose()
 
     async def _get(self, path: str, **kwargs: Any) -> httpx.Response:
-        response = await self._client.get(path, **kwargs)
-        if response.status_code in RATE_LIMIT_STATUSES:
-            retry_after = response.headers.get("Retry-After") or response.headers.get("X-RateLimit-Reset")
-            detail = f"GitHub API rate limit hit (status {response.status_code})"
-            if retry_after:
-                detail += f"; retry hint: {retry_after}"
-            raise GitHubRateLimitError(detail)
-        if response.status_code >= 400:
+        """Perform a GET request with exponential back-off for transient errors.
+
+        Rate-limit responses (403/429) raise immediately without retry.
+        Server errors (5xx) and network failures are retried up to
+        ``self._max_retries`` times with exponential delay.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
             try:
-                payload = response.json()
-                message = payload.get("message", response.text) if isinstance(payload, dict) else response.text
-            except ValueError:
-                message = response.text
-            raise GitHubError(f"GitHub API returned {response.status_code}: {message}")
-        return response
+                response = await self._client.get(path, **kwargs)
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                last_exc = exc
+                if attempt < self._max_retries:
+                    delay = 0.5 * (2**attempt)
+                    logger.warning(
+                        "GitHub request %s failed (attempt %d): %s; retrying in %.1fs",
+                        path, attempt + 1, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise GitHubError(f"GitHub request failed after {self._max_retries + 1} attempts: {exc}") from exc
+
+            if response.status_code in RATE_LIMIT_STATUSES:
+                retry_after = response.headers.get("Retry-After") or response.headers.get("X-RateLimit-Reset")
+                detail = f"GitHub API rate limit hit (status {response.status_code})"
+                if retry_after:
+                    detail += f"; retry hint: {retry_after}"
+                raise GitHubRateLimitError(detail)
+
+            if response.status_code >= 500 and attempt < self._max_retries:
+                delay = 0.5 * (2**attempt)
+                logger.warning(
+                    "GitHub %s returned %d (attempt %d); retrying in %.1fs",
+                    path, response.status_code, attempt + 1, delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            if response.status_code >= 400:
+                try:
+                    payload = response.json()
+                    message = payload.get("message", response.text) if isinstance(payload, dict) else response.text
+                except ValueError:
+                    message = response.text
+                raise GitHubError(f"GitHub API returned {response.status_code}: {message}")
+            return response
+
+        # Should not reach here, but satisfy type checker
+        raise GitHubError(f"GitHub request failed: {last_exc}")  # pragma: no cover
 
     @staticmethod
     def _repo_segment(owner: str, repo: str) -> str:

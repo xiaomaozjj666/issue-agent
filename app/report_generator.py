@@ -186,7 +186,7 @@ class ReportGenerator:
 
         ledger_text = "\n".join(executor.investigation_ledger)
         if ledger_text and budget > 0:
-            ledger_budget = min(self._settings.max_investigation_ledger_chars, budget // 4)
+            ledger_budget = min(self._settings.max_investigation_ledger_chars, budget // 3)
             if ledger_budget > 0:
                 limited_ledger = ledger_text[:ledger_budget]
                 user_parts.append("")

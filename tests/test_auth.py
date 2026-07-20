@@ -39,6 +39,7 @@ def test_api_key_authentication_accepts_constant_time_match(monkeypatch) -> None
         lambda: Settings(openai_api_key="test-key", api_key="local-secret"),
     )
 
-    response = TestClient(app).get("/sessions", headers={"X-API-Key": "local-secret"})
+    with TestClient(app) as client:
+        response = client.get("/sessions", headers={"X-API-Key": "local-secret"})
 
     assert response.status_code == 200

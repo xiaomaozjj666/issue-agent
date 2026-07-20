@@ -1,4 +1,9 @@
-"""Async SQLite database layer for session persistence."""
+"""Async SQLite database layer for session persistence.
+
+Schema is auto-created on first connection.  WAL journal mode is enabled for
+concurrent read performance.  Migration helpers add columns introduced by
+newer releases to databases created by older versions.
+"""
 
 import logging
 from pathlib import Path
@@ -41,6 +46,9 @@ CREATE TABLE IF NOT EXISTS session_events (
 CREATE INDEX IF NOT EXISTS idx_session_events_session_id
     ON session_events(session_id, id);
 
+CREATE INDEX IF NOT EXISTS idx_session_events_created_at
+    ON session_events(created_at);
+
 CREATE TABLE IF NOT EXISTS pending_pr (
     session_id   TEXT PRIMARY KEY REFERENCES sessions(session_id),
     branch       TEXT NOT NULL,
@@ -53,6 +61,7 @@ CREATE TABLE IF NOT EXISTS pending_pr (
 
 
 async def get_db(path: str) -> aiosqlite.Connection:
+    """Open (or create) the SQLite database and ensure schema + migrations are applied."""
     if path == ":memory:":
         conn = await aiosqlite.connect(":memory:")
     else:
@@ -64,8 +73,19 @@ async def get_db(path: str) -> aiosqlite.Connection:
     await conn.execute("PRAGMA foreign_keys=ON")
     await conn.executescript(SCHEMA)
     await _migrate_sessions(conn)
+    await _ensure_performance_indexes(conn)
     await conn.commit()
     return conn
+
+
+async def _ensure_performance_indexes(conn: aiosqlite.Connection) -> None:
+    """Create indexes on migration-added columns (safe to call repeatedly)."""
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at)"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON sessions(status, updated_at)"
+    )
 
 
 async def _migrate_sessions(conn: aiosqlite.Connection) -> None:

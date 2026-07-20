@@ -1,8 +1,23 @@
+"""Core investigation agent: orchestrates LLM tool-calling loop and report generation.
+
+Architecture:
+- ``IssueAgent`` owns the OpenAI client lifecycle and delegates report
+  generation to ``ReportGenerator`` and evidence review to ``ReviewerAgent``.
+- The streaming interface (``investigate_stream``) yields ``AgentEvent`` objects
+  consumed by the SSE endpoint; the non-streaming ``investigate`` is a thin
+  wrapper for CLI and backward compatibility.
+- File pre-loading of issue-referenced paths runs concurrently via
+  ``asyncio.gather`` to reduce wall-clock latency.
+"""
+
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from time import monotonic
 
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessage
 
 from app.config import Settings
 from app.errors import ModelResponseError
@@ -38,6 +53,12 @@ __all__ = ["IssueAgent", "ModelResponseError"]
 
 
 class IssueAgent:
+    """LLM-powered GitHub issue investigation agent.
+
+    Manages the OpenAI client lifecycle and coordinates the multi-phase
+    investigation: fetch → preload → explore → verify → report → review.
+    """
+
     def __init__(
         self,
         settings: Settings,
@@ -79,8 +100,12 @@ class IssueAgent:
     async def investigate_stream(
         self, issue_url: str, *, session: Session | None = None
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Investigate an issue, yielding AgentEvent objects for real-time streaming."""
+        """Investigate an issue, yielding AgentEvent objects for real-time streaming.
+
+        Phases: fetching → preloading → exploring → verifying → reviewing → done.
+        """
         owner, repo, number = parse_issue_url(issue_url)
+        investigation_start = monotonic()
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
         if session is not None:
             session.metrics = {"model_calls": 0, "tool_calls": 0, "review_calls": 0, "files_read": 0}
@@ -89,6 +114,8 @@ class IssueAgent:
         async with GitHubClient(
             self.settings.github_token,
             max_file_bytes=self.settings.github_max_file_bytes,
+            timeout=self.settings.github_timeout,
+            max_retries=self.settings.github_max_retries,
         ) as github:
             issue = await github.get_issue(owner, repo, number)
             tree = await github.get_tree(issue)
@@ -103,26 +130,29 @@ class IssueAgent:
             messages = self._build_initial_messages(issue, tree, referenced_paths)
 
             # 预读 issue 文本中明确引用的文件路径，确保关键源码进入 file_cache。
-            # 这样即便 LLM 不主动 read_file，最终报告生成阶段也能基于真实代码，
-            # 避免"读取 0 个文件"和"根因为推测"的质量问题。
+            # 并行读取减少网络等待；受 max_files 限制避免过度消耗上下文预算。
             if referenced_paths:
                 yield phase_event(
                     "preloading",
                     f"Pre-loading {len(referenced_paths)} issue-referenced file(s)",
                 )
-                for path in referenced_paths:
+                preload_paths = referenced_paths[: self.settings.max_candidate_files]
+
+                async def _preload_one(path: str) -> tuple[str, str | None]:
                     try:
                         result = await executor.execute("read_file", {"path": path})
-                        yield tool_call_event(
-                            "read_file",
-                            {"path": path, "auto": "issue-referenced"},
-                            0,
-                        )
+                        return path, result
+                    except Exception as error:
+                        logger.warning("Pre-read of issue-referenced path %s failed: %s", path, error)
+                        return path, None
+
+                preload_results = await asyncio.gather(*[_preload_one(p) for p in preload_paths])
+                for path, result in preload_results:
+                    if result is not None:
+                        yield tool_call_event("read_file", {"path": path, "auto": "issue-referenced"}, 0)
                         yield tool_result_event("read_file", result)
                         if session is not None:
                             session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
-                    except Exception as error:
-                        logger.warning("Pre-read of issue-referenced path %s failed: %s", path, error)
 
             yield phase_event("exploring", "Investigating candidate files")
 
@@ -211,6 +241,21 @@ class IssueAgent:
 
             yield report_event(report.model_dump())
 
+            # 结构化完成日志：便于运维监控和性能分析
+            elapsed_ms = round((monotonic() - investigation_start) * 1000)
+            logger.info(
+                "Investigation complete: issue=%s/%s#%d elapsed_ms=%d "
+                "model_calls=%s tool_calls=%s files_read=%s confidence=%s",
+                owner,
+                repo,
+                number,
+                elapsed_ms,
+                session.metrics.get("model_calls", 0) if session else "n/a",
+                session.metrics.get("tool_calls", 0) if session else "n/a",
+                session.metrics.get("files_read", 0) if session else "n/a",
+                report.confidence,
+            )
+
             yield done_event()
 
     # ── non‑streaming wrappers (backward‑compatible) ─────────────────
@@ -244,6 +289,8 @@ class IssueAgent:
         async with GitHubClient(
             self.settings.github_token,
             max_file_bytes=self.settings.github_max_file_bytes,
+            timeout=self.settings.github_timeout,
+            max_retries=self.settings.github_max_retries,
         ) as github:
             executor = self._build_executor(
                 github,
@@ -390,7 +437,8 @@ class IssueAgent:
 # ── module‑level helpers ────────────────────────────────────────────
 
 
-def _serialize_message(message) -> dict:
+def _serialize_message(message: ChatCompletionMessage) -> dict:
+    """Serialize an OpenAI ChatCompletionMessage into a plain dict for context storage."""
     msg: dict = {"role": "assistant", "content": message.content or ""}
     reasoning_content = getattr(message, "reasoning_content", None)
     if reasoning_content:
@@ -400,7 +448,7 @@ def _serialize_message(message) -> dict:
             {
                 "id": tc.id,
                 "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},  # type: ignore[union-attr]
             }
             for tc in message.tool_calls
         ]
