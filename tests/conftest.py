@@ -39,6 +39,36 @@ class _FakeResponse:
         self.choices = [SimpleNamespace(message=message, finish_reason="stop")]
 
 
+class _FakeStreamChunk:
+    """单个 SSE chunk：模拟 OpenAI stream=True 模式下的 delta。"""
+
+    def __init__(self, content: str | None = None, reasoning_content: str | None = None) -> None:
+        delta = SimpleNamespace(
+            content=content,
+            reasoning_content=reasoning_content,
+            reasoning=None,
+        )
+        self.choices = [SimpleNamespace(delta=delta, finish_reason="stop")]
+
+
+class _FakeStream:
+    """async iterator over _FakeStreamChunk。供 stream=True 调用使用。"""
+
+    def __init__(self, chunks: list) -> None:
+        self._chunks = list(chunks)
+        self._index = 0
+
+    def __aiter__(self) -> "_FakeStream":
+        return self
+
+    async def __anext__(self) -> object:
+        if self._index >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = self._chunks[self._index]
+        self._index += 1
+        return chunk
+
+
 class _FakeCompletions:
     def __init__(self, responses: list) -> None:
         self._responses = list(responses)
@@ -51,6 +81,17 @@ class _FakeCompletions:
             raise RuntimeError("No more mock responses")
         response = self._responses[self._index]
         self._index += 1
+        if kwargs.get("stream"):
+            # stream=True：把 _FakeResponse 拆成单个 delta chunk；
+            # 如果调用方直接传入 chunk 列表（list），按原样包装成 _FakeStream。
+            if isinstance(response, list):
+                return _FakeStream(response)
+            message = response.choices[0].message
+            chunk = _FakeStreamChunk(
+                content=message.content,
+                reasoning_content=getattr(message, "reasoning_content", None),
+            )
+            return _FakeStream([chunk])
         return response
 
 
@@ -74,9 +115,16 @@ def make_settings() -> Settings:
 
 @pytest.fixture
 def make_agent():
-    def _factory(**kwargs: object) -> IssueAgent:
+    def _factory(*, settings_kwargs: dict | None = None, **kwargs: object) -> IssueAgent:
+        base_kwargs = {
+            "openai_api_key": "test-key",
+            "max_agent_iterations": 5,
+            "independent_review": False,
+        }
+        if settings_kwargs:
+            base_kwargs.update(settings_kwargs)
         return IssueAgent(
-            Settings(openai_api_key="test-key", max_agent_iterations=5, independent_review=False),
+            Settings(**base_kwargs),
             **kwargs,
         )
 
@@ -117,9 +165,7 @@ def fake_response():
         tool_calls: list | None = None,
         reasoning_content: str | None = None,
     ) -> _FakeResponse:
-        return _FakeResponse(
-            _FakeMessage(content=content, tool_calls=tool_calls, reasoning_content=reasoning_content)
-        )
+        return _FakeResponse(_FakeMessage(content=content, tool_calls=tool_calls, reasoning_content=reasoning_content))
 
     return _factory
 

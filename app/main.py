@@ -1,3 +1,9 @@
+"""FastAPI 入口：只保留 HTTP 端点定义和请求/响应组装。
+
+业务逻辑（会话状态更新、报告格式化、PR 应用与回滚、事件持久化）已抽到
+app.services，main.py 通过函数式接口调用，避免 HTTP 层耦合业务细节。
+"""
+
 import asyncio
 import logging
 from collections.abc import AsyncIterator
@@ -16,8 +22,8 @@ from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
 from app.build import BUILD_ID
 from app.config import get_settings
-from app.events import AgentEvent, cancelled_event, error_event, session_event
-from app.github import GitHubClient, GitHubError, GitHubRateLimitError
+from app.events import cancelled_event, error_event, session_event
+from app.github import GitHubError, GitHubRateLimitError
 from app.i18n import get_frontend_strings
 from app.logging_config import setup_logging
 from app.models import (
@@ -33,8 +39,17 @@ from app.models import (
     SessionUpdateRequest,
     StreamRequest,
 )
+from app.services import (
+    apply_fix,
+    event_payload,
+    finish_cancelled_session,
+    format_report_text,
+    mark_session_failed,
+    mark_stream_interrupted,
+    record_agent_event,
+    session_summary,
+)
 from app.sessions import Session, SessionConflictError, SessionManager
-from app.tools import validate_pr_proposal
 
 logger = logging.getLogger(__name__)
 _session_manager: SessionManager | None = None
@@ -123,58 +138,71 @@ async def stream_analysis(request: StreamRequest) -> StreamingResponse:
             else:
                 session = await session_mgr.create(str(request.issue_url))
 
-            session.status = "running"
-            session.phase = "starting"
-            session.cancel_requested = False
-            session.error_message = None
-            await session_mgr.save(session)
-            created_event = session_event(session.session_id)
-            await _record_agent_event(session_mgr, session, created_event, started_at)
-            yield created_event.to_sse()
+            # 状态写入临界区：只在 session 状态切换时短暂持锁，不在 yield 期间持锁。
+            # 这样调查进行时同一 session 的 PATCH/DELETE/chat 不会被 SSE 网络 I/O 阻塞。
             async with session.lock:
-                event_stream = agent.investigate_stream(session.issue_url, session=session)
+                session.status = "running"
+                session.phase = "starting"
+                session.cancel_requested = False
+                session.error_message = None
+                await session_mgr.save(session)
+            created_event = session_event(session.session_id)
+            await record_agent_event(session_mgr, session, created_event, started_at)
+            yield created_event.to_sse()
+
+            event_stream = agent.investigate_stream(session.issue_url, session=session)
+            try:
                 async for event in event_stream:
                     if await session_mgr.is_cancel_requested(session.session_id):
                         await event_stream.aclose()
                         cancelled = cancelled_event()
-                        await _finish_cancelled_session(session_mgr, session.session_id, cancelled, started_at)
+                        await finish_cancelled_session(session_mgr, session.session_id, cancelled, started_at)
                         yield cancelled.to_sse()
                         return
-                    await _record_agent_event(session_mgr, session, event, started_at)
+                    await record_agent_event(session_mgr, session, event, started_at)
                     yield event.to_sse()
+            finally:
+                # 显式关闭生成器，确保内部的 async with GitHubClient 在所有路径都正确清理。
+                # aclose() 会触发生成器的 finally 块执行 GitHubClient.__aexit__。
+                await event_stream.aclose()
+
+            async with session.lock:
                 session.status = "completed"
                 session.phase = "completed"
                 session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
                 await session_mgr.save(session)
-                logger.info("Session %s completed with metrics %s", session.session_id, session.metrics)
+            logger.info("Session %s completed with metrics %s", session.session_id, session.metrics)
         except asyncio.CancelledError:
+            # 客户端断开：标记 session 为 interrupted，但内部任何异常都不能替换 CancelledError，
+            # 否则破坏 asyncio 任务取消传播链。mark_stream_interrupted 内部已捕获 SessionConflictError。
             if session is not None:
-                await _mark_stream_interrupted(session_mgr, session.session_id, started_at)
+                await mark_stream_interrupted(session_mgr, session.session_id, started_at)
             raise
         except SessionConflictError:
             logger.warning("Concurrent update detected for session %s", session.session_id if session else "unknown")
             if session is not None and await session_mgr.is_cancel_requested(session.session_id):
                 cancelled = cancelled_event()
-                await _finish_cancelled_session(session_mgr, session.session_id, cancelled, started_at)
+                await finish_cancelled_session(session_mgr, session.session_id, cancelled, started_at)
                 yield cancelled.to_sse()
                 return
             yield error_event("This session changed in another process; reload it before continuing").to_sse()
         except Exception as exc:
             if session is not None:
-                session.status = "failed"
-                session.phase = "failed"
-                session.error_message = str(exc)[:500]
-                session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
-                try:
-                    await session_mgr.save(session)
-                except SessionConflictError:
-                    logger.warning(
-                        "Could not persist failure state for concurrently updated session %s",
-                        session.session_id,
-                    )
+                async with session.lock:
+                    session.status = "failed"
+                    session.phase = "failed"
+                    session.error_message = str(exc)[:500]
+                    session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
+                    try:
+                        await session_mgr.save(session)
+                    except SessionConflictError:
+                        logger.warning(
+                            "Could not persist failure state for concurrently updated session %s",
+                            session.session_id,
+                        )
             failure = error_event(str(exc))
             if session is not None:
-                await session_mgr.append_event(session.session_id, _event_payload(failure))
+                await session_mgr.append_event(session.session_id, event_payload(failure))
             yield failure.to_sse()
         finally:
             await agent.aclose()
@@ -226,20 +254,20 @@ async def chat(request: ChatRequest) -> ChatResponse:
             report=report,
         )
     except ValueError as error:
-        await _mark_session_failed(session_mgr, session, error)
+        await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=422, detail=str(error)) from error
     except GitHubRateLimitError as error:
-        await _mark_session_failed(session_mgr, session, error)
+        await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=429, detail=str(error)) from error
     except GitHubError as error:
-        await _mark_session_failed(session_mgr, session, error)
+        await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=502, detail=str(error)) from error
     except APIError as error:
-        await _mark_session_failed(session_mgr, session, error)
+        await mark_session_failed(session_mgr, session, error)
         logger.exception("Model API request failed")
         raise HTTPException(status_code=502, detail="Model API request failed") from error
     except ModelResponseError as error:
-        await _mark_session_failed(session_mgr, session, error)
+        await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await agent.aclose()
@@ -261,7 +289,7 @@ async def list_sessions(
         query=q,
         limit=limit,
     )
-    return [_session_summary(session) for session in sessions]
+    return [session_summary(session) for session in sessions]
 
 
 @app.get("/session/{session_id}", response_model=SessionDetail)
@@ -271,7 +299,7 @@ async def get_session(session_id: str) -> SessionDetail:
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return SessionDetail(
-        **_session_summary(session).model_dump(),
+        **session_summary(session).model_dump(),
         messages=session.messages,
         report=session.report,
         events=[SessionEventRecord.model_validate(event) for event in await manager.list_events(session_id)],
@@ -291,7 +319,7 @@ async def cancel_session(session_id: str) -> SessionSummary:
     refreshed = await manager.get(session_id)
     if refreshed is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return _session_summary(refreshed)
+    return session_summary(refreshed)
 
 
 @app.patch("/session/{session_id}", response_model=SessionSummary)
@@ -306,7 +334,7 @@ async def update_session(session_id: str, request: SessionUpdateRequest) -> Sess
         if request.archived is not None:
             session.archived_at = datetime.now(UTC).isoformat(timespec="seconds") if request.archived else None
         await manager.save(session)
-    return _session_summary(session)
+    return session_summary(session)
 
 
 @app.delete("/session/{session_id}", status_code=204)
@@ -331,91 +359,24 @@ async def get_session_report(session_id: str) -> AnalysisReport:
 
 
 @app.post("/session/{session_id}/apply-fix", response_model=CreatePRResponse)
-async def apply_fix(session_id: str, request: ApplyFixRequest) -> CreatePRResponse:
-    return await _apply_fix(session_id, request)
+async def apply_fix_route(session_id: str, request: ApplyFixRequest) -> CreatePRResponse:
+    return await apply_fix(
+        session_id,
+        request,
+        settings=get_settings(),
+        session_mgr=_get_session_manager(),
+    )
 
 
 @app.post("/apply-fix", response_model=CreatePRResponse, include_in_schema=False, deprecated=True)
-async def apply_fix_legacy(request: ApplyFixRequest, session_id: str) -> CreatePRResponse:
+async def apply_fix_legacy_route(request: ApplyFixRequest, session_id: str) -> CreatePRResponse:
     """Compatibility route for clients created before the session-scoped endpoint."""
-    return await _apply_fix(session_id, request)
-
-
-async def _apply_fix(session_id: str, request: ApplyFixRequest) -> CreatePRResponse:
-    settings = get_settings()
-    if not settings.write_mode:
-        raise HTTPException(status_code=403, detail="Write mode is disabled")
-
-    session_mgr = _get_session_manager()
-    session = await session_mgr.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    proposal = await session_mgr.get_pr_proposal(session_id)
-    if proposal is None:
-        raise HTTPException(status_code=404, detail="No pending PR proposal for this session")
-
-    if not request.confirm:
-        raise HTTPException(status_code=400, detail="Set confirm=true to create the PR")
-
-    if session.issue is None:
-        raise HTTPException(status_code=409, detail="Session investigation is incomplete")
-
-    try:
-        proposal = validate_pr_proposal(
-            settings,
-            branch=proposal["branch"],
-            title=proposal["title"],
-            body=proposal["body"],
-            changes=proposal.get("changes", []),
-            default_branch=session.issue.default_branch,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=f"Stored PR proposal is invalid: {error}") from error
-
-    branch_created = False
-    try:
-        async with GitHubClient(settings.github_token, write_enabled=True) as github:
-            branch = proposal["branch"]
-            base = session.issue.default_branch
-            base_sha = await github.get_branch_sha(session.issue.owner, session.issue.repo, base)
-
-            await github.create_branch(session.issue.owner, session.issue.repo, branch, base_sha)
-            branch_created = True
-
-            for change in proposal.get("changes", []):
-                await github.create_or_update_file(
-                    session.issue.owner,
-                    session.issue.repo,
-                    change["path"],
-                    change["content"],
-                    branch,
-                    change.get("message", "fix: apply patch"),
-                )
-
-            pr = await github.create_pull_request(
-                session.issue.owner,
-                session.issue.repo,
-                branch,
-                base,
-                proposal["title"],
-                proposal["body"],
-            )
-            await session_mgr.delete_pr_proposal(session_id)
-            return CreatePRResponse(pr_url=pr["pr_url"], branch=branch)
-    except GitHubError as error:
-        if branch_created:
-            try:
-                async with GitHubClient(settings.github_token, write_enabled=True) as rollback_github:
-                    await rollback_github.delete_branch(
-                        session.issue.owner,
-                        session.issue.repo,
-                        proposal["branch"],
-                    )
-            except GitHubError:
-                logger.exception("Failed to roll back branch %s", proposal["branch"])
-        logger.exception("Failed to apply fix for session %s", session_id)
-        raise HTTPException(status_code=502, detail=str(error)) from error
+    return await apply_fix(
+        session_id,
+        request,
+        settings=get_settings(),
+        session_mgr=_get_session_manager(),
+    )
 
 
 @app.get("/session/{session_id}/proposal")
@@ -456,129 +417,3 @@ async def root(request: Request):
             "build_id": BUILD_ID,
         },
     )
-
-
-def format_report_text(report: AnalysisReport) -> str:
-    lines = [
-        f"Summary: {report.summary}",
-        "",
-        f"Root Cause: {report.root_cause}",
-        "",
-        f"Confidence: {report.confidence}",
-    ]
-    if report.evidence:
-        lines.append("")
-        lines.append("Code Evidence:")
-        for ev in report.evidence:
-            lines.append(f"  - {ev.path} {ev.lines or ''}: {ev.reason or ''}")
-    if report.proposed_changes:
-        lines.append("")
-        lines.append("Proposed Changes:")
-        for i, change in enumerate(report.proposed_changes, 1):
-            lines.append(f"  {i}. {change}")
-    if report.patch:
-        lines.append("")
-        lines.append("Patch:")
-        lines.append(report.patch)
-    if report.tests:
-        lines.append("")
-        lines.append("Suggested Tests:")
-        for i, test in enumerate(report.tests, 1):
-            lines.append(f"  {i}. {test}")
-    if report.risks:
-        lines.append("")
-        lines.append("Risks:")
-        for risk in report.risks:
-            lines.append(f"  - {risk}")
-    if report.review_audit.status != "not_run":
-        lines.append("")
-        lines.append(f"Independent Review: {report.review_audit.status}")
-        if report.review_audit.summary:
-            lines.append(report.review_audit.summary)
-        for finding in report.review_audit.findings:
-            lines.append(f"  - {finding}")
-    return "\n".join(lines)
-
-
-def _session_summary(session: Session) -> SessionSummary:
-    owner = session.issue.owner if session.issue else ""
-    repo = session.issue.repo if session.issue else ""
-    issue_number = session.issue.number if session.issue else None
-    fallback_title = session.issue.title if session.issue else session.issue_url
-    return SessionSummary(
-        session_id=session.session_id,
-        issue_url=session.issue_url,
-        owner=owner,
-        repo=repo,
-        issue_number=issue_number,
-        title=session.display_title or fallback_title,
-        status=session.status,
-        phase=session.phase,
-        error_message=session.error_message,
-        archived=session.archived_at is not None,
-        version=session.version,
-        metrics=session.metrics,
-        created_at=session.created_at,
-        updated_at=session.updated_at,
-    )
-
-
-async def _mark_session_failed(manager: SessionManager, session: Session | None, error: Exception) -> None:
-    if session is None:
-        return
-    session.status = "failed"
-    session.phase = "failed"
-    session.error_message = str(error)[:500]
-    try:
-        await manager.save(session)
-    except SessionConflictError:
-        logger.warning("Could not mark concurrently updated session %s as failed", session.session_id)
-
-
-def _event_payload(event: AgentEvent) -> dict:
-    return {"type": event.type, "data": event.data, "message": event.message}
-
-
-async def _record_agent_event(
-    manager: SessionManager,
-    session: Session,
-    event: AgentEvent,
-    started_at: float,
-) -> None:
-    await manager.append_event(session.session_id, _event_payload(event))
-    if event.type == "phase" and event.data:
-        session.phase = str(event.data.get("phase", session.phase))
-    session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
-    await manager.save(session)
-
-
-async def _finish_cancelled_session(
-    manager: SessionManager,
-    session_id: str,
-    event: AgentEvent,
-    started_at: float,
-) -> None:
-    session = await manager.get(session_id)
-    if session is None:
-        return
-    session.status = "cancelled"
-    session.phase = "cancelled"
-    session.error_message = None
-    session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
-    await manager.append_event(session_id, _event_payload(event))
-    await manager.save(session)
-
-
-async def _mark_stream_interrupted(manager: SessionManager, session_id: str, started_at: float) -> None:
-    session = await manager.get(session_id)
-    if session is None or session.status != "running":
-        return
-    session.status = "failed"
-    session.phase = "interrupted"
-    session.error_message = "Connection closed before the investigation completed"
-    session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
-    await manager.append_event(
-        session_id,
-        {"type": "interrupted", "data": None, "message": session.error_message},
-    )
-    await manager.save(session)

@@ -13,9 +13,7 @@ def test_setup_logging_preserves_host_handlers_and_is_idempotent() -> None:
         setup_logging(level="WARNING")
         setup_logging(level="INFO")
 
-        issue_agent_handlers = [
-            handler for handler in root.handlers if getattr(handler, "_issue_agent_handler", False)
-        ]
+        issue_agent_handlers = [handler for handler in root.handlers if getattr(handler, "_issue_agent_handler", False)]
         assert host_handler in root.handlers
         assert len(issue_agent_handlers) == 1
         assert root.level == logging.INFO

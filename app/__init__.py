@@ -1,5 +1,12 @@
-from app.agent import IssueAgent, ModelResponseError
+"""Issue Agent 包入口：统一导出公共 API。
+
+异常类从 app.errors 导出（而非 app.agent / app.reviewer），避免业务模块
+之间的循环导入；保留旧路径的再导出以兼容现有 import（如 `from app.agent import ModelResponseError`）。
+"""
+
+from app.agent import IssueAgent
 from app.config import Settings, get_settings
+from app.errors import ModelResponseError, ReviewResponseError
 from app.evidence import EvidenceValidator
 from app.github import GitHubClient, GitHubError, GitHubFileSkipped, GitHubRateLimitError
 from app.main import app
@@ -16,7 +23,7 @@ from app.models import (
     SessionEventRecord,
     SourceFile,
 )
-from app.reviewer import ReviewerAgent, ReviewResponseError
+from app.reviewer import ReviewerAgent
 from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 

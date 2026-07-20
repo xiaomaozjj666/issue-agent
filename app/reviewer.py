@@ -1,23 +1,31 @@
-"""Independent reviewer agent for evidence-grounded investigation reports."""
+"""Independent reviewer agent for evidence-grounded investigation reports.
+
+重试策略与主报告生成一致：第 1 次沿用 thinking 配置，中间几次保留 thinking
+并带错误反馈，最后一次降级 thinking disabled 保底。但 reviewer 在重试时
+会额外附加一条 assistant 消息承认上次输出，再附加 user 反馈，让模型在
+保留推理深度的前提下纠正格式。这是 reviewer 特有的策略，所以没有直接复用
+retry.build_attempt_plan，而是保留本地实现。
+"""
 
 import json
 import logging
-import re
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.errors import ReviewResponseError
 from app.evidence import EvidenceValidator
-from app.i18n import get_review_output_prompt, get_review_system_prompt
+from app.i18n import (
+    get_review_output_prompt,
+    get_review_retry_prompt,
+    get_review_system_prompt,
+)
+from app.json_utils import extract_json
 from app.models import AnalysisReport, IssueData, ReviewAudit, ReviewOutcome
-from app.provider import chat_request_options
+from app.provider import ThinkingMode, chat_request_options
 
 logger = logging.getLogger(__name__)
-_JSON_BLOCK = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
-
-class ReviewResponseError(RuntimeError):
-    """Raised when the independent reviewer cannot return a valid decision."""
 
 
 class ReviewerAgent:
@@ -44,28 +52,74 @@ class ReviewerAgent:
             files_read,
             self.settings.max_review_context_chars,
         )
-        response = await self._client.chat.completions.create(
-            **chat_request_options(
+        base_messages = [
+            {"role": "system", "content": get_review_system_prompt(self.settings.language)},
+            {"role": "user", "content": f"{context}\n\n{get_review_output_prompt()}"},
+        ]
+
+        # temperature 全程统一为 0，避免保底重试反而更不确定。
+        review_model = self.settings.review_model or self.settings.openai_model
+        outcome: ReviewOutcome | None = None
+        last_raw_content = ""
+        last_failure_reason = ""
+        total_attempts = max(self.settings.max_report_retries, 1)
+        for attempt in range(total_attempts):
+            is_last = attempt == total_attempts - 1
+            # 最后一次降级：thinking disabled，全部 token 预算给 content
+            thinking_override: ThinkingMode | None = "disabled" if is_last else None
+            attempt_options = chat_request_options(
                 self.settings,
-                model=self.settings.review_model or self.settings.openai_model,
+                model=review_model,
                 temperature=0,
-            ),
-            messages=[
-                {"role": "system", "content": get_review_system_prompt(self.settings.language)},
-                {"role": "user", "content": f"{context}\n\n{get_review_output_prompt()}"},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=self.settings.review_max_tokens,
-        )
-        if not response.choices:
-            raise ReviewResponseError("The reviewer returned no choices")
-        content = response.choices[0].message.content
-        if not content:
-            raise ReviewResponseError("The reviewer returned an empty response")
-        try:
-            outcome = ReviewOutcome.model_validate_json(_extract_json(content))
-        except ValidationError as error:
-            raise ReviewResponseError("The reviewer returned an invalid decision") from error
+                thinking=thinking_override,
+            )
+
+            # 重试时附加 assistant 消息承认上次输出 + user 反馈，让模型知道上次错在哪里
+            if attempt == 0:
+                attempt_messages = base_messages
+            else:
+                attempt_messages = [
+                    *base_messages,
+                    {"role": "assistant", "content": last_raw_content or "(empty response)"},
+                    {"role": "user", "content": get_review_retry_prompt(last_raw_content, last_failure_reason)},
+                ]
+
+            response = await self._client.chat.completions.create(  # type: ignore[call-overload]
+                **attempt_options,
+                messages=attempt_messages,
+                response_format={"type": "json_object"},
+                max_tokens=self.settings.review_max_tokens,
+            )
+            if not response.choices:
+                last_raw_content = ""
+                last_failure_reason = "The reviewer returned no choices"
+                logger.warning("Reviewer returned no choices on attempt %d", attempt + 1)
+                if not is_last:
+                    continue
+                raise ReviewResponseError("The reviewer returned no choices")
+
+            content = response.choices[0].message.content
+            if not content:
+                last_raw_content = ""
+                last_failure_reason = "The reviewer returned an empty response"
+                logger.warning("Reviewer returned empty content on attempt %d", attempt + 1)
+                if not is_last:
+                    continue
+                raise ReviewResponseError("The reviewer returned an empty response")
+
+            try:
+                outcome = ReviewOutcome.model_validate_json(extract_json(content))
+            except ValidationError as error:
+                last_raw_content = content
+                last_failure_reason = str(error)
+                logger.warning("Reviewer validation failed on attempt %d: %s", attempt + 1, error)
+                if not is_last:
+                    continue
+                raise ReviewResponseError("The reviewer returned an invalid decision") from error
+            break
+
+        if outcome is None:
+            raise ReviewResponseError(f"The reviewer failed after {total_attempts} attempts: {last_failure_reason}")
 
         outcome.report = EvidenceValidator().validate(
             outcome.report,
@@ -86,7 +140,7 @@ class ReviewerAgent:
             status=outcome.verdict,
             summary=outcome.summary,
             findings=outcome.findings[:10],
-            reviewer_model=self.settings.review_model or self.settings.openai_model,
+            reviewer_model=review_model,
         )
         logger.info("Independent review complete: verdict=%s findings=%d", outcome.verdict, len(outcome.findings))
         return outcome
@@ -131,15 +185,3 @@ def _build_review_context(
         excerpts.append(limited)
         remaining -= len(limited)
     return (prefix + "".join(excerpts))[:max_chars]
-
-
-def _extract_json(content: str) -> str:
-    stripped = content.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-    match = _JSON_BLOCK.search(content)
-    if match:
-        return match.group(1).strip()
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    return stripped[start : end + 1] if start != -1 and end > start else stripped

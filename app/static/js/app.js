@@ -474,9 +474,57 @@
     if (preview) card.classList.add("expanded");
   }
 
+  const ISSUE_URL_PATTERN = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#].*)?$/i;
+
+  function formatErrorDetail(detail) {
+    if (detail == null) return "";
+    if (typeof detail === "string") return detail;
+    // FastAPI 422 返回 [{loc, msg, type}, ...] 数组，需要序列化为可读字符串
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (item && typeof item === "object") {
+            const loc = Array.isArray(item.loc) ? item.loc.join(".") : String(item.loc ?? "");
+            return (loc ? loc + ": " : "") + (item.msg || item.type || "");
+          }
+          return String(item);
+        })
+        .join("; ");
+    }
+    try {
+      return JSON.stringify(detail);
+    } catch (e) {
+      return String(detail);
+    }
+  }
+
+  let analyzeInProgress = false;
+
   async function analyze() {
-    const url = document.getElementById("issueUrl").value.trim();
-    if (!url) return;
+    // 防重入：快速双击或回车多次时只允许一个流，避免状态错乱和旧 reader 泄漏
+    if (analyzeInProgress) return;
+    const raw = document.getElementById("issueUrl").value.trim();
+    if (!raw) return;
+    // 从可能粘贴的多行文本中提取第一个 GitHub issue URL，避免把终端日志整体当 URL 发送
+    const match = raw.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#][^\s]*)?/i);
+    const url = match ? match[0] : raw.split(/\s+/)[0];
+    if (!ISSUE_URL_PATTERN.test(url)) {
+      addMsg("error", t("error_prefix") + t("invalid_issue_url"));
+      document.getElementById("issueUrl").focus();
+      return;
+    }
+
+    // 取消任何仍存在的旧流，防止 reader 泄漏和后端会话被遗弃为 interrupted
+    if (currentStream) {
+      try {
+        await currentStream.cancel();
+      } catch (e) {
+        /* ignore */
+      }
+      currentStream = null;
+    }
+
+    analyzeInProgress = true;
     if (sessionId) navigationStack.push(sessionId);
     sessionId = null;
     IA.sessionId = null;
@@ -495,7 +543,8 @@
       if (!resp.ok) {
         let detail = "Unable to start analysis";
         try {
-          detail = (await resp.json()).detail || detail;
+          const body = await resp.json();
+          detail = formatErrorDetail(body.detail) || detail;
         } catch (e) {
           /* ignore */
         }
@@ -515,10 +564,7 @@
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6);
-          if (data === "[DONE]") {
-            document.getElementById("progress").textContent = t("done");
-            break;
-          }
+          // 后端从不发送 [DONE]；done 状态通过 done 事件类型处理，无需此分支
           try {
             const evt = JSON.parse(data);
             await handleStreamEvent(evt, { getToolCard: () => toolCard, setToolCard: (c) => (toolCard = c) });
@@ -533,10 +579,46 @@
       IA.Runtime.setCancelVisible(false);
     } finally {
       currentStream = null;
+      analyzeInProgress = false;
     }
   }
 
+  // 流式 reasoning 卡片：首个 delta 创建 details/summary，后续 delta 追加到 body。
+  // 收到任意非 reasoning 事件时关闭当前卡片，避免与后续消息交叉。
+  let currentReasoningCard = null;
+
+  function closeReasoningCard() {
+    if (!currentReasoningCard) return;
+    currentReasoningCard.open = false;
+    currentReasoningCard = null;
+  }
+
+  function appendReasoningDelta(delta) {
+    if (!delta) return;
+    const container = document.getElementById("messages");
+    if (!currentReasoningCard) {
+      const card = document.createElement("details");
+      card.className = "msg assistant reasoning-card";
+      card.open = true;
+      const summary = document.createElement("summary");
+      summary.className = "reasoning-summary";
+      summary.textContent = t("thinking");
+      card.appendChild(summary);
+      const body = document.createElement("pre");
+      body.className = "reasoning-body";
+      card.appendChild(body);
+      container.appendChild(card);
+      currentReasoningCard = card;
+    }
+    const body = currentReasoningCard.querySelector(".reasoning-body");
+    body.textContent += delta;
+    requestAnimationFrame(function () {
+      container.scrollTop = container.scrollHeight;
+    });
+  }
+
   async function handleStreamEvent(evt, toolCardRef) {
+    if (evt.type !== "reasoning") closeReasoningCard();
     switch (evt.type) {
       case "session":
         sessionId = evt.data.session_id;
@@ -571,6 +653,9 @@
         break;
       case "thinking":
         addMsg("assistant", evt.data.content);
+        break;
+      case "reasoning":
+        appendReasoningDelta(evt.data.delta || "");
         break;
       case "review":
         document.getElementById("progress").textContent = t("review_progress", { status: evt.data.status });
@@ -720,11 +805,17 @@
     updateBackButton();
   }
 
+  let chatInProgress = false;
+
   async function chat(messageOverride) {
+    // 防重入：避免快速发送多条消息导致响应乱序
+    if (chatInProgress) return;
     const inp = document.getElementById("chatInput");
     const msg = (messageOverride !== undefined ? messageOverride : inp.value).trim();
     if (!msg || !sessionId) return;
+    chatInProgress = true;
     inp.value = "";
+    setChatDisabled(true);
     addMsg("user", msg);
     lastFailedChat = null;
     document.getElementById("progress").textContent = t("thinking");
@@ -744,7 +835,18 @@
       document.getElementById("progress").textContent = "";
       lastFailedChat = msg;
       addErrorWithRetry(t("error_prefix") + e.message);
+    } finally {
+      chatInProgress = false;
+      setChatDisabled(false);
+      inp.focus();
     }
+  }
+
+  function setChatDisabled(disabled) {
+    const sendBtn = document.getElementById("chat-send-btn");
+    const input = document.getElementById("chatInput");
+    if (sendBtn) sendBtn.disabled = disabled;
+    if (input) input.disabled = disabled;
   }
 
   function addErrorWithRetry(message) {
@@ -758,10 +860,15 @@
     retryBtn.type = "button";
     retryBtn.className = "retry-button";
     retryBtn.innerHTML = IA.svgIcon("retry") + `<span>${IA.escapeHtml(t("retry_send"))}</span>`;
-    retryBtn.addEventListener("click", function () {
-      m.remove();
-      if (lastFailedChat !== null) chat(lastFailedChat);
-    });
+    // once: true 防止事件队列中重复 click 触发多次 chat()
+    retryBtn.addEventListener(
+      "click",
+      function () {
+        m.remove();
+        if (lastFailedChat !== null) chat(lastFailedChat);
+      },
+      { once: true },
+    );
     m.appendChild(retryBtn);
     d.appendChild(m);
     requestAnimationFrame(function () {

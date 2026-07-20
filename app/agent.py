@@ -1,12 +1,11 @@
 import json
 import logging
-import re
 from collections.abc import AsyncGenerator
 
 from openai import AsyncOpenAI
-from pydantic import ValidationError
 
 from app.config import Settings
+from app.errors import ModelResponseError
 from app.events import (
     AgentEvent,
     done_event,
@@ -19,24 +18,23 @@ from app.events import (
     tool_result_event,
 )
 from app.evidence import EvidenceValidator
-from app.github import GitHubClient, parse_issue_url, select_candidate_paths
+from app.github import GitHubClient, extract_referenced_paths, parse_issue_url, select_candidate_paths
 from app.i18n import (
     get_chat_system_prompt,
-    get_final_output_prompt,
     get_review_unavailable_message,
     get_system_prompt,
     t,
 )
 from app.models import AnalysisReport, ChatResponse, IssueData, ReviewAudit
 from app.provider import chat_request_options
+from app.report_generator import ReportGenerator
 from app.reviewer import ReviewerAgent
 from app.sessions import Session
 from app.tools import ToolExecutor, get_tool_definitions, parse_tool_call
 
 logger = logging.getLogger(__name__)
 
-class ModelResponseError(RuntimeError):
-    pass
+__all__ = ["IssueAgent", "ModelResponseError"]
 
 
 class IssueAgent:
@@ -49,11 +47,15 @@ class IssueAgent:
         self.settings = settings
         self._client: AsyncOpenAI | None = client
         self._owns_client = client is None
+        # 报告生成委托给独立的 ReportGenerator，避免 IssueAgent 单类过大。
+        # client 延迟创建（_get_client），所以这里先用 None，首次生成报告时再绑定。
+        self._report_generator: ReportGenerator | None = None
 
     async def aclose(self) -> None:
         if self._client is not None and self._owns_client:
             await self._client.close()
         self._client = None
+        self._report_generator = None
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -65,6 +67,12 @@ class IssueAgent:
             )
             self._owns_client = True
         return self._client
+
+    def _get_report_generator(self) -> ReportGenerator:
+        """延迟创建 ReportGenerator，确保 client 已就绪。"""
+        if self._report_generator is None:
+            self._report_generator = ReportGenerator(self.settings, self._get_client())
+        return self._report_generator
 
     # ── streaming investigation ─────────────────────────────────────
 
@@ -91,7 +99,31 @@ class IssueAgent:
             logger.info("Fetched issue: %r (%d comments, %d files)", issue.title, len(issue.comments), len(tree))
 
             executor = self._build_executor(github, issue, tree)
-            messages = self._build_initial_messages(issue, tree)
+            referenced_paths = extract_referenced_paths(" ".join([issue.title, issue.body, *issue.comments]), tree)
+            messages = self._build_initial_messages(issue, tree, referenced_paths)
+
+            # 预读 issue 文本中明确引用的文件路径，确保关键源码进入 file_cache。
+            # 这样即便 LLM 不主动 read_file，最终报告生成阶段也能基于真实代码，
+            # 避免"读取 0 个文件"和"根因为推测"的质量问题。
+            if referenced_paths:
+                yield phase_event(
+                    "preloading",
+                    f"Pre-loading {len(referenced_paths)} issue-referenced file(s)",
+                )
+                for path in referenced_paths:
+                    try:
+                        result = await executor.execute("read_file", {"path": path})
+                        yield tool_call_event(
+                            "read_file",
+                            {"path": path, "auto": "issue-referenced"},
+                            0,
+                        )
+                        yield tool_result_event("read_file", result)
+                        if session is not None:
+                            session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
+                    except Exception as error:
+                        logger.warning("Pre-read of issue-referenced path %s failed: %s", path, error)
+
             yield phase_event("exploring", "Investigating candidate files")
 
             tools = get_tool_definitions(self.settings)
@@ -137,7 +169,15 @@ class IssueAgent:
             yield phase_event("verifying", "Validating evidence and preparing the report")
             if session is not None:
                 session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
-            report = await self._generate_report(messages, executor)
+            # 流式生成报告：实时推送 reasoning 思考过程到前端，避免长时间黑盒等待
+            report: AnalysisReport | None = None
+            async for item in self._get_report_generator().generate_stream(messages, executor):
+                if isinstance(item, AgentEvent):
+                    yield item
+                else:
+                    report = item
+            if report is None:
+                raise ModelResponseError("Report generation did not produce a result")
             if self.settings.independent_review:
                 yield phase_event("reviewing", "Running independent evidence review")
                 if session is not None:
@@ -266,57 +306,45 @@ class IssueAgent:
             tools_used=executor.tools_used,
         )
 
-    # ── report generation ────────────────────────────────────────────
+    # ── report generation (thin wrappers for backward compatibility) ──
+    # 实际逻辑已抽到 app.report_generator.ReportGenerator；
+    # 这里保留方法名以兼容现有测试和调用方（CLI、tests/test_agent.py）。
 
     async def _generate_report(self, messages: list[dict], executor: ToolExecutor) -> AnalysisReport:
-        client = self._get_client()
-        final_messages = self._build_report_messages(messages, executor)
+        return await self._get_report_generator().generate(messages, executor)
 
-        response = await client.chat.completions.create(  # type: ignore[call-overload]
-            **chat_request_options(self.settings),
-            messages=final_messages,
-            response_format={"type": "json_object"},
-            max_tokens=self.settings.max_output_tokens,
-        )
-
-        if not response.choices:
-            raise ModelResponseError("The model returned no choices")
-
-        content = response.choices[0].message.content
-        if not content:
-            raise ModelResponseError("The model returned an empty response")
-
-        json_text = _extract_json(content)
-        try:
-            report = AnalysisReport.model_validate_json(json_text)
-        except ValidationError as error:
-            logger.warning("Report validation failed: %s", error)
-            raise ModelResponseError("The model returned an invalid analysis report") from error
-
-        report = EvidenceValidator().validate(
-            report,
-            files_read=executor.files_read,
-            line_counts=executor.line_counts,
-        )
-
-        logger.info(
-            "Analysis complete: confidence=%s, evidence=%d, files=%d",
-            report.confidence,
-            report.evidence_audit.valid_references,
-            len(report.files_examined),
-        )
-        return report
+    def _build_report_messages(self, messages: list[dict], executor: ToolExecutor) -> list[dict]:
+        return self._get_report_generator().build_report_messages(messages, executor)
 
     # ── helpers ──────────────────────────────────────────────────────
 
-    def _build_initial_messages(self, issue: IssueData, tree: list[str]) -> list[dict]:
+    def _build_initial_messages(
+        self,
+        issue: IssueData,
+        tree: list[str],
+        referenced_paths: list[str] | None = None,
+    ) -> list[dict]:
         candidate_paths = select_candidate_paths(tree, issue, self.settings.max_planning_paths)
+        # issue 文本中明确引用的路径优先列入候选列表前部，便于 LLM 第一时间定位
+        if referenced_paths:
+            seen = set(referenced_paths)
+            remaining = [p for p in candidate_paths if p not in seen]
+            candidate_paths = list(referenced_paths) + remaining
+            candidate_paths = candidate_paths[: self.settings.max_planning_paths]
         tree_preview = candidate_paths if candidate_paths else tree[: self.settings.max_planning_paths]
         issue_context = json.dumps(
             {"title": issue.title, "body": issue.body[:5000], "labels": issue.labels, "comments": issue.comments[:10]},
             ensure_ascii=False,
             indent=2,
         )
+        referenced_hint = ""
+        if referenced_paths:
+            referenced_hint = (
+                "\n\n=== Issue 显式引用的文件路径（必须 read_file 验证后再下结论）===\n"
+                + "\n".join(referenced_paths)
+                + "\n这些路径已被 issue 文本直接提及。任何关于它们的根因断言必须基于实际读取的代码内容，"
+                "禁止基于文件名或路径推测。若路径不存在或读取失败，应在报告中明确标注。"
+            )
         return [
             {"role": "system", "content": get_system_prompt()},
             {
@@ -325,74 +353,10 @@ class IssueAgent:
                     f"Investigate this GitHub issue:\n{issue_context}\n\n"
                     f"Repository file tree ({len(tree)} files total, showing {len(tree_preview)} most relevant):\n"
                     + "\n".join(tree_preview)
+                    + referenced_hint
                 ),
             },
         ]
-
-    def _build_report_messages(self, messages: list[dict], executor: ToolExecutor) -> list[dict]:
-        # 用有界调查事实和已读源码替代重复的原始工具 transcript，控制上下文同时保留关键结论。
-        system_prompt = ""
-        issue_context = ""
-        for message in messages:
-            role = message.get("role")
-            if role == "system" and not system_prompt:
-                system_prompt = str(message.get("content", ""))
-            elif role == "user" and not issue_context:
-                issue_context = str(message.get("content", ""))
-            if system_prompt and issue_context:
-                break
-
-        final_output_prompt = get_final_output_prompt()
-        # 预留输出预算和分隔符开销，剩余空间用于附加已读文件内容
-        budget = max(
-            self.settings.max_total_context_chars
-            - len(system_prompt)
-            - len(issue_context)
-            - len(final_output_prompt)
-            - 256,
-            0,
-        )
-
-        user_parts: list[str] = []
-        if issue_context:
-            user_parts.append(issue_context)
-
-        ledger_text = "\n".join(executor.investigation_ledger)
-        if ledger_text and budget > 0:
-            ledger_budget = min(self.settings.max_investigation_ledger_chars, budget // 4)
-            if ledger_budget > 0:
-                limited_ledger = ledger_text[:ledger_budget]
-                user_parts.append("")
-                user_parts.append("Investigation ledger (bounded tool findings):")
-                user_parts.append(limited_ledger)
-                budget -= len(limited_ledger)
-
-        if executor.files_read:
-            user_parts.append("")
-            user_parts.append("Source files examined (with line numbers):")
-            for path in executor.files_read:
-                content = executor.file_cache.get(path)
-                if not content or budget <= 0:
-                    continue
-                numbered = "\n".join(
-                    f"L{number}: {line}" for number, line in enumerate(content.splitlines(), 1)
-                )
-                block = f"\n--- {path} ---\n{numbered}\n"
-                if len(block) > budget:
-                    block = block[:budget]
-                user_parts.append(block)
-                budget -= len(block)
-                if budget <= 0:
-                    break
-
-        user_parts.append("")
-        user_parts.append(final_output_prompt)
-
-        final_messages: list[dict] = []
-        if system_prompt:
-            final_messages.append({"role": "system", "content": system_prompt})
-        final_messages.append({"role": "user", "content": "\n".join(user_parts)})
-        return final_messages
 
     @staticmethod
     def _has_valid_lines(lines: str | None, line_count: int) -> bool:
@@ -493,9 +457,6 @@ def _trim_session_messages(messages: list[dict], max_chars: int, max_messages: i
     messages[:] = selected
 
 
-_JSON_BLOCK = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
-
-
 def _build_investigation_context(session: Session) -> str:
     if session.report is None:
         return t("no_investigation")
@@ -517,17 +478,3 @@ def _build_investigation_context(session: Session) -> str:
     parts.append("")
     parts.append(t("investigation_context_footer"))
     return "\n".join(parts)
-
-
-def _extract_json(content: str) -> str:
-    stripped = content.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-    block_match = _JSON_BLOCK.search(content)
-    if block_match:
-        return block_match.group(1).strip()
-    brace_start = stripped.find("{")
-    brace_end = stripped.rfind("}")
-    if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
-        return stripped[brace_start : brace_end + 1]
-    return stripped

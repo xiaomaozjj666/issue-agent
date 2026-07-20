@@ -58,9 +58,9 @@ def test_web_ui_renders() -> None:
     assert 'id="back-button"' in response.text
     assert 'id="cancel-analysis"' in response.text
     assert 'class="brand-identity"' in response.text
-    assert '/static/css/primer.css' in response.text
-    assert '/static/js/core.js' in response.text
-    assert '/static/js/app.js' in response.text
+    assert "/static/css/primer.css" in response.text
+    assert "/static/js/core.js" in response.text
+    assert "/static/js/app.js" in response.text
     assert f"?v={BUILD_ID}" in response.text
 
 

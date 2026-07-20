@@ -62,6 +62,7 @@
     tools_used_label: "Tools: ",
     connection_error: "Connection error: ",
     error_prefix: "Error: ",
+    invalid_issue_url: "Please enter a valid GitHub issue URL (https://github.com/owner/repo/issues/123).",
     analysis_complete_label: "Analysis complete",
     open_full_report: "Open full report",
     report_confidence: "Confidence",
@@ -265,14 +266,18 @@
   function highlightDiff(patch) {
     if (!patch) return "";
     const escaped = escapeHtml(patch);
-    return escaped.split("\n").map(function (line) {
-      if (line.startsWith("+++")) return `<span class="diff-add-file">${line}</span>`;
-      if (line.startsWith("---")) return `<span class="diff-del-file">${line}</span>`;
-      if (line.startsWith("+")) return `<span class="diff-add">${line}</span>`;
-      if (line.startsWith("-")) return `<span class="diff-del">${line}</span>`;
-      if (line.startsWith("@@")) return `<span class="diff-hunk">${line}</span>`;
-      return `<span class="diff-ctx">${line}</span>`;
-    }).join("\n");
+    // CSS 中 .diff-* 设置 display: block 已强制换行，这里不再 join "\n"，否则会出现双倍行距
+    return escaped
+      .split("\n")
+      .map(function (line) {
+        if (line.startsWith("+++")) return `<span class="diff-add-file">${line}</span>`;
+        if (line.startsWith("---")) return `<span class="diff-del-file">${line}</span>`;
+        if (line.startsWith("+")) return `<span class="diff-add">${line}</span>`;
+        if (line.startsWith("-")) return `<span class="diff-del">${line}</span>`;
+        if (line.startsWith("@@")) return `<span class="diff-hunk">${line}</span>`;
+        return `<span class="diff-ctx">${line}</span>`;
+      })
+      .join("");
   }
 
   function buildGitHubUrl(session, path, lines) {

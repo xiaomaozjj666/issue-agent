@@ -938,6 +938,52 @@ a:hover {
   box-shadow: 0 0 0 3px var(--accent-muted);
 }
 
+/* 流式思考过程卡片：DeepSeek thinking 模式 reasoning_content 增量渲染 */
+.reasoning-card {
+  align-self: flex-start;
+  width: min(88%, 780px);
+  max-width: 780px;
+  padding: 8px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.reasoning-summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+  list-style: none;
+}
+
+.reasoning-summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.reasoning-card[open] .reasoning-summary::before {
+  content: "▾ ";
+}
+
+.reasoning-body {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 280px;
+  overflow: auto;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg);
+  border-radius: var(--radius);
+}
+
 /* 报告面板 */
 #report-panel {
   display: none;

@@ -46,6 +46,11 @@ def thinking_event(content: str) -> AgentEvent:
     return AgentEvent(type="thinking", data={"content": content[:500]})
 
 
+def reasoning_event(delta: str) -> AgentEvent:
+    """流式推送 reasoning_content 增量，让用户看到模型在思考什么。"""
+    return AgentEvent(type="reasoning", data={"delta": delta})
+
+
 def report_event(report: dict) -> AgentEvent:
     return AgentEvent(type="report", data=report)
 

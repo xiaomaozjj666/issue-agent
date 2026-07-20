@@ -19,12 +19,20 @@ def chat_request_options(
     *,
     model: str | None = None,
     temperature: float | None = 0.1,
+    thinking: ThinkingMode | None = None,
 ) -> dict:
-    """Build model and reasoning options without leaking provider quirks across agents."""
+    """Build model and reasoning options without leaking provider quirks across agents.
+
+    ``thinking`` overrides the configured thinking mode for this single call. Use
+    ``thinking="disabled"`` for structured-output calls (e.g. report generation)
+    so the reasoning budget does not consume the ``max_tokens`` reserved for the
+    final JSON content.
+    """
     options: dict = {"model": model or settings.openai_model}
+    effective_thinking = settings.openai_thinking if thinking is None else thinking
     if is_deepseek(settings):
-        options["extra_body"] = {"thinking": {"type": settings.openai_thinking}}
-        if settings.openai_thinking == "enabled":
+        options["extra_body"] = {"thinking": {"type": effective_thinking}}
+        if effective_thinking == "enabled":
             options["reasoning_effort"] = settings.openai_reasoning_effort
         elif temperature is not None:
             options["temperature"] = temperature

@@ -20,9 +20,7 @@ def _report() -> AnalysisReport:
     )
 
 
-async def test_reviewer_approves_and_records_independent_audit(
-    fake_client, fake_response, make_issue
-) -> None:
+async def test_reviewer_approves_and_records_independent_audit(fake_client, fake_response, make_issue) -> None:
     reviewed_report = _report().model_dump()
     payload = json.dumps(
         {
@@ -51,17 +49,18 @@ async def test_reviewer_approves_and_records_independent_audit(
     assert outcome.report.review_audit.reviewer_model == "review-test-model"
     assert outcome.report.evidence_audit.valid_references == 1
     call = client.chat.completions.calls[0]
+    # 第一次沿用全局 thinking 配置（默认 enabled）保留推理深度
     assert call["extra_body"] == {"thinking": {"type": "enabled"}}
     assert call["reasoning_effort"] == "high"
+    # thinking enabled 时 provider 不设置 temperature（走 reasoning_effort 分支）
+    assert "temperature" not in call
     assert "Write every human-readable field in English" in call["messages"][0]["content"]
     assert "SOURCE EXCERPTS" in call["messages"][1]["content"]
 
 
 async def test_reviewer_filters_invented_evidence(fake_client, fake_response, make_issue) -> None:
     revised = _report().model_dump()
-    revised["evidence"].append(
-        {"path": "src/invented.py", "lines": "L1", "reason": "Not supplied to the reviewer"}
-    )
+    revised["evidence"].append({"path": "src/invented.py", "lines": "L1", "reason": "Not supplied to the reviewer"})
     payload = json.dumps(
         {
             "verdict": "revised",
@@ -84,9 +83,7 @@ async def test_reviewer_filters_invented_evidence(fake_client, fake_response, ma
     assert [evidence.path for evidence in outcome.report.evidence] == ["src/parser.py"]
 
 
-async def test_reviewer_normalizes_changed_approved_report_to_revised(
-    fake_client, fake_response, make_issue
-) -> None:
+async def test_reviewer_normalizes_changed_approved_report_to_revised(fake_client, fake_response, make_issue) -> None:
     changed = _report().model_dump()
     changed["summary"] = "Reviewer changed this summary"
     payload = json.dumps(
@@ -115,7 +112,11 @@ async def test_reviewer_normalizes_changed_approved_report_to_revised(
 
 
 async def test_reviewer_rejects_invalid_response(fake_client, fake_response, make_issue) -> None:
-    reviewer = ReviewerAgent(Settings(openai_api_key="test-key"), fake_client([fake_response(content="{}")]))
+    # max_report_retries=2 时需要两个无效响应让两次尝试都失败
+    reviewer = ReviewerAgent(
+        Settings(openai_api_key="test-key", max_report_retries=2),
+        fake_client([fake_response(content="{}"), fake_response(content="{}")]),
+    )
 
     with pytest.raises(ReviewResponseError):
         await reviewer.review(

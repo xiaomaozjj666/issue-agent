@@ -460,3 +460,32 @@ def select_candidate_paths(paths: list[str], issue: IssueData, limit: int) -> li
         scored.append((score, path))
     scored.sort(key=lambda item: (-item[0], len(item[1]), item[1]))
     return [path for _, path in scored[:limit]]
+
+
+# 匹配 issue 文本中显式提到的文件路径，如 src/requests/models.py、requests/models.py、models.py。
+# 必须包含扩展名，避免误匹配普通单词。前导边界用 [^\w/.-] 排除 URL 片段或变量名。
+_FILE_REF_PATTERN = re.compile(
+    r"(?:^|[^\w/.-])"
+    r"((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_-]+\.[A-Za-z]\w{1,10}"
+    r"|[A-Za-z0-9_-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|c|cc|cpp|h|hpp|cs|rb|php|kt|swift|sql|sh|css|scss|html|svelte|vue))"
+)
+
+
+def extract_referenced_paths(text: str, tree: list[str]) -> list[str]:
+    """Extract file paths mentioned in `text` that actually exist in `tree`.
+
+    Returns paths in first-mention order, deduplicated. Used to force-read
+    source files the issue text explicitly cites (e.g. `src/requests/models.py`
+    in a bug report) so the agent never produces a speculative root cause.
+    """
+    if not text or not tree:
+        return []
+    tree_set = set(tree)
+    seen: set[str] = set()
+    result: list[str] = []
+    for match in _FILE_REF_PATTERN.finditer(text):
+        candidate = match.group(1).strip(".")
+        if candidate in tree_set and candidate not in seen:
+            seen.add(candidate)
+            result.append(candidate)
+    return result

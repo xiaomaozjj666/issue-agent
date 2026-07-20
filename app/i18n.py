@@ -21,22 +21,25 @@ STRINGS = {
             "get_file_history, list_branches, get_file_at_commit。\n\n"
             "调查流程：\n"
             "1. 仔细阅读 issue 描述和评论\n"
-            "2. 使用 search_files 和 list_directory 查找相关文件\n"
-            "3. 使用 read_file 检查代码 —— 务必在做出任何断言前先读代码\n"
-            "4. 使用 grep_content 在已读文件中搜索模式\n"
-            "5. 用实际代码证据验证每个假设\n"
-            "6. 自信后再停下工具调用，陈述结论\n\n"
+            "2. 如果 issue 文本明确提到文件路径（如 src/foo/bar.py 或 models.py），优先 read_file 这些路径\n"
+            "3. 使用 search_files 和 list_directory 查找相关文件\n"
+            "4. 使用 read_file 检查代码 —— 务必在做出任何断言前先读代码\n"
+            "5. 使用 grep_content 在已读文件中搜索模式\n"
+            "6. 用实际代码证据验证每个假设\n"
+            "7. 自信后再停下工具调用，陈述结论\n\n"
             "规则：\n"
             "- 永远不要编造文件、符号、行为或行号\n"
             "- 只引用通过 read_file 实际读过的文件\n"
+            "- 若 issue 引用了路径但你尚未 read_file，禁止对该路径下任何根因结论；先读再说\n"
+            "- 若路径不存在或读取失败，明确说明，不要改用推测\n"
             "- 证据行范围必须使用 L12 或 L12-L18 格式\n"
             "- 所有人类可读文本必须使用简体中文\n"
             "- 代码标识符、文件路径、异常名称保持英文\n"
-            "- confidence 字段必须是: low, medium, high\n\n"
+            "- confidence 字段必须是: low, medium, high\n"
+            "- 若实际读取的源码与 issue 描述不符，应明确指出差异而非强行附和\n\n"
             "示例：\n"
-            'Issue: "登录在密码含特殊字符时返回 500 错误"\n'
-            '-> search_files("login") 找到 src/auth/login.py\n'
-            '-> read_file("src/auth/login.py") 读取代码\n'
+            'Issue: "登录在密码含特殊字符时返回 500 错误，src/auth/login.py L134 处"\n'
+            '-> read_file("src/auth/login.py") 直接读取被引用的文件\n'
             '-> grep_content("password") 搜索密码处理\n'
             "-> 发现密码在 src/auth/login.py:L134 未转义传入 SQL 查询"
         ),
@@ -65,6 +68,31 @@ STRINGS = {
             "所有人类可读文本使用简体中文，代码标识符、文件路径、异常名保持英文。"
             "如果不确定，诚实说出而非猜测。引用之前调查中的具体证据。"
         ),
+        "report_phase_instruction": (
+            "=== 最终报告生成阶段 ===\n"
+            "你已不再调用任何工具。请仅输出一个符合 AnalysisReport schema 的 JSON 对象。\n"
+            '禁止输出工具调用参数（例如 {"action": "read_file", "path": ..., '
+            '"start_line": ..., "end_line": ...}），'
+            "禁止输出 markdown 代码块以外的内容，禁止输出文本说明。\n"
+            "JSON 必须是顶层对象，且必须包含以下字段：\n"
+            "  - summary: 字符串\n"
+            "  - root_cause: 字符串\n"
+            '  - confidence: "high" | "medium" | "low"\n'
+            "  - evidence: 数组，每项含 path/lines/reason\n"
+            "  - proposed_changes: 字符串数组\n"
+            "  - patch: 字符串或 null\n"
+            "  - tests: 字符串数组\n"
+            "  - risks: 字符串数组\n"
+            "上方已读源码中的 L1/L500 等行号前缀仅用于引用证据，不要将其当作工具调用参数。"
+        ),
+        "report_retry_prompt": (
+            "你上次的响应未通过校验，需要重试。\n\n"
+            "失败原因：\n{validation_error}\n\n"
+            "上次响应（截断）：\n{previous_output}\n\n"
+            "请仅输出一个符合 AnalysisReport schema 的顶层 JSON 对象。"
+            '禁止输出工具调用参数（如 {"action": "read_file", ...}），禁止输出空内容，禁止输出文本说明。'
+            '若证据不足，可将 confidence 设为 "low"，evidence 设为空数组，但仍需输出完整的 AnalysisReport 结构。'
+        ),
         "depth_limit": "已达到调查深度上限，无法继续深入。",
         "no_investigation": "调查尚未完成，暂无结论可供参考。",
         "investigation_context_header": "以下是已完成调查的结论，请优先基于这些信息回答用户问题：",
@@ -78,20 +106,26 @@ STRINGS = {
             "get_file_history, list_branches, get_file_at_commit.\n\n"
             "Investigation process:\n"
             "1. Read the issue description and comments carefully\n"
-            "2. Use search_files and list_directory to find relevant files\n"
-            "3. Use read_file to examine code — always read before claiming anything\n"
-            "4. Use grep_content to search patterns in files already read\n"
-            "5. Verify every hypothesis with actual code evidence\n"
-            "6. When confident, stop calling tools and state your conclusion\n\n"
+            "2. If the issue text explicitly cites file paths (e.g. src/foo/bar.py or models.py), "
+            "read_file those paths first\n"
+            "3. Use search_files and list_directory to find relevant files\n"
+            "4. Use read_file to examine code — always read before claiming anything\n"
+            "5. Use grep_content to search patterns in files already read\n"
+            "6. Verify every hypothesis with actual code evidence\n"
+            "7. When confident, stop calling tools and state your conclusion\n\n"
             "Rules:\n"
             "- Never invent files, symbols, behavior, or line numbers\n"
             "- Only reference files you have actually read via read_file\n"
+            "- If the issue cites a path you have not read_file'd, do NOT make any root-cause claim "
+            "about it; read it first\n"
+            "- If a path does not exist or reading fails, say so explicitly; never fall back to speculation\n"
             "- Evidence line ranges must use L12 or L12-L18 format\n"
-            "- The confidence field must be: low, medium, high\n\n"
+            "- The confidence field must be: low, medium, high\n"
+            "- If the code you actually read contradicts the issue description, point out the discrepancy "
+            "instead of forcing a match\n\n"
             "Example:\n"
-            'Issue: "Login fails with 500 error when password contains special characters"\n'
-            '-> search_files("login") finds src/auth/login.py\n'
-            '-> read_file("src/auth/login.py")\n'
+            'Issue: "Login fails with 500 error when password contains special characters, at src/auth/login.py L134"\n'
+            '-> read_file("src/auth/login.py") directly reads the cited file\n'
             '-> grep_content("password")\n'
             "-> Found: password unescaped in SQL at src/auth/login.py:L134"
         ),
@@ -119,6 +153,34 @@ STRINGS = {
             "Only call tools when user explicitly asks to see new code or verify a new hypothesis. "
             "Be concise. If unsure, say so honestly rather than guessing. "
             "Cite specific evidence from the prior report."
+        ),
+        "report_phase_instruction": (
+            "=== FINAL REPORT GENERATION PHASE ===\n"
+            "You are no longer calling any tools. Output ONLY a JSON object matching the AnalysisReport schema.\n"
+            'Do NOT output tool call arguments (e.g., {"action": "read_file", "path": ..., '
+            '"start_line": ..., "end_line": ...}). '
+            "Do NOT output prose outside the JSON. Do NOT wrap the JSON in markdown fences.\n"
+            "The JSON must be a top-level object with these fields:\n"
+            "  - summary: string\n"
+            "  - root_cause: string\n"
+            '  - confidence: "high" | "medium" | "low"\n'
+            "  - evidence: array of {path, lines, reason}\n"
+            "  - proposed_changes: array of strings\n"
+            "  - patch: string or null\n"
+            "  - tests: array of strings\n"
+            "  - risks: array of strings\n"
+            "The L1/L500 line prefixes in the source excerpts above are reference markers for evidence citations only. "
+            "Do NOT treat them as tool call parameters."
+        ),
+        "report_retry_prompt": (
+            "Your previous response failed validation and must be retried.\n\n"
+            "Failure reason:\n{validation_error}\n\n"
+            "Previous response (truncated):\n{previous_output}\n\n"
+            "Output ONLY a top-level JSON object matching the AnalysisReport schema. "
+            'Do NOT output tool call arguments (e.g., {"action": "read_file", ...}). '
+            "Do NOT return empty content. Do NOT output prose. "
+            'If evidence is insufficient, set confidence to "low" and evidence to an empty array, '
+            "but still emit the complete AnalysisReport structure."
         ),
         "depth_limit": "Maximum investigation depth reached. Cannot continue further.",
         "no_investigation": "Investigation not yet complete. No conclusions available.",
@@ -162,6 +224,16 @@ def get_final_output_prompt() -> str:
     return f"{t('final_output_prompt')}\n\n{verification_hint}"
 
 
+def get_report_phase_instruction() -> str:
+    return t("report_phase_instruction")
+
+
+def get_report_retry_prompt(*, previous_output: str, validation_error: str) -> str:
+    # 不走 t() 的 format 路径，因为模板含大量字面花括号（JSON 示例）会与 str.format 冲突
+    template = t("report_retry_prompt")
+    return template.replace("{validation_error}", validation_error).replace("{previous_output}", previous_output)
+
+
 def get_review_system_prompt(language: str | None = None) -> str:
     resolved_language = language or get_settings().language
     language_rule = (
@@ -200,6 +272,18 @@ def get_review_output_prompt() -> str:
     "risks": ["remaining risk"]
   }
 }"""
+
+
+def get_review_retry_prompt(previous_output: str, failure_reason: str) -> str:
+    return (
+        "Your previous response failed validation and must be retried.\n\n"
+        f"Failure reason:\n{failure_reason}\n\n"
+        f"Previous response (truncated):\n{previous_output[:1500]}\n\n"
+        "Output ONLY a top-level JSON object matching the ReviewOutcome schema "
+        "(verdict, summary, findings, report). Do NOT return empty content. "
+        "Do NOT output prose. Preserve the original report if it is correct; "
+        "otherwise provide a corrected complete report."
+    )
 
 
 def get_review_unavailable_message(language: str | None = None) -> str:
@@ -270,6 +354,7 @@ _FRONTEND_STRINGS = {
         "tools_used_label": "工具：",
         "connection_error": "连接错误：",
         "error_prefix": "错误：",
+        "invalid_issue_url": "请输入合法的 GitHub issue 链接（https://github.com/owner/repo/issues/123）。",
         "analysis_complete_label": "分析完成",
         "open_full_report": "查看完整报告",
         "report_confidence": "置信度",
@@ -369,6 +454,7 @@ _FRONTEND_STRINGS = {
         "tools_used_label": "Tools: ",
         "connection_error": "Connection error: ",
         "error_prefix": "Error: ",
+        "invalid_issue_url": "Please enter a valid GitHub issue URL (https://github.com/owner/repo/issues/123).",
         "analysis_complete_label": "Analysis complete",
         "open_full_report": "Open full report",
         "report_confidence": "Confidence",

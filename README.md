@@ -33,7 +33,7 @@ Every requested file is normalized and validated against the repository tree bef
 - PR proposals are revalidated before writing; incomplete write flows attempt to roll back their temporary branch.
 - Treats Issue text and repository content as untrusted prompt data.
 - Limits candidate files and total model context.
-- Limits model output with `MAX_OUTPUT_TOKENS` (4,000 by default).
+- Limits model output with `MAX_OUTPUT_TOKENS` (8,000 by default).
 - Bounds the planning path index and planning output independently.
 - Serializes requests within each session and bounds retained source and chat context.
 - Supplies numbered source lines and removes evidence with unknown paths, malformed ranges, or lines
@@ -53,12 +53,14 @@ After completing Local Setup once, open the project folder and double-click:
 打开 Issue Agent.cmd
 ```
 
-The launcher checks the local environment, starts the service, and opens
-`http://127.0.0.1:8000/` automatically. Keep its terminal window open while using the agent;
-press `Ctrl+C` in that window to stop it. If the service is already running, the launcher only
-opens the existing page instead of starting a duplicate process. After updating the project, the
-launcher compares build identities and automatically replaces a stale local process. To force a
-clean restart manually, run `./start-issue-agent.ps1 -Restart` from PowerShell.
+The launcher checks the local environment, starts the service, and opens the browser automatically.
+The launcher auto-selects an available port from `8000 → 9123 → 9124 → 9125` (it verifies each
+candidate is actually this app via the `/health` endpoint before reuse), so the visible URL may
+differ across machines. Keep the launcher terminal window open while using the agent; press `Ctrl+C`
+in that window to stop it. If the service is already running, the launcher only opens the existing
+page instead of starting a duplicate process. After updating the project, the launcher compares
+build identities and automatically replaces a stale local process. To force a clean restart
+manually, run `./start-issue-agent.ps1 -Restart` from PowerShell.
 
 ### Docker
 
@@ -66,6 +68,9 @@ clean restart manually, run `./start-issue-agent.ps1 -Restart` from PowerShell.
 docker build -t issue-agent .
 docker run -p 8000:8000 --env-file .env -v issue-agent-data:/app/data issue-agent
 ```
+
+The container always listens on `8000` internally; map it to any host port you like
+(`-p HOST:8000`).
 
 ### Local Setup
 
@@ -108,8 +113,8 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `OPENAI_MODEL` | `deepseek-v4-pro` | Investigator model name |
 | `OPENAI_THINKING` | `enabled` | DeepSeek thinking mode (`enabled` or `disabled`) |
 | `OPENAI_REASONING_EFFORT` | `high` | DeepSeek reasoning effort (`high` or `max`) |
-| `OPENAI_TIMEOUT` | `60` | Request timeout in seconds |
-| `OPENAI_MAX_RETRIES` | `2` | Retry attempts for transient errors |
+| `OPENAI_TIMEOUT` | `180` | Request timeout in seconds (DeepSeek thinking mode often needs 60–120s) |
+| `OPENAI_MAX_RETRIES` | `0` | SDK-level retry attempts; the agent owns its own multi-level retry for report generation |
 | `LOG_LEVEL` | `INFO` | Application log level |
 | `LOG_FORMAT` | `console` | Log format (`console` or newline-delimited `json`) |
 | `GITHUB_TOKEN` | *(optional)* | GitHub PAT for higher rate limits |
@@ -118,14 +123,15 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `MAX_PLANNING_PATHS` | `80` | Max paths shown to the model in initial prompt |
 | `MAX_FILE_CHARS` | `16000` | Max retained characters from one file |
 | `MAX_TOTAL_CONTEXT_CHARS` | `80000` | Max retained source + chat characters |
-| `MAX_OUTPUT_TOKENS` | `4000` | Max tokens per model response |
+| `MAX_OUTPUT_TOKENS` | `8000` | Max tokens per model response |
 | `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
 | `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | Bounded search, history, branch, and tool findings retained for report synthesis |
 | `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
 | `INDEPENDENT_REVIEW` | `true` | Run the independent reviewer before publishing the final report |
 | `REVIEW_MODEL` | *(same as investigator)* | Optional separate model for independent review |
-| `REVIEW_MAX_TOKENS` | `4000` | Maximum output tokens for the reviewer decision |
+| `REVIEW_MAX_TOKENS` | `8000` | Maximum output tokens for the reviewer decision |
 | `MAX_REVIEW_CONTEXT_CHARS` | `32000` | Maximum issue, report, and source context supplied to the reviewer |
+| `MAX_REPORT_RETRIES` | `3` | Report-generation retry count (incl. first try): first attempt uses the configured thinking mode, middle attempts retry with error feedback, the final attempt degrades to thinking disabled as a fallback |
 | `LANGUAGE` | `zh` | Response language (`zh` or `en`) |
 | `API_KEY` | *(optional)* | Require this value in the `X-API-Key` request header |
 | `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |
@@ -157,10 +163,12 @@ Inside chat mode:
 Start the server:
 
 ```bash
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --port 8000 --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` for the Swagger UI.
+Open `http://127.0.0.1:8000/docs` for the Swagger UI. On Windows the bundled launcher
+(`打开 Issue Agent.cmd`) auto-selects a free port from `8000 → 9123 → 9124 → 9125`; in that
+case the launcher prints the actual URL in its terminal window.
 
 ### `POST /analyze`
 
@@ -240,7 +248,7 @@ from the OpenAPI schema; new integrations should use the session-scoped endpoint
 ## Testing
 
 ```bash
-ruff check app/ tests/
+ruff check .
 mypy app/
 pytest -v --cov=app --cov-report=term-missing
 npm install

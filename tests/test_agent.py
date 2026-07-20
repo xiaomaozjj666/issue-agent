@@ -136,9 +136,7 @@ async def test_investigate_stream_yields_events(
     assert assistant_tool_turn["reasoning_content"] == "The parser source is relevant."
 
 
-async def test_investigation_runs_independent_reviewer(
-    fake_client, fake_response, fake_tool_call, monkeypatch
-) -> None:
+async def test_investigation_runs_independent_reviewer(fake_client, fake_response, fake_tool_call, monkeypatch) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     tc = fake_tool_call("read_file", {"path": "src/parser.py"})
     report_data = {
@@ -186,9 +184,7 @@ async def test_investigation_runs_independent_reviewer(
     assert session.metrics["model_calls"] == 4
 
 
-async def test_investigation_degrades_safely_when_reviewer_fails(
-    fake_client, fake_response, monkeypatch
-) -> None:
+async def test_investigation_degrades_safely_when_reviewer_fails(fake_client, fake_response, monkeypatch) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     report_data = {
         "summary": "Parser bug",
@@ -316,7 +312,11 @@ async def test_generate_report_raises_on_invalid_confidence(make_agent, fake_cli
             "risks": [],
         }
     )
-    agent = make_agent(client=fake_client([fake_response(content=report_json)]))
+    # max_report_retries=2 时需要两个相同的无效响应让两次尝试都失败
+    agent = make_agent(
+        client=fake_client([fake_response(content=report_json), fake_response(content=report_json)]),
+        settings_kwargs={"max_report_retries": 2},
+    )
     from app.config import Settings
 
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), [])
@@ -324,8 +324,92 @@ async def test_generate_report_raises_on_invalid_confidence(make_agent, fake_cli
         await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
 
 
+async def test_generate_report_retries_on_invalid_json_then_succeeds(
+    make_agent, fake_client, fake_response, make_issue
+) -> None:
+    # 模拟 DeepSeek thinking 模式偶发问题：第一次返回工具调用参数 JSON 而非 AnalysisReport
+    invalid_json = json.dumps(
+        {
+            "action": "read_file",
+            "path": "src/parser.py",
+            "start_line": 1,
+            "end_line": 10,
+        }
+    )
+    valid_json = json.dumps(
+        {
+            "summary": "Parser bug",
+            "root_cause": "Fails at src/parser.py L1",
+            "confidence": "high",
+            "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "parse call"}],
+            "proposed_changes": ["Fix"],
+            "patch": None,
+            "tests": [],
+            "risks": [],
+        }
+    )
+    agent = make_agent(
+        client=fake_client([fake_response(content=invalid_json), fake_response(content=valid_json)]),
+        settings_kwargs={"max_report_retries": 2},
+    )
+    from app.config import Settings
+
+    executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), ["src/parser.py"])
+    executor._file_cache["src/parser.py"] = "parse(value)"
+    executor.files_read.append("src/parser.py")
+    report = await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
+    # 第一次响应被拒，重试后成功
+    assert report.summary == "Parser bug"
+    assert len(agent._client.chat.completions.calls) == 2
+    # 重试时的 messages 应包含错误反馈
+    retry_call_messages = agent._client.chat.completions.calls[1]["messages"]
+    assert any("AnalysisReport schema" in str(m.get("content", "")) for m in retry_call_messages)
+
+
+async def test_generate_report_retries_three_times_with_thinking_fallback(
+    make_agent, fake_client, fake_response, make_issue
+) -> None:
+    # 默认 max_report_retries=3：前两次 thinking enabled 失败，第三次降级 disabled 后成功
+    invalid_json = json.dumps({"action": "read_file", "path": "x", "start_line": 1, "end_line": 2})
+    valid_json = json.dumps(
+        {
+            "summary": "Fixed",
+            "root_cause": "Root",
+            "confidence": "low",
+            "evidence": [],
+            "proposed_changes": [],
+            "patch": None,
+            "tests": [],
+            "risks": [],
+        }
+    )
+    agent = make_agent(
+        client=fake_client(
+            [
+                fake_response(content=invalid_json),
+                fake_response(content=invalid_json),
+                fake_response(content=valid_json),
+            ]
+        )
+    )
+    from app.config import Settings
+
+    executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), [])
+    report = await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
+    assert report.summary == "Fixed"
+    assert len(agent._client.chat.completions.calls) == 3
+    # 前两次 thinking enabled，最后一次降级 disabled
+    assert agent._client.chat.completions.calls[0]["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert agent._client.chat.completions.calls[1]["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert agent._client.chat.completions.calls[2]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
 async def test_generate_report_raises_on_empty_response(make_agent, fake_client, fake_response, make_issue) -> None:
-    agent = make_agent(client=fake_client([fake_response(content=None)]))
+    # max_report_retries=2 时需要两个空响应让两次尝试都失败
+    agent = make_agent(
+        client=fake_client([fake_response(content=None), fake_response(content=None)]),
+        settings_kwargs={"max_report_retries": 2},
+    )
     from app.config import Settings
 
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), [])

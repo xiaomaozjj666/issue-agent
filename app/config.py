@@ -21,13 +21,16 @@ class Settings(BaseSettings):
     max_planning_paths: int = Field(default=80, ge=10, le=200)
     max_file_chars: int = Field(default=16_000, ge=1_000, le=50_000)
     max_total_context_chars: int = Field(default=80_000, ge=5_000, le=200_000)
-    max_output_tokens: int = Field(default=4_000, ge=500, le=8_000)
+    max_output_tokens: int = Field(default=8_000, ge=500, le=16_000)
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
     max_investigation_ledger_chars: int = Field(default=12_000, ge=1_000, le=50_000)
-    max_chat_tokens: int = Field(default=2_000, ge=500, le=8_000)
+    max_chat_tokens: int = Field(default=2_000, ge=500, le=16_000)
     independent_review: bool = True
     review_model: str | None = None
-    review_max_tokens: int = Field(default=4_000, ge=500, le=8_000)
+    review_max_tokens: int = Field(default=8_000, ge=500, le=16_000)
+    # 报告生成/审查的重试次数（含首次）：第 1 次用原配置，中间几次带错误反馈保留 thinking，
+    # 最后一次降级 thinking disabled 保底。默认 3 次：原配置 → 带反馈重试 → 降级保底。
+    max_report_retries: int = Field(default=3, ge=1, le=5)
     max_review_context_chars: int = Field(default=32_000, ge=4_000, le=100_000)
 
     # Runtime behavior
