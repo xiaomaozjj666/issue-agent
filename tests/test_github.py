@@ -221,6 +221,63 @@ async def test_get_does_not_retry_4xx_client_errors() -> None:
     assert call_count == 1
 
 
+async def test_get_issue_follows_repository_redirects() -> None:
+    """GitHub returns 301 for case-mismatched owner/repo; client must follow."""
+    github = GitHubClient(max_retries=0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        # Any request to the lowercase owner/repo returns a 301 to canonical case.
+        if "/repos/acme/widget" in url:
+            canonical = url.replace("/repos/acme/widget", "/repos/Acme/Widget")
+            return httpx.Response(301, headers={"Location": canonical})
+        # Canonical endpoints: success.
+        if "/comments" in url:
+            return httpx.Response(200, json=[])
+        if url.endswith("/repos/Acme/Widget") or url.endswith("/repos/Acme/Widget/"):
+            return httpx.Response(200, json={"default_branch": "main"})
+        return httpx.Response(200, json={"title": "ok", "body": "", "labels": [], "state": "open"})
+
+    await github._client.aclose()
+    # follow_redirects must be enabled on the replacement client too, mirroring production config.
+    github._client = httpx.AsyncClient(
+        base_url="https://api.github.com",
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
+    async with github:
+        issue = await github.get_issue("acme", "widget", 1)
+
+    assert issue.title == "ok"
+    assert issue.default_branch == "main"
+
+
+async def test_get_issue_rejects_unexpected_comments_payload() -> None:
+    """Non-list comments payload raises a readable GitHubError instead of crashing."""
+    from app.github import GitHubError
+
+    github = GitHubClient(max_retries=0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/comments" in url:
+            # Simulate an upstream proxy returning a JSON error object instead of a list.
+            return httpx.Response(200, json={"message": "Internal Server Error"})
+        if url.endswith("/repos/acme/widget") or url.endswith("/repos/acme/widget/"):
+            return httpx.Response(200, json={"default_branch": "main"})
+        return httpx.Response(200, json={"title": "ok", "body": "", "labels": [], "state": "open"})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(
+        base_url="https://api.github.com",
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
+    async with github:
+        with pytest.raises(GitHubError, match="Unexpected comments payload type"):
+            await github.get_issue("acme", "widget", 1)
+
+
 async def test_get_file_skips_oversized_file() -> None:
     issue = IssueData(
         owner="acme",

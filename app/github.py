@@ -194,6 +194,11 @@ class GitHubClient:
             headers=headers,
             timeout=timeout,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            # GitHub API returns 301 for case-mismatched owner/repo (e.g.
+            # httpie/httpie -> HTTPie/httpie). Follow redirects so callers
+            # always see the canonical 200 response, not a 3xx body that
+            # would break .json() parsing.
+            follow_redirects=True,
         )
         self._max_file_bytes = max_file_bytes
         self._max_retries = max_retries
@@ -271,10 +276,24 @@ class GitHubClient:
         repo_segment = self._repo_segment(owner, repo)
         issue = (await self._get(f"/repos/{repo_segment}/issues/{number}")).json()
         if "pull_request" in issue:
-            raise GitHubError("The supplied URL points to a pull request, not an issue")
+            raise GitHubError(
+                f"The supplied URL (https://github.com/{owner}/{repo}/issues/{number}) "
+                f"points to a pull request, not an issue. "
+                f"Use https://github.com/{owner}/{repo}/pull/{number} to view the PR, "
+                f"or pick an issue from https://github.com/{owner}/{repo}/issues."
+            )
         repository = (await self._get(f"/repos/{repo_segment}")).json()
         comments_response = await self._get(f"/repos/{repo_segment}/issues/{number}/comments", params={"per_page": 30})
-        comments = [item.get("body") or "" for item in comments_response.json()]
+        comments_payload = comments_response.json()
+        # 防御：GitHub API 文档保证此端点返回 list，但若上游代理/缓存返回
+        # 非预期结构（例如 dict 错误对象），迭代 dict 会得到字符串 key
+        # 并在后续 .get() 调用上崩溃。显式校验以给出可读错误。
+        if not isinstance(comments_payload, list):
+            raise GitHubError(
+                f"Unexpected comments payload type {type(comments_payload).__name__} for "
+                f"{owner}/{repo}#{number}; expected list"
+            )
+        comments = [item.get("body") or "" for item in comments_payload if isinstance(item, dict)]
         link_header = comments_response.headers.get("Link", "")
         if 'rel="next"' in link_header:
             logger.info("Issue %s/%s#%d has more than 30 comments; only first page fetched", owner, repo, number)

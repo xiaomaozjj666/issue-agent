@@ -282,3 +282,37 @@ async def test_purge_old_is_noop_on_memory_store() -> None:
 
     assert await manager.purge_old_sessions(retention_days=1) == 0
     assert await manager.get(session.session_id) is not None
+
+
+async def test_update_metrics_persists_without_version_bump(tmp_path) -> None:
+    """Lightweight metrics update writes metrics_json without bumping session version."""
+    manager = SessionManager(db_path=str(tmp_path / "sessions.db"))
+    session = await manager.create("https://github.com/a/b/issues/1")
+    await manager.save(session)
+
+    version_before = session.version
+    await manager.update_metrics(
+        session.session_id,
+        {"model_calls": 5, "tool_calls": 7, "files_read": 2, "duration_ms": 1234},
+    )
+
+    restored = await manager.get(session.session_id)
+    assert restored is not None
+    assert restored.metrics["model_calls"] == 5
+    assert restored.metrics["tool_calls"] == 7
+    assert restored.metrics["files_read"] == 2
+    # Version must not change — update_metrics must not conflict with concurrent save().
+    assert restored.version == version_before
+    await manager.close()
+
+
+async def test_update_metrics_works_on_memory_store() -> None:
+    """MemoryStore.update_metrics writes back to the in-memory session object."""
+    manager = SessionManager()
+    session = await manager.create("https://github.com/a/b/issues/1")
+    await manager.update_metrics(session.session_id, {"model_calls": 3, "tool_calls": 4})
+
+    restored = await manager.get(session.session_id)
+    assert restored is not None
+    assert restored.metrics["model_calls"] == 3
+    assert restored.metrics["tool_calls"] == 4

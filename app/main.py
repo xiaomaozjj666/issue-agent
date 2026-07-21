@@ -176,6 +176,9 @@ async def stream_analysis(request: StreamRequest, session_mgr: SessionMgr) -> St
                     # Persist session at key phase transitions to balance durability vs. write cost
                     if event.type in ("phase", "report", "done"):
                         await session_mgr.save(session)
+                    # 工具调用事件时轻量刷新 metrics，让前端列表/详情实时显示调查进度
+                    if event.type in ("tool_call", "tool_result"):
+                        await session_mgr.update_metrics(session.session_id, session.metrics)
                     yield event.to_sse()
             finally:
                 await event_stream.aclose()

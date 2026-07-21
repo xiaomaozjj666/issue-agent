@@ -137,6 +137,11 @@ class MemoryStore:
         self._events.pop(session_id, None)
         return self._sessions.pop(session_id, None) is not None
 
+    async def update_metrics(self, session_id: str, metrics: dict) -> None:
+        """MemoryStore 中 metrics 直接写回 session 对象（若存在）。"""
+        if session := self._sessions.get(session_id):
+            session.metrics = dict(metrics)
+
     def _evict(self) -> None:
         while len(self._sessions) > self._max:
             oldest = next(iter(self._sessions))
@@ -339,6 +344,20 @@ class SqliteStore:
         await db.commit()
         return cursor.rowcount > 0
 
+    async def update_metrics(self, session_id: str, metrics: dict) -> None:
+        """轻量更新 metrics 列，不触碰 version 也不写完整 session。
+
+        实时调查过程中工具调用频繁，每次走完整 save() 会触发乐观锁版本递增
+        并可能与 stream 端点的 save 竞争。此方法只更新 metrics_json + updated_at，
+        供前端实时展示调查轨迹指标。
+        """
+        db = await self._get_conn()
+        await db.execute(
+            "UPDATE sessions SET metrics_json=?, updated_at=? WHERE session_id=?",
+            (json.dumps(metrics, ensure_ascii=False), _now(), session_id),
+        )
+        await db.commit()
+
     async def purge_old(self, retention_days: int) -> int:
         """Delete terminal-state sessions older than retention_days."""
         from datetime import UTC, datetime, timedelta
@@ -441,6 +460,13 @@ class SessionManager:
         if isinstance(self._store, SqliteStore):
             return await self._store.purge_old(retention_days)
         return 0
+
+    async def update_metrics(self, session_id: str, metrics: dict) -> None:
+        """轻量更新 metrics，不触发乐观锁版本递增。
+
+        供实时调查流在工具调用时频繁刷新指标使用，避免与主 save() 竞争。
+        """
+        await self._store.update_metrics(session_id, metrics)
 
     async def close(self) -> None:
         if isinstance(self._store, SqliteStore):

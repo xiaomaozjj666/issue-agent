@@ -11,7 +11,7 @@ import app.main as main_module
 from app.agent import IssueAgent, ModelResponseError
 from app.build import BUILD_ID
 from app.config import Settings
-from app.events import done_event, phase_event
+from app.events import done_event, phase_event, tool_call_event, tool_result_event
 from app.github import GitHubError, GitHubRateLimitError
 from app.main import app, get_session_manager, get_settings
 from app.models import AnalysisReport, ApplyFixRequest, ChatResponse, IssueData
@@ -219,6 +219,38 @@ def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
 
     assert chat_response.status_code == 200
     assert chat_response.json()["reply"] == "reply: what changed?"
+    app.dependency_overrides.pop(get_session_manager, None)
+
+
+def test_stream_persists_metrics_on_tool_call_events(monkeypatch) -> None:
+    """Tool-call events must trigger lightweight metrics persistence so the
+    frontend session list / detail view shows live progress (model_calls,
+    tool_calls, files_read) instead of zeros until the next phase transition.
+    """
+    manager = SessionManager()
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    async def fake_stream(self: IssueAgent, issue_url: str, *, session=None):
+        # Simulate one tool-call round-trip with metrics increments, then done.
+        if session is not None:
+            session.metrics["tool_calls"] = 1
+            session.metrics["model_calls"] = 1
+        yield tool_call_event("read_file", {"path": "src/a.py"}, iteration=1)
+        yield tool_result_event("read_file", "L1: content")
+        yield done_event()
+
+    monkeypatch.setattr(IssueAgent, "investigate_stream", fake_stream)
+    client = TestClient(app)
+
+    stream_response = client.post("/stream", json={"issue_url": "https://github.com/acme/widget/issues/1"})
+    session_line = next(line for line in stream_response.text.splitlines() if '"type": "session"' in line)
+    session_id = json.loads(session_line.removeprefix("data: "))["data"]["session_id"]
+
+    # After the stream completes, the session detail must reflect the
+    # tool_call metrics that were persisted mid-stream, not zeros.
+    detail = client.get(f"/session/{session_id}").json()
+    assert detail["metrics"]["tool_calls"] == 1
+    assert detail["metrics"]["model_calls"] == 1
     app.dependency_overrides.pop(get_session_manager, None)
 
 

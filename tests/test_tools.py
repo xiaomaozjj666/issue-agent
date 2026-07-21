@@ -180,6 +180,25 @@ async def test_grep_content_no_matches() -> None:
     assert "No matches" in result
 
 
+async def test_grep_content_path_filter_restricts_to_single_file() -> None:
+    """Optional path argument narrows search to one already-read file."""
+    executor = ToolExecutor(MagicMock(), _SETTINGS, _make_issue(), ["src/a.py", "src/b.py"])
+    executor._file_cache["src/a.py"] = "def foo():\n    return 1\n"
+    executor._file_cache["src/b.py"] = "def foo():\n    return 2\n"
+    result = await executor.execute("grep_content", {"pattern": "foo", "path": "src/a.py"})
+    assert "src/a.py:L1: def foo():" in result
+    assert "src/b.py" not in result
+
+
+async def test_grep_content_path_filter_rejects_unread_file() -> None:
+    """Path argument pointing to an unread file returns a helpful message."""
+    executor = ToolExecutor(MagicMock(), _SETTINGS, _make_issue(), ["src/a.py"])
+    executor._file_cache["src/a.py"] = "content\n"
+    result = await executor.execute("grep_content", {"pattern": "x", "path": "src/unread.py"})
+    # _normalize_file_path rejects unknown paths before the unread-file check.
+    assert "Error" in result
+
+
 async def test_grep_content_invalid_regex_falls_back_to_literal() -> None:
     executor = ToolExecutor(MagicMock(), _SETTINGS, _make_issue(), [])
     executor._file_cache["src/a.py"] = "a(b)c\n"

@@ -189,8 +189,11 @@ class IssueAgent:
                     if session is not None:
                         session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     result = await executor.execute(name, args)
-                    if session is not None and executor.pr_proposal is not None:
-                        session.pending_pr = executor.pr_proposal
+                    if session is not None:
+                        # 同步 files_read 快照，让前端实时显示已读文件数（而非等到报告阶段）
+                        session.metrics["files_read"] = len(executor.files_read)
+                        if executor.pr_proposal is not None:
+                            session.pending_pr = executor.pr_proposal
                     yield tool_result_event(name, result)
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
             else:
@@ -335,6 +338,7 @@ class IssueAgent:
                     name, args = parse_tool_call(tc)
                     result = await executor.execute(name, args)
                     session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
+                    session.metrics["files_read"] = len(executor.files_read)
                     if executor.pr_proposal is not None:
                         session.pending_pr = executor.pr_proposal
                     tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": result}

@@ -98,12 +98,17 @@ _READ_ONLY_TOOLS = [
             "name": "grep_content",
             "description": (
                 "Search for a pattern in files that have already been read. "
-                "Returns matching lines with file and line number."
+                "Returns matching lines with file and line number. "
+                "Optionally restrict the search to a single path."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                    "path": {
+                        "type": "string",
+                        "description": "Optional: restrict search to this single already-read file path",
+                    },
                 },
                 "required": ["pattern"],
             },
@@ -413,22 +418,30 @@ class ToolExecutor:
             lines.extend(f"  {fragment}" for fragment in fragments)
         return self._limit_tool_context("\n".join(lines))
 
-    async def _tool_grep_content(self, pattern: str) -> str:
+    async def _tool_grep_content(self, pattern: str, path: str | None = None) -> str:
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error:
             regex = re.compile(re.escape(pattern), re.IGNORECASE)
+        # 可选 path 过滤：若指定则只搜索该已读文件，否则搜索全部已读文件
+        cache = self._file_cache
+        if path is not None:
+            normalized = self._normalize_file_path(path)
+            if normalized not in cache:
+                return f"'{path}' has not been read yet. Use read_file first, or omit path to search all read files."
+            cache = {normalized: cache[normalized]}
         results: list[str] = []
-        for path, content in self._file_cache.items():
+        for file_path, content in cache.items():
             for i, line in enumerate(content.splitlines(), 1):
                 if regex.search(line):
-                    results.append(f"{path}:L{i}: {line}")
+                    results.append(f"{file_path}:L{i}: {line}")
                     if len(results) >= _MAX_GREP_RESULTS:
                         break
             if len(results) >= _MAX_GREP_RESULTS:
                 break
         if not results:
-            return f"No matches for '{pattern}' in files read so far. Use read_file first."
+            scope = f"'{path}'" if path else "files read so far"
+            return f"No matches for '{pattern}' in {scope}."
         return "\n".join(results)
 
     # ── extended tools ──────────────────────────────────────────────
