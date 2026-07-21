@@ -16,6 +16,7 @@
   let navigationStack = [];
   let backInProgress = false;
   let currentStream = null;
+  let chatAbortController = null;
   let lastFailedChat = null;
   let activeSession = null; // 当前活跃会话详情（用于生成 GitHub 链接）
 
@@ -130,8 +131,14 @@
     const requestId = ++sessionsRequestId;
     const list = document.getElementById("history-list");
     const query = (document.getElementById("history-search").value || "").trim();
-    if (!list.querySelector(".history-loading")) {
-      list.innerHTML = `<div class="history-loading">${IA.escapeHtml(t("loading_session"))}</div>`;
+    // 骨架屏：仅在首次加载或刷新时显示，避免每次搜索都闪烁
+    if (!list.querySelector(".session-group") && !list.querySelector(".history-skeleton")) {
+      list.innerHTML =
+        `<div class="history-skeleton" aria-hidden="true">` +
+          `<div class="history-skeleton-row"><div class="skeleton-bar medium"></div><div class="skeleton-bar long"></div><div class="skeleton-bar short"></div></div>` +
+          `<div class="history-skeleton-row"><div class="skeleton-bar medium"></div><div class="skeleton-bar long"></div><div class="skeleton-bar short"></div></div>` +
+          `<div class="history-skeleton-row"><div class="skeleton-bar medium"></div><div class="skeleton-bar long"></div><div class="skeleton-bar short"></div></div>` +
+        `</div>`;
     }
     try {
       const sessions = await IA.apiJson("/sessions?archived=" + showArchived + "&q=" + encodeURIComponent(query));
@@ -713,6 +720,99 @@
     });
   }
 
+  // Markdown 渲染：assistant 消息走 marked + DOMPurify + highlight.js，
+  // 任意一个库加载失败则降级为 escapeHtml 纯文本，保证可用性
+  function renderMarkdown(text) {
+    if (typeof text !== "string") return "";
+    if (!window.marked || !window.DOMPurify) {
+      // 降级：保留换行，转义 HTML
+      return IA.escapeHtml(text).replace(/\n/g, "<br>");
+    }
+    try {
+      marked.setOptions({
+        gfm: true,
+        breaks: true,
+        headerIds: false,
+        mangle: false,
+      });
+      const rawHtml = marked.parse(text);
+      const cleanHtml = window.DOMPurify.sanitize(rawHtml, {
+        ALLOWED_TAGS: [
+          "h1", "h2", "h3", "h4", "h5", "h6",
+          "p", "br", "hr",
+          "strong", "em", "del", "mark", "sub", "sup",
+          "ul", "ol", "li",
+          "blockquote", "code", "pre",
+          "a", "span", "div",
+          "table", "thead", "tbody", "tr", "th", "td",
+          "img",
+        ],
+        ALLOWED_ATTR: ["href", "title", "src", "alt", "class", "target", "rel", "colspan", "rowspan"],
+      });
+      return cleanHtml;
+    } catch (e) {
+      return IA.escapeHtml(text).replace(/\n/g, "<br>");
+    }
+  }
+
+  // 为 pre>code 块注入语言标签 + 复制按钮 + 语法高亮
+  function enhanceCodeBlocks(container) {
+    if (!container) return;
+    const blocks = container.querySelectorAll("pre > code");
+    blocks.forEach(function (codeEl, idx) {
+      const pre = codeEl.parentElement;
+      if (pre.dataset.enhanced) return;
+      pre.dataset.enhanced = "1";
+
+      // 语言标签
+      const langMatch = codeEl.className.match(/language-([\w-]+)/);
+      const lang = langMatch ? langMatch[1] : "text";
+      const langLabel = document.createElement("span");
+      langLabel.className = "code-lang-label";
+      langLabel.textContent = lang;
+      pre.appendChild(langLabel);
+
+      // 复制按钮
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "code-copy-btn";
+      copyBtn.setAttribute("aria-label", t("copy_code"));
+      copyBtn.innerHTML = IA.svgIcon("copy");
+      copyBtn.addEventListener("click", function () {
+        const text = codeEl.textContent;
+        IA.copyToClipboard(text).then(
+          function () {
+            copyBtn.classList.add("copied");
+            copyBtn.innerHTML = IA.svgIcon("check");
+            setTimeout(function () {
+              copyBtn.classList.remove("copied");
+              copyBtn.innerHTML = IA.svgIcon("copy");
+            }, 1500);
+          },
+          function () { /* ignore */ },
+        );
+      });
+      pre.appendChild(copyBtn);
+
+      // 语法高亮（库加载失败则跳过，code 块仍可读）
+      if (window.hljs) {
+        try {
+          window.hljs.highlightElement(codeEl);
+        } catch (e) { /* ignore */ }
+      }
+    });
+  }
+
+  // textarea 自适应高度：内容增长时撑高，删除时收缩，限制最大高度避免撑满屏幕
+  function autoResizeTextarea(el) {
+    if (!el) return;
+    el.style.height = "auto";
+    const maxHeight = 160;
+    const newHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = newHeight + "px";
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }
+
   function addMsg(role, content, cls) {
     const d = document.getElementById("messages");
     const m = document.createElement("div");
@@ -726,7 +826,17 @@
     } else if (role === "system") {
       m.setAttribute("role", "status");
     }
-    m.textContent = content;
+    // assistant 消息走 Markdown 渲染（GFM + 代码高亮 + 复制按钮），
+    // 其余角色保持 textContent 天然防 XSS
+    if (role === "assistant") {
+      const body = document.createElement("div");
+      body.className = "msg-body markdown-body";
+      body.innerHTML = renderMarkdown(content);
+      enhanceCodeBlocks(body);
+      m.appendChild(body);
+    } else {
+      m.textContent = content;
+    }
     d.appendChild(m);
     // H5 修复：仅在用户已在底部附近时自动滚动，避免打断阅读
     scrollToBottomIfNear(d, 80);
@@ -1644,31 +1754,128 @@
     if (!msg || !sessionId) return;
     chatInProgress = true;
     inp.value = "";
+    autoResizeTextarea(inp);
     setChatDisabled(true);
+    // 显示停止生成按钮
+    const stopBtn = document.getElementById("chat-stop-btn");
+    if (stopBtn) stopBtn.style.display = "inline-flex";
     addMsg("user", msg);
     lastFailedChat = null;
-    document.getElementById("progress").textContent = t("thinking");
+    // Thinking dots + 骨架屏消息：让等待反馈接近主流 agent
+    const progressEl = document.getElementById("progress");
+    progressEl.innerHTML = `<span class="thinking-dots"><span></span></span>${IA.escapeHtml(t("thinking"))}`;
+    const messagesEl = document.getElementById("messages");
+    const skeletonMsg = document.createElement("div");
+    skeletonMsg.className = "msg assistant msg-skeleton";
+    skeletonMsg.setAttribute("aria-hidden", "true");
+    skeletonMsg.innerHTML =
+      `<div class="skeleton-bar long"></div>` +
+      `<div class="skeleton-bar medium"></div>` +
+      `<div class="skeleton-bar long"></div>` +
+      `<div class="skeleton-bar short"></div>`;
+    messagesEl.appendChild(skeletonMsg);
+    scrollToBottomIfNear(messagesEl, 80);
+    // AbortController：让用户能中断长时间等待
+    chatAbortController = new AbortController();
+    let stopped = false;
+    const onStop = function () {
+      stopped = true;
+      if (chatAbortController) {
+        try { chatAbortController.abort(); } catch (e) { /* ignore */ }
+      }
+    };
+    if (stopBtn) stopBtn.addEventListener("click", onStop, { once: true });
     try {
       const resp = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, message: msg }),
+        signal: chatAbortController.signal,
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || t("error_unable_to_continue"));
-      document.getElementById("progress").textContent = "";
-      addMsg("assistant", data.reply);
+      // 移除骨架屏，清空 progress
+      skeletonMsg.remove();
+      progressEl.textContent = "";
+      // 流式打字效果：逐字渲染让视觉接近主流 agent 体验
+      await typewriterAddMsg("assistant", data.reply);
       if (data.tools_used && data.tools_used.length) addMsg("system", t("tools_used_label") + data.tools_used.join(", "));
       loadSessions();
     } catch (e) {
-      document.getElementById("progress").textContent = "";
-      lastFailedChat = msg;
-      addErrorWithRetry(t("error_prefix") + e.message);
+      skeletonMsg.remove();
+      progressEl.textContent = "";
+      if (stopped || e.name === "AbortError") {
+        addMsg("system", t("chat_stopped"));
+      } else {
+        lastFailedChat = msg;
+        addErrorWithRetry(t("error_prefix") + e.message);
+      }
     } finally {
       chatInProgress = false;
+      chatAbortController = null;
+      if (stopBtn) {
+        stopBtn.style.display = "none";
+        stopBtn.removeEventListener("click", onStop);
+      }
       setChatDisabled(false);
       inp.focus();
     }
+  }
+
+  // 流式打字效果：将完整文本按 token 切片逐段追加渲染，
+  // 视觉上接近主流 agent 的逐字输出体验。
+  // 后端目前是整段返回，这里做前端打字模拟；后端真流式可作为后续优化。
+  async function typewriterAddMsg(role, content) {
+    const d = document.getElementById("messages");
+    const m = document.createElement("div");
+    m.className = "msg " + role;
+    m.dataset.speaker = t("speaker_agent");
+    const body = document.createElement("div");
+    body.className = "msg-body markdown-body";
+    m.appendChild(body);
+    // 打字光标
+    const cursor = document.createElement("span");
+    cursor.className = "typewriter-cursor";
+    cursor.setAttribute("aria-hidden", "true");
+    body.appendChild(cursor);
+    d.appendChild(m);
+    scrollToBottomIfNear(d, 80);
+
+    // 按字符切片，每帧渲染 3-5 个字符，约 60-100ms 一段
+    // 长 reply 总时长控制在 1.5-3s；太短直接全量渲染
+    const len = content.length;
+    if (len <= 40) {
+      body.innerHTML = renderMarkdown(content);
+      enhanceCodeBlocks(body);
+      return;
+    }
+    const totalDuration = Math.min(2500, Math.max(800, len * 8));
+    const frameInterval = 30;
+    const charsPerFrame = Math.max(1, Math.ceil(len / (totalDuration / frameInterval)));
+    let pos = 0;
+    return new Promise(function (resolve) {
+      function step() {
+        pos = Math.min(len, pos + charsPerFrame);
+        // 渲染已消费的部分 + 光标
+        const partial = content.substring(0, pos);
+        body.innerHTML = renderMarkdown(partial);
+        // 重新追加光标
+        const newCursor = document.createElement("span");
+        newCursor.className = "typewriter-cursor";
+        newCursor.setAttribute("aria-hidden", "true");
+        body.appendChild(newCursor);
+        scrollToBottomIfNear(d, 80);
+        if (pos < len) {
+          window.setTimeout(step, frameInterval);
+        } else {
+          // 完成：移除光标，enhance 代码块（只在最终一次性 enhance 避免重复）
+          body.innerHTML = renderMarkdown(content);
+          enhanceCodeBlocks(body);
+          resolve();
+        }
+      }
+      window.setTimeout(step, frameInterval);
+    });
   }
 
   function setChatDisabled(disabled) {
@@ -1829,8 +2036,14 @@
     document.getElementById("chat-send-btn").addEventListener("click", function () {
       chat();
     });
-    document.getElementById("chatInput").addEventListener("keydown", function (event) {
-      if (event.key === "Enter" && !event.shiftKey) {
+    const chatInputEl = document.getElementById("chatInput");
+    // textarea 自适应高度：输入/粘贴/删除时撑高或收缩
+    chatInputEl.addEventListener("input", function () {
+      autoResizeTextarea(chatInputEl);
+    });
+    chatInputEl.addEventListener("keydown", function (event) {
+      // Enter 发送 / Shift+Enter 换行（textarea 原生支持换行）
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         chat();
       }
