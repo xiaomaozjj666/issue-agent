@@ -211,3 +211,74 @@ def test_session_dataclass_mutable_defaults_are_independent() -> None:
     assert s2.messages == []
     assert s2.file_cache == {}
     assert s2.files_read == []
+
+
+async def test_purge_old_deletes_terminal_sessions_beyond_retention(tmp_path) -> None:
+    """Completed/failed/cancelled sessions older than retention_days are purged."""
+    manager = SessionManager(db_path=str(tmp_path / "sessions.db"))
+
+    old_completed = await manager.create("https://github.com/a/b/issues/1")
+    old_completed.status = "completed"
+    await manager.save(old_completed)
+
+    old_failed = await manager.create("https://github.com/a/b/issues/2")
+    old_failed.status = "failed"
+    await manager.save(old_failed)
+
+    old_cancelled = await manager.create("https://github.com/a/b/issues/3")
+    old_cancelled.status = "cancelled"
+    await manager.save(old_cancelled)
+
+    fresh_running = await manager.create("https://github.com/a/b/issues/4")
+    fresh_running.status = "running"
+    await manager.save(fresh_running)
+
+    # save() refreshes updated_at to now; force old timestamps directly in the DB
+    # so the purge query sees them as beyond the retention window.
+    stale_ts = "2020-01-01T00:00:00+00:00"
+    store = manager._store
+    if hasattr(store, "_get_conn"):
+        db = await store._get_conn()
+        for sid in (
+            old_completed.session_id,
+            old_failed.session_id,
+            old_cancelled.session_id,
+            fresh_running.session_id,
+        ):
+            await db.execute("UPDATE sessions SET updated_at=? WHERE session_id=?", (stale_ts, sid))
+        await db.commit()
+
+    purged = await manager.purge_old_sessions(retention_days=30)
+    assert purged == 3
+    assert await manager.get(old_completed.session_id) is None
+    assert await manager.get(old_failed.session_id) is None
+    assert await manager.get(old_cancelled.session_id) is None
+    assert await manager.get(fresh_running.session_id) is not None
+    await manager.close()
+
+
+async def test_purge_old_keeps_recent_terminal_sessions(tmp_path) -> None:
+    """Sessions within the retention window are kept regardless of status."""
+    manager = SessionManager(db_path=str(tmp_path / "sessions.db"))
+
+    recent = await manager.create("https://github.com/a/b/issues/1")
+    recent.status = "completed"
+    await manager.save(recent)
+    # save() already sets updated_at to now, so the session is within the window.
+
+    purged = await manager.purge_old_sessions(retention_days=30)
+    assert purged == 0
+    assert await manager.get(recent.session_id) is not None
+    await manager.close()
+
+
+async def test_purge_old_is_noop_on_memory_store() -> None:
+    """MemoryStore is a no-op for purge (returns 0)."""
+    manager = SessionManager()
+    session = await manager.create("https://github.com/a/b/issues/1")
+    session.status = "completed"
+    session.updated_at = "2020-01-01T00:00:00+00:00"
+    await manager.save(session)
+
+    assert await manager.purge_old_sessions(retention_days=1) == 0
+    assert await manager.get(session.session_id) is not None

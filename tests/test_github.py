@@ -108,6 +108,119 @@ async def test_rate_limit_response_raises_dedicated_error() -> None:
             await github.get_issue("acme", "widget", 1)
 
 
+def _issue_endpoint_handler(success_response: dict | None = None, failure: str | None = None, fail_count: int = 0):
+    """Build a MockTransport handler that serves the three endpoints used by get_issue.
+
+    The first ``fail_count`` calls to the issue endpoint trigger ``failure``
+    (either a 5xx response or a raised transport error); subsequent calls
+    succeed. Repo and comments endpoints always succeed. The returned handler
+    carries a ``state`` dict with ``issue_calls`` for assertion.
+    """
+    success_response = success_response or {"title": "ok", "body": "", "labels": [], "state": "open"}
+    state = {"issue_calls": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/comments" in url:
+            return httpx.Response(200, json=[])
+        if url.endswith("/repos/acme/widget") or url.endswith("/repos/acme/widget/"):
+            return httpx.Response(200, json={"default_branch": "main"})
+        # Issue endpoint
+        state["issue_calls"] += 1
+        if state["issue_calls"] <= fail_count and failure is not None:
+            if failure == "5xx":
+                return httpx.Response(503, json={"message": "service unavailable"})
+            if failure == "timeout":
+                raise httpx.ReadTimeout("read timed out")
+            if failure == "connect":
+                raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json=success_response)
+
+    handler.state = state  # type: ignore[attr-defined]
+    return handler
+
+
+async def test_get_retries_5xx_then_succeeds() -> None:
+    """Transient 5xx responses are retried with exponential back-off."""
+    github = GitHubClient(max_retries=3)
+    handler = _issue_endpoint_handler(failure="5xx", fail_count=2)
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        issue = await github.get_issue("acme", "widget", 1)
+
+    assert handler.state["issue_calls"] == 3  # type: ignore[attr-defined]
+    assert issue.title == "ok"
+
+
+async def test_get_retries_network_error_then_succeeds() -> None:
+    """Transport-level errors (timeout, network) are retried."""
+    github = GitHubClient(max_retries=2)
+    handler = _issue_endpoint_handler(failure="timeout", fail_count=1)
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        issue = await github.get_issue("acme", "widget", 1)
+
+    assert handler.state["issue_calls"] == 2  # type: ignore[attr-defined]
+    assert issue.title == "ok"
+
+
+async def test_get_raises_after_exhausting_retries_on_5xx() -> None:
+    """When all retries are exhausted on 5xx, GitHubError is raised."""
+    from app.github import GitHubError
+
+    github = GitHubClient(max_retries=1)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "internal error"})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubError, match="500"):
+            await github.get_issue("acme", "widget", 1)
+
+
+async def test_get_raises_after_exhausting_retries_on_network_error() -> None:
+    """When all retries are exhausted on network errors, GitHubError is raised."""
+    from app.github import GitHubError
+
+    github = GitHubClient(max_retries=1)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubError, match="failed after"):
+            await github.get_issue("acme", "widget", 1)
+
+
+async def test_get_does_not_retry_4xx_client_errors() -> None:
+    """4xx (non-rate-limit) errors are not retried."""
+    from app.github import GitHubError
+
+    github = GitHubClient(max_retries=3)
+    call_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(404, json={"message": "not found"})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubError, match="404"):
+            await github.get_issue("acme", "widget", 1)
+
+    assert call_count == 1
+
+
 async def test_get_file_skips_oversized_file() -> None:
     issue = IssueData(
         owner="acme",

@@ -119,6 +119,8 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `LOG_FORMAT` | `console` | Log format (`console` or newline-delimited `json`) |
 | `GITHUB_TOKEN` | *(optional)* | GitHub PAT for higher rate limits |
 | `GITHUB_MAX_FILE_BYTES` | `512000` | Skip files larger than this |
+| `GITHUB_TIMEOUT` | `30` | HTTP timeout (seconds) for GitHub API calls |
+| `GITHUB_MAX_RETRIES` | `3` | App-level retries for transient GitHub errors (5xx, network) |
 | `MAX_CANDIDATE_FILES` | `12` | Max distinct source files per investigation |
 | `MAX_PLANNING_PATHS` | `80` | Max paths shown to the model in initial prompt |
 | `MAX_FILE_CHARS` | `16000` | Max retained characters from one file |
@@ -137,6 +139,7 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |
 | `SESSION_DB_PATH` | `data/sessions.db` | SQLite path for persistent sessions; use `:memory:` for ephemeral tests |
 | `SESSION_STALE_AFTER_SECONDS` | `1800` | Mark running sessions older than this heartbeat window as interrupted |
+| `SESSION_RETENTION_DAYS` | `30` | Auto-purge completed/failed/cancelled sessions older than this on startup |
 | `MAX_PR_FILES` | `20` | Maximum number of files allowed in one PR proposal |
 | `MAX_PR_TOTAL_BYTES` | `1000000` | Maximum combined UTF-8 size of proposed file contents |
 

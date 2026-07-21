@@ -257,34 +257,18 @@ class ToolExecutor:
     async def execute(self, name: str, arguments: dict) -> str:
         """Dispatch and execute a tool call by name.
 
-        Uses method-name convention: tool ``foo_bar`` maps to ``_tool_foo_bar``.
-        Falls back to the legacy if/elif for tools not yet migrated.
+        Uses method-name convention: tool ``foo_bar`` maps to ``_tool_foo_bar``,
+        resolved via ``getattr`` so new tools can be added without touching a
+        central dispatch chain.
         """
         self.tools_used.append(name)
+        handler: Callable[..., Coroutine[Any, Any, str]] | None = getattr(self, f"_tool_{name}", None)
+        if handler is None:
+            result = f"Unknown tool: {name}"
+            self._record_observation(name, arguments, result)
+            return result
         try:
-            handler: Callable[..., Coroutine[Any, Any, str]] | None = getattr(self, f"_tool_{name}", None)
-            if handler is not None:
-                result = await handler(**arguments)
-            elif name == "read_file":
-                result = await self._read_file(**arguments)
-            elif name == "list_directory":
-                result = self._list_directory(arguments.get("path", ""))
-            elif name == "search_files":
-                result = self._search_files(arguments["query"])
-            elif name == "search_code":
-                result = await self._search_code(arguments["query"])
-            elif name == "grep_content":
-                result = self._grep_content(arguments["pattern"])
-            elif name == "get_file_history":
-                result = await self._get_file_history(**arguments)
-            elif name == "list_branches":
-                result = await self._list_branches()
-            elif name == "get_file_at_commit":
-                result = await self._get_file_at_commit(**arguments)
-            elif name == "create_pull_request":
-                result = self._create_pull_request_proposal(**arguments)
-            else:
-                result = f"Unknown tool: {name}"
+            result = await handler(**arguments)
         except GitHubFileSkipped as error:
             result = f"File skipped: {error}"
         except Exception as error:
@@ -321,9 +305,9 @@ class ToolExecutor:
         self._investigation_ledger.append(limited)
         self._ledger_chars += len(limited)
 
-    # ── core tools (unchanged) ──────────────────────────────────────
+    # ── core tools ──────────────────────────────────────────────────
 
-    async def _read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
+    async def _tool_read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         path = self._normalize_file_path(path)
         full_content: str | None = None
         if path not in self._file_cache:
@@ -333,6 +317,13 @@ class ToolExecutor:
             if remaining <= 0:
                 return "Source context limit reached; use files already read."
             source = await self._github.get_file(self._issue, path)
+            # 并发预读场景下，await 期间其它协程可能已消耗预算，必须重新校验。
+            # asyncio 单线程模型保证此同步块原子执行，不会再次被协程切换打断。
+            if len(self.files_read) >= self._max_files:
+                return f"File limit reached ({self._max_files}); use files already read."
+            remaining = self._max_total_context_chars - self._cached_chars
+            if remaining <= 0:
+                return "Source context limit reached; use files already read."
             full_content = source.content
             self._file_cache[path] = source.content[: self._max_file_chars][:remaining]
             self.files_read.append(path)
@@ -384,7 +375,7 @@ class ToolExecutor:
         self._tool_context_chars += len(limited)
         return limited
 
-    def _list_directory(self, path: str) -> str:
+    async def _tool_list_directory(self, path: str = "") -> str:
         path = path.strip().strip("/")
         prefix = path + "/" if path else ""
         entries: set[str] = set()
@@ -403,14 +394,14 @@ class ToolExecutor:
         sorted_entries = sorted(entries)[:_MAX_LIST_ENTRIES]
         return "\n".join(sorted_entries)
 
-    def _search_files(self, query: str) -> str:
+    async def _tool_search_files(self, query: str) -> str:
         query_lower = query.lower()
         matches = [p for p in self._tree if query_lower in p.lower()]
         if not matches:
             return f"No files matching '{query}'"
         return "\n".join(matches[:_MAX_SEARCH_RESULTS])
 
-    async def _search_code(self, query: str) -> str:
+    async def _tool_search_code(self, query: str) -> str:
         matches = await self._github.search_code(self._issue, query, limit=_MAX_SEARCH_RESULTS)
         if not matches:
             return f"No repository code matches for '{query}'"
@@ -422,7 +413,7 @@ class ToolExecutor:
             lines.extend(f"  {fragment}" for fragment in fragments)
         return self._limit_tool_context("\n".join(lines))
 
-    def _grep_content(self, pattern: str) -> str:
+    async def _tool_grep_content(self, pattern: str) -> str:
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error:
@@ -440,9 +431,9 @@ class ToolExecutor:
             return f"No matches for '{pattern}' in files read so far. Use read_file first."
         return "\n".join(results)
 
-    # ── new tools ────────────────────────────────────────────────────
+    # ── extended tools ──────────────────────────────────────────────
 
-    async def _get_file_history(self, path: str, max_commits: int = 10) -> str:
+    async def _tool_get_file_history(self, path: str, max_commits: int = 10) -> str:
         path = self._normalize_file_path(path)
         commits = await self._github.get_file_history(self._issue, path, max_commits=max_commits)
         if not commits:
@@ -452,7 +443,7 @@ class ToolExecutor:
             lines.append(f"  {c['sha']} {c['date']} {c['author']}: {c['message']}")
         return "\n".join(lines)
 
-    async def _list_branches(self) -> str:
+    async def _tool_list_branches(self) -> str:
         branches = await self._github.list_branches(self._issue.owner, self._issue.repo)
         if not branches:
             return "No branches found"
@@ -462,7 +453,7 @@ class ToolExecutor:
             lines.append(f"  {b['name']} ({b['sha']}){protected}")
         return "\n".join(lines)
 
-    async def _get_file_at_commit(self, path: str, sha: str) -> str:
+    async def _tool_get_file_at_commit(self, path: str, sha: str) -> str:
         path = self._normalize_file_path(path)
         sha = sha.strip()
         if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
@@ -472,7 +463,7 @@ class ToolExecutor:
         result = "\n".join(f"L{i}: {line}" for i, line in enumerate(lines, 1))
         return self._limit_tool_context(result)
 
-    def _create_pull_request_proposal(self, branch: str, title: str, body: str, changes: list[dict]) -> str:
+    async def _tool_create_pull_request(self, branch: str, title: str, body: str, changes: list[dict]) -> str:
         if not self._settings.write_mode:
             return "Error: Write mode is disabled. Set WRITE_MODE=true to enable PR creation."
 

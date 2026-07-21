@@ -209,20 +209,24 @@ class GitHubClient:
         """Perform a GET request with exponential back-off for transient errors.
 
         Rate-limit responses (403/429) raise immediately without retry.
-        Server errors (5xx) and network failures are retried up to
-        ``self._max_retries`` times with exponential delay.
+        Server errors (5xx) and transport failures (timeouts, network errors,
+        remote protocol errors) are retried up to ``self._max_retries`` times
+        with exponential delay.
         """
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 response = await self._client.get(path, **kwargs)
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 last_exc = exc
                 if attempt < self._max_retries:
                     delay = 0.5 * (2**attempt)
                     logger.warning(
                         "GitHub request %s failed (attempt %d): %s; retrying in %.1fs",
-                        path, attempt + 1, exc, delay,
+                        path,
+                        attempt + 1,
+                        exc,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -239,7 +243,10 @@ class GitHubClient:
                 delay = 0.5 * (2**attempt)
                 logger.warning(
                     "GitHub %s returned %d (attempt %d); retrying in %.1fs",
-                    path, response.status_code, attempt + 1, delay,
+                    path,
+                    response.status_code,
+                    attempt + 1,
+                    delay,
                 )
                 await asyncio.sleep(delay)
                 continue

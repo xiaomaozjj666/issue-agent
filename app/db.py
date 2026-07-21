@@ -80,12 +80,8 @@ async def get_db(path: str) -> aiosqlite.Connection:
 
 async def _ensure_performance_indexes(conn: aiosqlite.Connection) -> None:
     """Create indexes on migration-added columns (safe to call repeatedly)."""
-    await conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at)"
-    )
-    await conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON sessions(status, updated_at)"
-    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON sessions(status, updated_at)")
 
 
 async def _migrate_sessions(conn: aiosqlite.Connection) -> None:

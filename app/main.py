@@ -332,9 +332,7 @@ async def cancel_session(session_id: str, manager: SessionMgr) -> SessionSummary
 
 
 @app.patch("/session/{session_id}", response_model=SessionSummary)
-async def update_session(
-    session_id: str, request: SessionUpdateRequest, manager: SessionMgr
-) -> SessionSummary:
+async def update_session(session_id: str, request: SessionUpdateRequest, manager: SessionMgr) -> SessionSummary:
     session = await manager.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -368,9 +366,7 @@ async def get_session_report(session_id: str, manager: SessionMgr) -> AnalysisRe
 
 
 @app.post("/session/{session_id}/apply-fix", response_model=CreatePRResponse)
-async def apply_fix_route(
-    session_id: str, request: ApplyFixRequest, session_mgr: SessionMgr
-) -> CreatePRResponse:
+async def apply_fix_route(session_id: str, request: ApplyFixRequest, session_mgr: SessionMgr) -> CreatePRResponse:
     return await apply_fix(
         session_id,
         request,

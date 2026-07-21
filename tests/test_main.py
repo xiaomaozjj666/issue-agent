@@ -402,3 +402,13 @@ def test_stream_honors_cooperative_cancellation(monkeypatch) -> None:
     assert detail["status"] == "cancelled"
     assert detail["phase"] == "cancelled"
     app.dependency_overrides.pop(get_session_manager, None)
+
+
+def test_settings_is_frozen_and_rejects_mutation() -> None:
+    """Frozen Settings prevents accidental runtime mutation."""
+    settings = Settings(openai_api_key="test-key")
+    try:
+        settings.openai_model = "different-model"
+        raise AssertionError("Should have raised ValidationError")
+    except Exception as error:
+        assert "frozen" in str(error).lower() or "immutable" in str(error).lower() or "instance" in str(error).lower()

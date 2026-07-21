@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -276,15 +277,15 @@ async def test_read_file_can_fetch_lines_beyond_cached_prefix() -> None:
     assert executor.line_counts["large.py"] == 50
 
 
-def test_create_pull_request_tool_stores_validated_proposal() -> None:
+async def test_create_pull_request_tool_stores_validated_proposal() -> None:
     settings = Settings(openai_api_key="test-key", write_mode=True)
     executor = ToolExecutor(MagicMock(), settings, _make_issue(), ["src/a.py"])
 
-    result = executor._create_pull_request_proposal(
-        "fix/issue-1",
-        "Fix parser",
-        "Fixes the parser failure.",
-        [{"path": "src/a.py", "content": "fixed\n", "message": "fix: parser"}],
+    result = await executor._tool_create_pull_request(
+        branch="fix/issue-1",
+        title="Fix parser",
+        body="Fixes the parser failure.",
+        changes=[{"path": "src/a.py", "content": "fixed\n", "message": "fix: parser"}],
     )
 
     assert "PR PROPOSAL" in result
@@ -296,15 +297,15 @@ def test_create_pull_request_tool_stores_validated_proposal() -> None:
     }
 
 
-def test_create_pull_request_tool_rejects_unsafe_paths() -> None:
+async def test_create_pull_request_tool_rejects_unsafe_paths() -> None:
     settings = Settings(openai_api_key="test-key", write_mode=True)
     executor = ToolExecutor(MagicMock(), settings, _make_issue(), [])
 
-    result = executor._create_pull_request_proposal(
-        "fix/issue-1",
-        "Fix parser",
-        "Fixes the parser failure.",
-        [{"path": "../secret", "content": "x", "message": "fix: parser"}],
+    result = await executor._tool_create_pull_request(
+        branch="fix/issue-1",
+        title="Fix parser",
+        body="Fixes the parser failure.",
+        changes=[{"path": "../secret", "content": "x", "message": "fix: parser"}],
     )
 
     assert result.startswith("Error:")
@@ -373,3 +374,76 @@ def test_parse_tool_call_none_arguments() -> None:
     name, args = parse_tool_call(tc)
     assert name == "list_directory"
     assert args == {}
+
+
+async def test_dispatch_resolves_via_tool_name_convention() -> None:
+    """All registered tools are reachable through the _tool_<name> convention.
+
+    This guards against regressions where a tool method is renamed without
+    updating the dispatch table — the getattr lookup would return None and
+    the tool would silently become 'Unknown tool'.
+    """
+    github = _make_github({"src/a.py": "content"})
+    tree = ["src/a.py"]
+    executor = ToolExecutor(github, _SETTINGS, _make_issue(), tree)
+
+    for tool_name in (
+        "read_file",
+        "list_directory",
+        "search_files",
+        "grep_content",
+        "get_file_history",
+        "list_branches",
+        "get_file_at_commit",
+    ):
+        handler = getattr(executor, f"_tool_{tool_name}", None)
+        assert handler is not None, f"Tool '{tool_name}' has no _tool_ method"
+
+
+async def test_parallel_preload_respects_total_context_budget() -> None:
+    """Concurrent _tool_read_file calls must not collectively exceed max_total_context_chars.
+
+    Before the re-check fix, all parallel tasks read the same stale _cached_chars
+    and could overshoot the budget by up to max_files * max_file_chars.
+    """
+    file_contents = {f"src/file_{i}.py": "x" * 2000 for i in range(8)}
+    github = _make_github(file_contents)
+    tree = list(file_contents.keys())
+    executor = ToolExecutor(
+        github,
+        _SETTINGS,
+        _make_issue(),
+        tree,
+        max_files=8,
+        max_file_chars=2000,
+        max_total_context_chars=5000,
+    )
+
+    await asyncio.gather(*[executor.execute("read_file", {"path": path}) for path in tree])
+
+    total_cached = sum(len(content) for content in executor.file_cache.values())
+    assert total_cached <= 5000, f"Budget exceeded: {total_cached} > 5000"
+    assert len(executor.files_read) <= 8
+
+
+async def test_parallel_preload_respects_file_count_limit() -> None:
+    """Concurrent reads must not overshoot the max_files limit."""
+    file_contents = {f"src/f{i}.py": "content" for i in range(10)}
+    github = _make_github(file_contents)
+    tree = list(file_contents.keys())
+    executor = ToolExecutor(
+        github,
+        _SETTINGS,
+        _make_issue(),
+        tree,
+        max_files=3,
+        max_file_chars=100,
+        max_total_context_chars=10000,
+    )
+
+    results = await asyncio.gather(*[executor.execute("read_file", {"path": path}) for path in tree])
+
+    cached_count = len(executor.files_read)
+    assert cached_count <= 3, f"File count exceeded: {cached_count} > 3"
+    limit_reached_count = sum(1 for r in results if "File limit reached" in r)
+    assert limit_reached_count == 7
