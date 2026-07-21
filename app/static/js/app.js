@@ -395,9 +395,102 @@
     document.querySelector(".conversation-label").textContent = t("conversation_label");
     if (showWelcome) {
       document.getElementById("issueUrl").value = "";
-      addMsg("system", t("welcome"));
+      renderHero();
     }
     updateBackButton();
+  }
+
+  // 渲染高级 Hero 欢迎页：全屏可交互背景式设计
+  // 替代原简陋的 system 消息气泡，作为初始空状态的视觉锚点
+  function renderHero() {
+    const container = document.getElementById("messages");
+    const hero = document.createElement("div");
+    hero.className = "msg hero";
+
+    // 三个示例案例：点击后填充 URL 并自动开始分析
+    const examples = [
+      { repo: t("hero_example_1_repo"), desc: t("hero_example_1_desc"), url: "https://github.com/psf/requests/issues/6102" },
+      { repo: t("hero_example_2_repo"), desc: t("hero_example_2_desc"), url: "https://github.com/python/cpython/issues/118658" },
+      { repo: t("hero_example_3_repo"), desc: t("hero_example_3_desc"), url: "https://github.com/pallets/flask/issues/5680" },
+    ];
+
+    const stepsHtml = [
+      { label: t("hero_step1_label"), title: t("hero_step1_title"), desc: t("hero_step1_desc") },
+      { label: t("hero_step2_label"), title: t("hero_step2_title"), desc: t("hero_step2_desc") },
+      { label: t("hero_step3_label"), title: t("hero_step3_title"), desc: t("hero_step3_desc") },
+    ]
+      .map(function (s) {
+        return (
+          `<div class="hero-step">` +
+          `<span class="hero-step-label">${IA.escapeHtml(s.label)}</span>` +
+          `<div class="hero-step-title">${IA.escapeHtml(s.title)}</div>` +
+          `<p class="hero-step-desc">${IA.escapeHtml(s.desc)}</p>` +
+          `</div>`
+        );
+      })
+      .join("");
+
+    const examplesHtml = examples
+      .map(function (ex, idx) {
+        return (
+          `<button type="button" class="hero-example" data-hero-url="${IA.escapeAttr(ex.url)}">` +
+          `<span class="hero-example-repo">${IA.escapeHtml(ex.repo)}</span>` +
+          `<span class="hero-example-desc">${IA.escapeHtml(ex.desc)}</span>` +
+          `<span class="hero-example-cta">${IA.escapeHtml(t("hero_start_button"))} →</span>` +
+          `</button>`
+        );
+      })
+      .join("");
+
+    hero.innerHTML =
+      `<div class="hero-inner">` +
+      // 标题区
+      `<header class="hero-head">` +
+      `<span class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>GitHub Issue Agent</span>` +
+      `<h1 class="hero-title">${IA.escapeHtml(t("hero_title"))}` +
+      `<span class="hero-title-accent">${IA.escapeHtml(t("hero_title_accent"))}</span></h1>` +
+      `<p class="hero-subtitle">${IA.escapeHtml(t("hero_subtitle"))}</p>` +
+      `</header>` +
+      // 三步流程卡片
+      `<section class="hero-steps">${stepsHtml}</section>` +
+      // 示例案例区
+      `<section class="hero-examples">` +
+      `<div class="hero-examples-head">` +
+      `<span class="hero-examples-title">${IA.escapeHtml(t("hero_examples_title"))}</span>` +
+      `<span class="hero-examples-desc">${IA.escapeHtml(t("hero_examples_desc"))}</span>` +
+      `</div>` +
+      `<div class="hero-example-list">${examplesHtml}</div>` +
+      `</section>` +
+      // 主 CTA 按钮：聚焦到 URL 输入框
+      `<div class="hero-cta">` +
+      `<button type="button" class="hero-cta-button" id="hero-cta-btn">` +
+      IA.svgIcon("plus") +
+      `<span>${IA.escapeHtml(t("hero_start_button"))}</span>` +
+      `</button>` +
+      `</div>` +
+      `</div>`;
+
+    container.appendChild(hero);
+
+    // 绑定示例案例点击：填充 URL 并自动开始分析
+    hero.querySelectorAll(".hero-example").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const url = btn.dataset.heroUrl;
+        if (!url) return;
+        document.getElementById("issueUrl").value = url;
+        analyze();
+      });
+    });
+
+    // 主 CTA：聚焦 URL 输入框
+    const ctaBtn = hero.querySelector("#hero-cta-btn");
+    if (ctaBtn) {
+      ctaBtn.addEventListener("click", function () {
+        const input = document.getElementById("issueUrl");
+        input.focus();
+        input.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
   }
 
   function addMsg(role, content, cls) {

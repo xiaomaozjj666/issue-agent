@@ -67,6 +67,7 @@
 
   /* 字号 */
   --text-xs: 12px;
+  --text-sm: 13px;
   --text-base: 14px;
   --text-md: 16px;
   --text-lg: 20px;
@@ -852,6 +853,385 @@ a:hover {
   color: var(--muted);
   text-align: center;
   font-size: var(--text-xs);
+}
+
+/* ── 欢迎页（空状态 Hero）── 高级全屏可交互背景式设计 ── */
+.msg.hero {
+  position: relative;
+  align-self: stretch;
+  max-width: none;
+  margin: calc(var(--space-6) * -1) calc(clamp(20px, 5vw, 64px) * -1) calc(var(--space-8) * -1);
+  padding: var(--space-10) clamp(20px, 5vw, 64px) var(--space-10);
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(900px 480px at 18% -10%, var(--accent-muted) 0%, transparent 60%),
+    radial-gradient(720px 420px at 95% 0%, rgba(16, 185, 129, 0.16) 0%, transparent 55%),
+    radial-gradient(640px 360px at 50% 120%, rgba(245, 158, 11, 0.10) 0%, transparent 60%),
+    var(--bg);
+  color: var(--fg);
+  text-align: left;
+  overflow: hidden;
+  isolation: isolate;
+  animation: heroFadeIn var(--dur-base) var(--ease-out);
+}
+
+@keyframes heroFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 装饰性网格：用两层渐变模拟细密网格，营造工程师工具感 */
+.msg.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(var(--border-muted) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-muted) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: -1px -1px;
+  opacity: 0.35;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 0%, transparent 75%);
+  pointer-events: none;
+}
+
+/* 顶部辉光：模拟聚光灯，强化标题区视觉焦点 */
+.msg.hero::after {
+  content: "";
+  position: absolute;
+  top: -120px;
+  left: 50%;
+  width: 640px;
+  height: 240px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, var(--accent-muted) 0%, transparent 70%);
+  filter: blur(40px);
+  opacity: 0.6;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* Hero 标题区 */
+.hero-head {
+  text-align: center;
+}
+
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--accent-muted);
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero-eyebrow-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: heroPulse 2s ease-in-out infinite;
+}
+
+@keyframes heroPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+.hero-title {
+  margin: 0;
+  color: var(--fg-strong);
+  font-size: clamp(28px, 4.4vw, 44px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.hero-title-accent {
+  display: block;
+  margin-top: 4px;
+  background: linear-gradient(120deg, var(--accent) 0%, var(--green) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.hero-subtitle {
+  margin: var(--space-4) auto 0;
+  max-width: 680px;
+  color: var(--muted);
+  font-size: clamp(14px, 1.6vw, 16px);
+  line-height: 1.7;
+}
+
+/* 三步流程卡片 */
+.hero-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.hero-step {
+  position: relative;
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--card) 0%, var(--canvas-inset) 100%);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-base) var(--ease-out),
+              border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+  overflow: hidden;
+}
+
+.hero-step::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.hero-step:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-muted);
+  box-shadow: var(--shadow-medium);
+}
+
+.hero-step:hover::before {
+  opacity: 1;
+}
+
+.hero-step-label {
+  display: inline-block;
+  padding: 2px 10px;
+  margin-bottom: var(--space-3);
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.hero-step-title {
+  margin-bottom: var(--space-2);
+  color: var(--fg-strong);
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hero-step-desc {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/* 示例案例区 */
+.hero-examples {
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-examples-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.hero-examples-title {
+  color: var(--fg-strong);
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hero-examples-desc {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.hero-example-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.hero-example {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--canvas-inset);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--dur-base) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-standard),
+              background var(--dur-fast) var(--ease-standard),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+
+.hero-example:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  box-shadow: var(--shadow-medium);
+}
+
+.hero-example:active {
+  transform: translateY(0);
+}
+
+.hero-example-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-strong);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.hero-example-repo::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--green) 100%);
+  flex: 0 0 8px;
+}
+
+.hero-example-desc {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.hero-example-cta {
+  margin-top: 4px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out);
+}
+
+.hero-example:hover .hero-example-cta {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* 主 CTA 按钮：复用 primary-action 样式但放大 */
+.hero-cta {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-2);
+}
+
+.hero-cta-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--green) 0%, var(--green-emphasis) 100%);
+  color: #ffffff;
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.32);
+  transition: transform var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out),
+              filter var(--dur-fast) var(--ease-standard);
+}
+
+.hero-cta-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(16, 185, 129, 0.4);
+  filter: brightness(1.05);
+}
+
+.hero-cta-button:active {
+  transform: translateY(0);
+}
+
+.hero-cta-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 浅色主题下 Hero 配色微调 */
+[data-theme="light"] .msg.hero {
+  background:
+    radial-gradient(900px 480px at 18% -10%, rgba(59, 130, 246, 0.18) 0%, transparent 60%),
+    radial-gradient(720px 420px at 95% 0%, rgba(16, 185, 129, 0.14) 0%, transparent 55%),
+    radial-gradient(640px 360px at 50% 120%, rgba(245, 158, 11, 0.08) 0%, transparent 60%),
+    var(--bg);
+}
+
+[data-theme="light"] .msg.hero::before {
+  opacity: 0.5;
+}
+
+[data-theme="light"] .msg.hero::after {
+  opacity: 0.4;
+}
+
+/* 响应式：窄屏下压缩间距 */
+@media (max-width: 900px) {
+  .msg.hero {
+    padding: var(--space-8) var(--space-4) var(--space-8);
+  }
+  .hero-steps {
+    grid-template-columns: 1fr;
+  }
+  .hero-example-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 .msg.user {
