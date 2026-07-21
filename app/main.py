@@ -6,6 +6,7 @@ HTTP concerns: routing, status codes, SSE streaming, and dependency injection.
 """
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -285,6 +286,59 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr) -> ChatResponse:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await agent.aclose()
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> StreamingResponse:
+    """Stream chat reply token-by-token via Server-Sent Events.
+
+    SSE event shapes (``data: <json>\\n\\n``):
+        {"type": "delta", "content": "..."}        # incremental content chunk
+        {"type": "tool_call", "name": "..."}       # tool invocation notification
+        {"type": "done", "reply": "...", "tools_used": [...]}
+        {"type": "error", "message": "..."}
+
+    Only the existing-session branch is supported here. New-session-via-chat
+    falls back to the non-streaming ``POST /chat`` endpoint.
+    """
+    if not request.session_id:
+        raise HTTPException(status_code=422, detail="session_id is required for streaming chat")
+    session = await session_mgr.get(request.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Restore the archived session before continuing")
+
+    agent = IssueAgent(get_settings())
+    session.status = "running"
+    session.phase = "chatting"
+    session.error_message = None
+    await session_mgr.save(session)
+
+    async def event_generator() -> AsyncIterator[str]:
+        started_at = monotonic()
+        try:
+            async for event in agent.chat_stream(session, request.message):
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            # Persist final state once the stream completes successfully
+            session.status = "completed"
+            session.phase = "completed"
+            session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
+            await session_mgr.save(session)
+        except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
+            logger.exception("chat stream failed for session %s", session.session_id)
+            await mark_session_failed(session_mgr, session, exc)
+            err_payload = json.dumps({"type": "error", "message": str(exc)[:500]}, ensure_ascii=False)
+            yield f"data: {err_payload}\n\n"
+        finally:
+            await agent.aclose()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/sessions", response_model=list[SessionSummary])

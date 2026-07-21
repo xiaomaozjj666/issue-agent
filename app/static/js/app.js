@@ -43,9 +43,26 @@
     localStorage.setItem("ds-theme", next);
     const themeBtn = document.getElementById("theme-toggle-btn");
     if (themeBtn) themeBtn.setAttribute("aria-pressed", String(next === "light"));
-    // 主题切换后，若报告面板已展开则重渲染图表以同步配色
+    // 主题切换后，若报告面板已展开则仅刷新图表配色
+    // 不重建报告 DOM（避免丢失滚动位置、焦点、hover 状态）
     if (report && document.getElementById("main").classList.contains("report-open")) {
-      renderReport(report);
+      refreshReportCharts();
+    }
+  }
+
+  // 仅刷新报告内 ECharts 图表实例，不重建整个 DOM
+  // 用于主题切换等仅需更新配色的场景，保留 #report 滚动位置和用户当前 focus/hover 状态
+  function refreshReportCharts() {
+    disposeReportCharts();
+    const evidenceEl = document.getElementById("report-evidence-chart");
+    if (evidenceEl) {
+      const chart = renderEvidenceChart(evidenceEl, report);
+      if (chart) reportChartInstances.push(chart);
+    }
+    const confidenceEl = document.getElementById("report-confidence-chart");
+    if (confidenceEl) {
+      const chart = renderConfidenceRadar(confidenceEl, report);
+      if (chart) reportChartInstances.push(chart);
     }
   }
 
@@ -163,7 +180,27 @@
 
     if (!sessions.length) {
       const emptyKey = showArchived ? "history_empty_archive" : "history_empty_active";
-      list.innerHTML = `<div class="history-empty">${t(emptyKey)}</div>`;
+      if (showArchived) {
+        list.innerHTML = `<div class="history-empty">${t(emptyKey)}</div>`;
+      } else {
+        // 空状态 CTA：引导用户开始第一次分析
+        list.innerHTML =
+          `<div class="history-empty-cta">` +
+            `<div class="history-empty-cta-icon">${IA.svgIcon("plus")}</div>` +
+            `<div class="history-empty-cta-text">${IA.escapeHtml(t("history_empty_cta_text"))}</div>` +
+            `<button class="history-empty-cta-btn" type="button" id="empty-cta-btn">${IA.svgIcon("plus")}<span>${IA.escapeHtml(t("history_empty_cta_btn"))}</span></button>` +
+          `</div>`;
+        const ctaBtn = document.getElementById("empty-cta-btn");
+        if (ctaBtn) {
+          ctaBtn.addEventListener("click", function () {
+            const issueUrl = document.getElementById("issueUrl");
+            if (issueUrl) {
+              issueUrl.focus();
+              issueUrl.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          });
+        }
+      }
       return;
     }
 
@@ -834,6 +871,8 @@
       body.innerHTML = renderMarkdown(content);
       enhanceCodeBlocks(body);
       m.appendChild(body);
+      // action 按钮 + 时间戳
+      appendMsgActions(m, content);
     } else {
       m.textContent = content;
     }
@@ -841,6 +880,41 @@
     // H5 修复：仅在用户已在底部附近时自动滚动，避免打断阅读
     scrollToBottomIfNear(d, 80);
     return m;
+  }
+
+  // assistant 消息底部 action 行：复制全文 + 时间戳
+  function appendMsgActions(msgEl, content) {
+    const actions = document.createElement("div");
+    actions.className = "msg-actions";
+
+    // 复制全文按钮
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "msg-action-btn";
+    copyBtn.setAttribute("aria-label", t("copy_text"));
+    copyBtn.innerHTML = IA.svgIcon("copy");
+    copyBtn.addEventListener("click", function () {
+      IA.copyToClipboard(content).then(function (ok) {
+        if (ok) {
+          copyBtn.classList.add("copied");
+          copyBtn.innerHTML = IA.svgIcon("check");
+          setTimeout(function () {
+            copyBtn.classList.remove("copied");
+            copyBtn.innerHTML = IA.svgIcon("copy");
+          }, 1500);
+        }
+      });
+    });
+    actions.appendChild(copyBtn);
+
+    // 时间戳
+    const timestamp = document.createElement("span");
+    timestamp.className = "msg-timestamp";
+    const now = new Date();
+    timestamp.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    actions.appendChild(timestamp);
+
+    msgEl.appendChild(actions);
   }
 
   function addReportPreview(data) {
@@ -1751,7 +1825,9 @@
     if (chatInProgress) return;
     const inp = document.getElementById("chatInput");
     const msg = (messageOverride !== undefined ? messageOverride : inp.value).trim();
-    if (!msg || !sessionId) return;
+    if (!msg || !sessionId) {
+      return;
+    }
     chatInProgress = true;
     inp.value = "";
     autoResizeTextarea(inp);
@@ -1785,28 +1861,163 @@
       }
     };
     if (stopBtn) stopBtn.addEventListener("click", onStop, { once: true });
+
+    // assistant 消息容器：首个 delta 抵达时 lazy 创建（替换骨架屏）
+    let assistantMsg = null;
+    let assistantBody = null;
+    let assistantContent = "";
+    let toolsUsed = [];
+    let finalized = false;
+
+    function ensureAssistantMsg() {
+      if (assistantMsg) return;
+      if (skeletonMsg.parentNode) skeletonMsg.remove();
+      assistantMsg = document.createElement("div");
+      assistantMsg.className = "msg assistant";
+      assistantMsg.dataset.speaker = t("speaker_agent");
+      assistantBody = document.createElement("div");
+      assistantBody.className = "msg-body markdown-body";
+      assistantMsg.appendChild(assistantBody);
+      // 打字光标
+      const cursor = document.createElement("span");
+      cursor.className = "typewriter-cursor";
+      cursor.setAttribute("aria-hidden", "true");
+      assistantBody.appendChild(cursor);
+      messagesEl.appendChild(assistantMsg);
+      scrollToBottomIfNear(messagesEl, 80);
+    }
+
+    function appendDelta(text) {
+      ensureAssistantMsg();
+      assistantContent += text;
+      // 重新渲染 markdown + 追加光标
+      assistantBody.innerHTML = renderMarkdown(assistantContent);
+      const cursor = document.createElement("span");
+      cursor.className = "typewriter-cursor";
+      cursor.setAttribute("aria-hidden", "true");
+      assistantBody.appendChild(cursor);
+      scrollToBottomIfNear(messagesEl, 80);
+    }
+
+    function finalizeAssistant() {
+      if (finalized) return;
+      finalized = true;
+      if (!assistantMsg) {
+        // 没收到任何 delta（极端情况），创建一个空消息占位
+        ensureAssistantMsg();
+      }
+      assistantBody.innerHTML = renderMarkdown(assistantContent);
+      enhanceCodeBlocks(assistantBody);
+      appendMsgActions(assistantMsg, assistantContent);
+      scrollToBottomIfNear(messagesEl, 80);
+    }
+
+    // firstEventReceived 需在 try 块外声明，catch 块也要访问它判断是否清理 progressEl
+    let firstEventReceived = false;
     try {
-      const resp = await fetch("/chat", {
+      const resp = await fetch("/chat/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         body: JSON.stringify({ session_id: sessionId, message: msg }),
         signal: chatAbortController.signal,
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || t("error_unable_to_continue"));
-      // 移除骨架屏，清空 progress
-      skeletonMsg.remove();
-      progressEl.textContent = "";
-      // 流式打字效果：逐字渲染让视觉接近主流 agent 体验
-      await typewriterAddMsg("assistant", data.reply);
-      if (data.tools_used && data.tools_used.length) addMsg("system", t("tools_used_label") + data.tools_used.join(", "));
-      loadSessions();
+      if (!resp.ok) {
+        let detail = "";
+        try { detail = (await resp.json()).detail || ""; } catch (e) { /* ignore */ }
+        throw new Error(detail || t("error_unable_to_continue"));
+      }
+      // SSE 事件处理：解析单个 data: 事件并分发到 delta/tool_call/done/error
+      function processSseEvent(event) {
+        if (!firstEventReceived) {
+          firstEventReceived = true;
+          progressEl.textContent = "";
+        }
+        if (event.type === "delta") {
+          appendDelta(event.content || "");
+        } else if (event.type === "tool_call") {
+          if (toolsUsed.indexOf(event.name) === -1) toolsUsed.push(event.name);
+          const toolHint = document.createElement("div");
+          toolHint.className = "msg system tool-hint";
+          toolHint.textContent = t("tool_call_label") + ": " + event.name;
+          messagesEl.appendChild(toolHint);
+          scrollToBottomIfNear(messagesEl, 80);
+        } else if (event.type === "done") {
+          if (event.tools_used && event.tools_used.length) {
+            toolsUsed = event.tools_used;
+          }
+          if (event.reply && !assistantContent) {
+            assistantContent = event.reply;
+          }
+          finalizeAssistant();
+          if (toolsUsed.length) {
+            addMsg("system", t("tools_used_label") + toolsUsed.join(", "));
+          }
+          loadSessions();
+        } else if (event.type === "error") {
+          throw new Error(event.message || t("error_unable_to_continue"));
+        }
+      }
+
+      // 从 buffer 中解析所有完整 SSE 事件（以 \n\n 分隔）
+      function drainBuffer(buf) {
+        let remaining = buf;
+        let sepIdx;
+        while ((sepIdx = remaining.indexOf("\n\n")) !== -1) {
+          const rawEvent = remaining.slice(0, sepIdx);
+          remaining = remaining.slice(sepIdx + 2);
+          const dataLines = rawEvent
+            .split("\n")
+            .filter(function (line) { return line.startsWith("data:"); })
+            .map(function (line) { return line.slice(5).replace(/^ /, ""); });
+          if (!dataLines.length) continue;
+          const dataStr = dataLines.join("\n");
+          let event;
+          try {
+            event = JSON.parse(dataStr);
+          } catch (e) {
+            continue;
+          }
+          processSseEvent(event);
+        }
+        return remaining;
+      }
+
+      // SSE 流式解析：fetch + ReadableStream + TextDecoder
+      // 不用 EventSource，因为 EventSource 不支持 POST + body
+      // 降级路径：resp.body 为 null 时（部分环境不支持 streaming）用 resp.text() 一次性处理
+      if (!resp.body) {
+        const fullText = await resp.text();
+        drainBuffer(fullText + "\n\n");
+        if (!finalized && assistantContent) finalizeAssistant();
+      } else {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          buffer = drainBuffer(buffer);
+        }
+        // 流结束但未收到 done 事件（网络中断等兜底）
+        if (!finalized && assistantContent) {
+          finalizeAssistant();
+        }
+      }
     } catch (e) {
-      skeletonMsg.remove();
-      progressEl.textContent = "";
+      if (skeletonMsg.parentNode) skeletonMsg.remove();
+      if (!firstEventReceived) progressEl.textContent = "";
       if (stopped || e.name === "AbortError") {
+        // 用户主动停止：保留已收到的部分内容
+        if (assistantContent) {
+          finalizeAssistant();
+        }
         addMsg("system", t("chat_stopped"));
       } else {
+        // 其他错误：保留已收到的部分内容，再追加错误提示
+        if (assistantContent) {
+          finalizeAssistant();
+        }
         lastFailedChat = msg;
         addErrorWithRetry(t("error_prefix") + e.message);
       }
@@ -1820,62 +2031,6 @@
       setChatDisabled(false);
       inp.focus();
     }
-  }
-
-  // 流式打字效果：将完整文本按 token 切片逐段追加渲染，
-  // 视觉上接近主流 agent 的逐字输出体验。
-  // 后端目前是整段返回，这里做前端打字模拟；后端真流式可作为后续优化。
-  async function typewriterAddMsg(role, content) {
-    const d = document.getElementById("messages");
-    const m = document.createElement("div");
-    m.className = "msg " + role;
-    m.dataset.speaker = t("speaker_agent");
-    const body = document.createElement("div");
-    body.className = "msg-body markdown-body";
-    m.appendChild(body);
-    // 打字光标
-    const cursor = document.createElement("span");
-    cursor.className = "typewriter-cursor";
-    cursor.setAttribute("aria-hidden", "true");
-    body.appendChild(cursor);
-    d.appendChild(m);
-    scrollToBottomIfNear(d, 80);
-
-    // 按字符切片，每帧渲染 3-5 个字符，约 60-100ms 一段
-    // 长 reply 总时长控制在 1.5-3s；太短直接全量渲染
-    const len = content.length;
-    if (len <= 40) {
-      body.innerHTML = renderMarkdown(content);
-      enhanceCodeBlocks(body);
-      return;
-    }
-    const totalDuration = Math.min(2500, Math.max(800, len * 8));
-    const frameInterval = 30;
-    const charsPerFrame = Math.max(1, Math.ceil(len / (totalDuration / frameInterval)));
-    let pos = 0;
-    return new Promise(function (resolve) {
-      function step() {
-        pos = Math.min(len, pos + charsPerFrame);
-        // 渲染已消费的部分 + 光标
-        const partial = content.substring(0, pos);
-        body.innerHTML = renderMarkdown(partial);
-        // 重新追加光标
-        const newCursor = document.createElement("span");
-        newCursor.className = "typewriter-cursor";
-        newCursor.setAttribute("aria-hidden", "true");
-        body.appendChild(newCursor);
-        scrollToBottomIfNear(d, 80);
-        if (pos < len) {
-          window.setTimeout(step, frameInterval);
-        } else {
-          // 完成：移除光标，enhance 代码块（只在最终一次性 enhance 避免重复）
-          body.innerHTML = renderMarkdown(content);
-          enhanceCodeBlocks(body);
-          resolve();
-        }
-      }
-      window.setTimeout(step, frameInterval);
-    });
   }
 
   function setChatDisabled(disabled) {
@@ -2056,6 +2211,27 @@
     });
     document.getElementById("dialog-cancel-btn").addEventListener("click", closeSessionDialog);
     document.getElementById("session-dialog-form").addEventListener("submit", submitSessionDialog);
+
+    // 全局快捷键：Cmd/Ctrl+K 聚焦搜索，Cmd/Ctrl+Enter 发送 chat
+    document.addEventListener("keydown", function (event) {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) return;
+      if (event.key === "k" || event.key === "K") {
+        event.preventDefault();
+        const search = document.getElementById("history-search");
+        if (search) {
+          search.focus();
+          search.select();
+        }
+      } else if (event.key === "Enter") {
+        // Cmd/Ctrl+Enter 在任何位置都触发发送（仅当 chat 可用时）
+        const inputBar = document.getElementById("input-bar");
+        if (inputBar && inputBar.style.display !== "none" && !chatInProgress) {
+          event.preventDefault();
+          chat();
+        }
+      }
+    });
 
     // 事件委托：会话列表点击
     document.getElementById("history-list").addEventListener("click", function (event) {

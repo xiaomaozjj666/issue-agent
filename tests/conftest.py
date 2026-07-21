@@ -42,11 +42,17 @@ class _FakeResponse:
 class _FakeStreamChunk:
     """单个 SSE chunk：模拟 OpenAI stream=True 模式下的 delta。"""
 
-    def __init__(self, content: str | None = None, reasoning_content: str | None = None) -> None:
+    def __init__(
+        self,
+        content: str | None = None,
+        reasoning_content: str | None = None,
+        tool_calls: list | None = None,
+    ) -> None:
         delta = SimpleNamespace(
             content=content,
             reasoning_content=reasoning_content,
             reasoning=None,
+            tool_calls=tool_calls,
         )
         self.choices = [SimpleNamespace(delta=delta, finish_reason="stop")]
 
@@ -90,6 +96,7 @@ class _FakeCompletions:
             chunk = _FakeStreamChunk(
                 content=message.content,
                 reasoning_content=getattr(message, "reasoning_content", None),
+                tool_calls=message.tool_calls,
             )
             return _FakeStream([chunk])
         return response

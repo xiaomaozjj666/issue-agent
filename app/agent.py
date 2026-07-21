@@ -284,6 +284,149 @@ class IssueAgent:
         async with session.lock:
             return await self._chat(session, message)
 
+    async def chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
+        """Stream chat reply token-by-token via SSE-friendly events.
+
+        Yields dicts with shapes:
+            {"type": "delta", "content": str}        # incremental content chunk
+            {"type": "tool_call", "name": str}       # tool invocation notification
+            {"type": "done", "reply": str, "tools_used": list[str]}
+            {"type": "error", "message": str}
+
+        Lock is held only across state mutations, not across the LLM stream itself,
+        matching the chat() semantics. Errors are surfaced as ``error`` events so
+        the SSE consumer can render them inline without aborting the connection.
+        """
+        async with session.lock:
+            try:
+                async for event in self._chat_stream(session, message):
+                    yield event
+            except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
+                logger.exception("chat_stream failed for session %s", session.session_id)
+                yield {"type": "error", "message": str(exc)[:500]}
+
+    async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
+        if session.issue is None:
+            raise ValueError("Session not initialized")
+
+        tools = get_tool_definitions(self.settings)
+        async with GitHubClient(
+            self.settings.github_token,
+            max_file_bytes=self.settings.github_max_file_bytes,
+            timeout=self.settings.github_timeout,
+            max_retries=self.settings.github_max_retries,
+        ) as github:
+            executor = self._build_executor(
+                github,
+                session.issue,
+                session.tree,
+                file_cache=session.file_cache,
+                files_read=session.files_read,
+            )
+
+            investigation_context = _build_investigation_context(session)
+            session.messages.append({"role": "user", "content": message})
+            messages = [
+                {"role": "system", "content": get_chat_system_prompt()},
+                {"role": "system", "content": investigation_context},
+                *session.messages,
+            ]
+
+            for _ in range(self.settings.max_agent_iterations):
+                session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
+                collected_content_parts: list[str] = []
+                # 工具调用 chunk 按 index 累积：{index: {"id": ..., "name": ..., "arguments": "..."}}
+                tool_call_buffers: dict[int, dict[str, str]] = {}
+
+                stream = await self._call_llm_stream(
+                    messages,
+                    tools=tools,
+                    max_tokens=self.settings.max_chat_tokens,
+                )
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    # 只透传最终回复内容，不展示 reasoning_content（思考过程）
+                    if delta.content:
+                        collected_content_parts.append(delta.content)
+                        yield {"type": "delta", "content": delta.content}
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index if tc.index is not None else 0
+                            entry = tool_call_buffers.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                            if tc.id:
+                                entry["id"] = tc.id
+                            fn = getattr(tc, "function", None)
+                            if fn is not None:
+                                if fn.name:
+                                    entry["name"] = fn.name
+                                if fn.arguments:
+                                    entry["arguments"] += fn.arguments
+
+                collected_content = "".join(collected_content_parts)
+                serialized: dict = {"role": "assistant", "content": collected_content}
+                ordered_tool_calls = [tool_call_buffers[i] for i in sorted(tool_call_buffers)]
+                if ordered_tool_calls:
+                    serialized["tool_calls"] = [
+                        {
+                            "id": entry["id"],
+                            "type": "function",
+                            "function": {"name": entry["name"], "arguments": entry["arguments"]},
+                        }
+                        for entry in ordered_tool_calls
+                        if entry["id"]
+                    ]
+                messages.append(serialized)
+                session.messages.append(serialized)
+
+                if not ordered_tool_calls:
+                    # 没有工具调用：回复完成
+                    session.file_cache = executor.file_cache
+                    session.files_read = executor.files_read
+                    history_budget = self.settings.max_total_context_chars - sum(
+                        len(content) for content in session.file_cache.values()
+                    )
+                    _trim_session_messages(session.messages, max(history_budget, 0))
+                    yield {
+                        "type": "done",
+                        "reply": collected_content,
+                        "tools_used": executor.tools_used,
+                    }
+                    return
+
+                # 有工具调用：依次执行，工具结果回灌到 messages
+                for entry in ordered_tool_calls:
+                    if not entry["id"]:
+                        continue
+                    name = entry["name"]
+                    try:
+                        args = json.loads(entry["arguments"]) if entry["arguments"] else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    yield {"type": "tool_call", "name": name}
+                    result = await executor.execute(name, args)
+                    session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
+                    session.metrics["files_read"] = len(executor.files_read)
+                    if executor.pr_proposal is not None:
+                        session.pending_pr = executor.pr_proposal
+                    tool_msg = {"role": "tool", "tool_call_id": entry["id"], "content": result}
+                    messages.append(tool_msg)
+                    session.messages.append(tool_msg)
+
+            # 达到迭代上限
+            session.file_cache = executor.file_cache
+            session.files_read = executor.files_read
+            history_budget = self.settings.max_total_context_chars - sum(
+                len(content) for content in session.file_cache.values()
+            )
+            _trim_session_messages(session.messages, max(history_budget, 0))
+            yield {
+                "type": "done",
+                "reply": t("depth_limit"),
+                "tools_used": executor.tools_used,
+            }
+
     async def _chat(self, session: Session, message: str) -> ChatResponse:
         if session.issue is None:
             raise ValueError("Session not initialized")
@@ -419,6 +562,32 @@ class IssueAgent:
             **chat_request_options(self.settings),
             "messages": messages,
             "max_tokens": max_tokens or self.settings.max_output_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        return await client.chat.completions.create(**kwargs)
+
+    async def _call_llm_stream(
+        self,
+        messages: list[dict],
+        *,
+        tools: list | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Stream chat completion chunks from the model.
+
+        Returns an async iterable of ``ChatCompletionChunk``. The caller is
+        responsible for accumulating ``delta.content`` and ``delta.tool_calls``
+        fragments; reasoning_content is intentionally ignored (not surfaced to
+        the end user).
+        """
+        client = self._get_client()
+        kwargs: dict = {
+            **chat_request_options(self.settings),
+            "messages": messages,
+            "max_tokens": max_tokens or self.settings.max_output_tokens,
+            "stream": True,
         }
         if tools:
             kwargs["tools"] = tools

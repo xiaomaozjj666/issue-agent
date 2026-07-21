@@ -584,6 +584,131 @@ async def test_chat_raises_on_uninitialized_session(make_agent) -> None:
         await agent.chat(session, "hello")
 
 
+async def test_chat_stream_yields_delta_and_done(make_agent, fake_client, monkeypatch, make_issue) -> None:
+    """chat_stream 应逐 chunk 透传 delta，最终发出 done 事件携带完整 reply。"""
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    # 模拟多 chunk 流式输出：每个 chunk 一段字符
+    from tests.conftest import _FakeStreamChunk
+
+    chunks = [
+        _FakeStreamChunk(content="根因是 "),
+        _FakeStreamChunk(content="parser "),
+        _FakeStreamChunk(content="缺少异常处理"),
+    ]
+    agent = make_agent(client=fake_client([chunks]))
+    session = Session(session_id="stream1", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/parser.py"]
+
+    events = []
+    async for event in agent.chat_stream(session, "根因是什么？"):
+        events.append(event)
+
+    deltas = [e for e in events if e["type"] == "delta"]
+    dones = [e for e in events if e["type"] == "done"]
+    assert len(deltas) == 3
+    assert deltas[0]["content"] == "根因是 "
+    assert deltas[1]["content"] == "parser "
+    assert deltas[2]["content"] == "缺少异常处理"
+    assert len(dones) == 1
+    assert dones[0]["reply"] == "根因是 parser 缺少异常处理"
+    assert dones[0]["tools_used"] == []
+    assert dones[0]["type"] == "done"
+    # 验证 user 消息已入 session.messages
+    assert session.messages[0]["role"] == "user"
+    assert session.messages[0]["content"] == "根因是什么？"
+    # 验证 assistant 回复已入 session.messages
+    assert session.messages[-1]["role"] == "assistant"
+    assert session.messages[-1]["content"] == "根因是 parser 缺少异常处理"
+
+
+async def test_chat_stream_with_tool_calls(make_agent, fake_client, monkeypatch, make_issue) -> None:
+    """chat_stream 在工具调用轮次后应继续流式输出最终回复。"""
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    from tests.conftest import _FakeStreamChunk
+
+    # 第 1 轮：tool_call delta（分两个 chunk 模拟 id 和 arguments 分批抵达）
+    tool_call_delta_1 = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(name="read_file", arguments=""),
+    )
+    tool_call_delta_2 = SimpleNamespace(
+        index=0,
+        id=None,
+        function=SimpleNamespace(name=None, arguments='{"path": "src/parser.py"}'),
+    )
+    tool_chunks = [
+        _FakeStreamChunk(tool_calls=[tool_call_delta_1]),
+        _FakeStreamChunk(tool_calls=[tool_call_delta_2]),
+    ]
+    # 第 2 轮：纯文本回复
+    reply_chunks = [
+        _FakeStreamChunk(content="parser "),
+        _FakeStreamChunk(content="代码在第 1 行"),
+    ]
+    agent = make_agent(client=fake_client([tool_chunks, reply_chunks]))
+    session = Session(session_id="stream2", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/parser.py"]
+
+    events = []
+    async for event in agent.chat_stream(session, "看一下 parser 代码"):
+        events.append(event)
+
+    tool_calls_events = [e for e in events if e["type"] == "tool_call"]
+    deltas = [e for e in events if e["type"] == "delta"]
+    dones = [e for e in events if e["type"] == "done"]
+
+    assert len(tool_calls_events) == 1
+    assert tool_calls_events[0]["name"] == "read_file"
+    assert len(deltas) == 2
+    assert dones[0]["reply"] == "parser 代码在第 1 行"
+    assert "read_file" in dones[0]["tools_used"]
+    assert "src/parser.py" in session.files_read
+
+
+async def test_chat_stream_uninitialized_session_yields_error(make_agent) -> None:
+    """未初始化的 session 应通过 error 事件透传，而非抛异常中断流。"""
+    agent = make_agent()
+    session = Session(session_id="stream3", issue_url="https://github.com/a/b/issues/1")
+    events = []
+    async for event in agent.chat_stream(session, "hello"):
+        events.append(event)
+
+    errors = [e for e in events if e["type"] == "error"]
+    assert len(errors) == 1
+    assert "Session not initialized" in errors[0]["message"]
+
+
+async def test_chat_stream_depth_limit_reached(make_agent, fake_client, monkeypatch, make_issue) -> None:
+    """达到迭代上限时应发出 done 事件携带 depth_limit 文案。"""
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    from tests.conftest import _FakeStreamChunk
+
+    # 每轮都触发 list_directory 工具调用，max_agent_iterations=5 后触发 depth_limit
+    tool_call_delta = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(name="list_directory", arguments='{"path": ""}'),
+    )
+    tool_chunks = [_FakeStreamChunk(tool_calls=[tool_call_delta])]
+    # 5 轮 tool_calls
+    responses = [tool_chunks for _ in range(5)]
+    agent = make_agent(client=fake_client(responses))
+    session = Session(session_id="stream4", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/a.py"]
+
+    events = []
+    async for event in agent.chat_stream(session, "列出文件"):
+        events.append(event)
+
+    dones = [e for e in events if e["type"] == "done"]
+    assert len(dones) == 1
+    assert "深度上限" in dones[0]["reply"] or "depth" in dones[0]["reply"].lower()
+
+
 async def test_investigate_populates_session(
     make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
 ) -> None:
