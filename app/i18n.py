@@ -58,19 +58,24 @@ STRINGS = {
             "-> 发现密码在 src/auth/login.py:L134 未转义传入 SQL 查询"
         ),
         "final_output_prompt": (
-            "基于以上调查，提供最终分析 JSON 对象：\n\n"
+            "基于以上调查，提供最终分析 JSON 对象（金字塔结构，结论前置）：\n\n"
             "{\n"
-            '  "summary": "问题摘要（简体中文）",\n'
-            '  "root_cause": "根因分析（简体中文，必须是完整的因果链：触发条件 → 代码缺陷 → 最终症状）",\n'
+            '  "summary": "核心结论（一句话给出最终判定：是什么问题、影响范围、'
+            '是否需要修复。开门见山，不要描述调查过程）",\n'
+            '  "root_cause": "问题根因（简体中文，必须是完整的因果链：触发条件 → 代码缺陷 → 最终症状）",\n'
             '  "confidence": "high" | "medium" | "low",\n'
             '  "evidence": [\n'
             '    {"path": "实际读过的文件路径", "lines": "L12-L18", "reason": "该证据说明了什么（简体中文）"}\n'
             "  ],\n"
             '  "proposed_changes": ["具体修复建议（简体中文）"],\n'
             '  "patch": "unified diff 格式的补丁，或 null",\n'
-            '  "tests": ["建议的测试用例（简体中文）"],\n'
+            '  "tests": ["回归测试用例（简体中文）"],\n'
             '  "risks": ["风险提示（简体中文）"]\n'
             "}\n\n"
+            "金字塔书写原则：\n"
+            "- summary 是金字塔顶端的核心结论，必须是判定而非描述，读者只看这一句就能抓住问题本质\n"
+            "- root_cause 紧接结论展开因果链，不要重复 summary\n"
+            "- 所有专业术语转为业务大白话，避免生硬学术句式\n\n"
             "置信度规则: high=3条以上, medium=1-2条, low=0条\n"
             "质量检查: 每项证据引用实际读过的文件, 行号精确, "
             "root_cause 必须形成从触发条件到最终症状的完整因果链（而非表面现象描述）, "
@@ -91,14 +96,15 @@ STRINGS = {
             '"start_line": ..., "end_line": ...}），'
             "禁止输出 markdown 代码块以外的内容，禁止输出文本说明。\n"
             "JSON 必须是顶层对象，且必须包含以下字段：\n"
-            "  - summary: 字符串\n"
-            "  - root_cause: 字符串\n"
+            "  - summary: 核心结论字符串（金字塔顶端，一句话给出最终判定，开门见山，不要描述调查过程）\n"
+            "  - root_cause: 问题根因字符串（紧接结论展开因果链：触发条件 → 代码缺陷 → 最终症状）\n"
             '  - confidence: "high" | "medium" | "low"\n'
             "  - evidence: 数组，每项含 path/lines/reason\n"
-            "  - proposed_changes: 字符串数组\n"
+            "  - proposed_changes: 修复方案字符串数组\n"
             "  - patch: 字符串或 null\n"
-            "  - tests: 字符串数组\n"
-            "  - risks: 字符串数组\n"
+            "  - tests: 回归测试用例字符串数组\n"
+            "  - risks: 风险提示字符串数组\n"
+            "书写要求：summary 必须是判定而非描述；所有专业术语转为业务大白话，避免生硬学术句式。\n"
             "上方已读源码中的 L1/L500 等行号前缀仅用于引用证据，不要将其当作工具调用参数。"
         ),
         "report_retry_prompt": (
@@ -152,9 +158,12 @@ STRINGS = {
             "-> Found: password unescaped in SQL at src/auth/login.py:L134"
         ),
         "final_output_prompt": (
-            "Based on your investigation, provide the final analysis as JSON:\n\n"
+            "Based on your investigation, provide the final analysis as JSON "
+            "(pyramid structure, conclusion first):\n\n"
             "{\n"
-            '  "summary": "Brief issue summary",\n'
+            '  "summary": "Core conclusion (one sentence giving the final verdict: what the issue is, '
+            "its impact, and whether a fix is required. Lead with the verdict; "
+            'do not describe the investigation process)",\n'
             '  "root_cause": "Root cause as a complete causal chain: trigger → code defect → observed symptom",\n'
             '  "confidence": "high" | "medium" | "low",\n'
             '  "evidence": [\n'
@@ -162,9 +171,14 @@ STRINGS = {
             "  ],\n"
             '  "proposed_changes": ["Specific fix suggestions"],\n'
             '  "patch": "unified diff patch, or null",\n'
-            '  "tests": ["Suggested test cases"],\n'
+            '  "tests": ["Regression test cases"],\n'
             '  "risks": ["Risk warnings"]\n'
             "}\n\n"
+            "Pyramid writing rules:\n"
+            "- summary is the pyramid-top core conclusion: a verdict, not a description; "
+            "a reader should grasp the essence from this single sentence\n"
+            "- root_cause expands the causal chain right after the conclusion; do not repeat summary\n"
+            "- use plain business language, avoid stiff academic phrasing\n\n"
             "Confidence: high=3+ references, medium=1-2, low=0\n"
             "Quality: every evidence from actually-read files, exact line numbers, "
             "root_cause must form a complete causal chain from trigger condition to final symptom "
@@ -184,14 +198,18 @@ STRINGS = {
             '"start_line": ..., "end_line": ...}). '
             "Do NOT output prose outside the JSON. Do NOT wrap the JSON in markdown fences.\n"
             "The JSON must be a top-level object with these fields:\n"
-            "  - summary: string\n"
-            "  - root_cause: string\n"
+            "  - summary: core conclusion string (pyramid top; one-sentence final verdict; "
+            "lead with the verdict, do not describe the investigation process)\n"
+            "  - root_cause: root cause string (expand the causal chain right after the conclusion: "
+            "trigger → code defect → observed symptom)\n"
             '  - confidence: "high" | "medium" | "low"\n'
             "  - evidence: array of {path, lines, reason}\n"
-            "  - proposed_changes: array of strings\n"
+            "  - proposed_changes: array of fix suggestions\n"
             "  - patch: string or null\n"
-            "  - tests: array of strings\n"
-            "  - risks: array of strings\n"
+            "  - tests: array of regression test cases\n"
+            "  - risks: array of risk warnings\n"
+            "Writing rules: summary must be a verdict, not a description; "
+            "use plain business language, avoid stiff academic phrasing.\n"
             "The L1/L500 line prefixes in the source excerpts above are reference markers for evidence citations only. "
             "Do NOT treat them as tool call parameters."
         ),
@@ -384,12 +402,12 @@ _FRONTEND_STRINGS = {
         "confidence_high": "高",
         "confidence_medium": "中",
         "confidence_low": "低",
-        "report_root_cause": "根因",
+        "report_root_cause": "问题根因",
         "report_evidence": "代码证据",
-        "report_proposed_changes": "建议修改",
-        "report_patch": "查看生成的补丁",
-        "report_patch_export": "补丁",
-        "report_tests": "建议测试",
+        "report_proposed_changes": "修复方案",
+        "report_patch": "查看修复补丁",
+        "report_patch_export": "修复补丁",
+        "report_tests": "回归测试",
         "report_risks": "风险提示",
         "report_independent_review": "独立审查 · {status}",
         "review_status_approved": "已通过",
@@ -415,6 +433,23 @@ _FRONTEND_STRINGS = {
         "view_source": "查看源码",
         "toc_title": "目录",
         "report_panel_label": "分析报告",
+        "report_conclusion_label": "核心结论",
+        "report_metrics_title": "关键指标",
+        "report_evidence_chart_title": "证据分布",
+        "report_evidence_chart_caption": "按文件聚合证据数量，定位问题热点模块",
+        "report_confidence_chart_title": "可信度雷达",
+        "report_confidence_chart_caption": "五维度评估：证据、根因、测试、风险、审查",
+        "report_metric_evidence_count": "证据数",
+        "report_metric_files_examined": "已读文件",
+        "report_metric_confidence": "可信度",
+        "report_metric_review": "审查状态",
+        "report_metric_proposed_changes": "修复方案",
+        "report_metric_risks": "风险项",
+        "report_evidence_chart_empty": "暂无代码证据，请先完成调查",
+        "report_review_label": "审查",
+        "report_review_pending": "未执行",
+        "report_legend_evidence": "证据数",
+        "report_legend_confidence": "可信度",
     },
     "en": {
         "doc_title": "GitHub Issue Agent",
@@ -515,6 +550,23 @@ _FRONTEND_STRINGS = {
         "view_source": "View source",
         "toc_title": "Contents",
         "report_panel_label": "Analysis report",
+        "report_conclusion_label": "Core conclusion",
+        "report_metrics_title": "Key metrics",
+        "report_evidence_chart_title": "Evidence distribution",
+        "report_evidence_chart_caption": "Evidence count aggregated by file to locate problem hotspots",
+        "report_confidence_chart_title": "Confidence radar",
+        "report_confidence_chart_caption": "Five-dimension assessment: evidence, root cause, tests, risks, review",
+        "report_metric_evidence_count": "Evidence",
+        "report_metric_files_examined": "Files read",
+        "report_metric_confidence": "Confidence",
+        "report_metric_review": "Review",
+        "report_metric_proposed_changes": "Fixes",
+        "report_metric_risks": "Risks",
+        "report_evidence_chart_empty": "No code evidence yet — complete the investigation first",
+        "report_review_label": "Review",
+        "report_review_pending": "Not run",
+        "report_legend_evidence": "Evidence count",
+        "report_legend_confidence": "Confidence",
     },
 }
 

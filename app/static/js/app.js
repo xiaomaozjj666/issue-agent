@@ -42,6 +42,10 @@
     localStorage.setItem("ds-theme", next);
     const themeBtn = document.getElementById("theme-toggle-btn");
     if (themeBtn) themeBtn.setAttribute("aria-pressed", String(next === "light"));
+    // 主题切换后，若报告面板已展开则重渲染图表以同步配色
+    if (report && document.getElementById("main").classList.contains("report-open")) {
+      renderReport(report);
+    }
   }
 
   // 移动端侧边栏切换
@@ -691,7 +695,256 @@
     }
   }
 
+  // ── ECharts 可视化 ────────────────────────────────────
+  // 配色与设计体系一致：深色用 slate-100/slate-400/slate-700，浅色用 slate-900/slate-600/slate-300
+  const ECHARTS_PALETTE_DARK = {
+    primary: "#3b82f6",
+    primaryDim: "#60a5fa",
+    success: "#10b981",
+    warning: "#f59e0b",
+    danger: "#ef4444",
+    text: "#f1f5f9",
+    textDim: "#94a3b8",
+    line: "#334155",
+    fill: "rgba(59, 130, 246, 0.45)",
+    fillDim: "rgba(59, 130, 246, 0.05)",
+    splitArea: ["rgba(59,130,246,0.04)", "rgba(59,130,246,0.08)"],
+  };
+  const ECHARTS_PALETTE_LIGHT = {
+    primary: "#2563eb",
+    primaryDim: "#3b82f6",
+    success: "#059669",
+    warning: "#d97706",
+    danger: "#dc2626",
+    text: "#0f172a",
+    textDim: "#475569",
+    line: "#cbd5e1",
+    fill: "rgba(37, 99, 235, 0.4)",
+    fillDim: "rgba(37, 99, 235, 0.05)",
+    splitArea: ["rgba(37,99,235,0.04)", "rgba(37,99,235,0.08)"],
+  };
+
+  function getEchartsPalette() {
+    return document.documentElement.dataset.theme === "light" ? ECHARTS_PALETTE_LIGHT : ECHARTS_PALETTE_DARK;
+  }
+
+  function echartsAvailable() {
+    return typeof window.echarts !== "undefined" && !window.__echartsFailed;
+  }
+
+  // 报告图表实例缓存：页面切换或重渲染时统一销毁，避免内存泄漏
+  let reportChartInstances = [];
+
+  function disposeReportCharts() {
+    reportChartInstances.forEach(function (chart) {
+      try {
+        chart.dispose();
+      } catch (e) {
+        /* ignore */
+      }
+    });
+    reportChartInstances = [];
+  }
+
+  // 窗口尺寸变化时同步调整图表，避免溢出和留白
+  let chartResizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (!reportChartInstances.length) return;
+    clearTimeout(chartResizeTimer);
+    chartResizeTimer = setTimeout(function () {
+      reportChartInstances.forEach(function (chart) {
+        try {
+          chart.resize();
+        } catch (e) {
+          /* ignore */
+        }
+      });
+    }, 120);
+  });
+
+  // 证据分布柱状图：按文件聚合证据数量，定位问题热点模块
+  function renderEvidenceChart(container, report) {
+    if (!container) return null;
+    if (!echartsAvailable()) {
+      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
+      return null;
+    }
+    const palette = getEchartsPalette();
+    const fileMap = new Map();
+    (report.evidence || []).forEach(function (e) {
+      const path = e.path || "unknown";
+      fileMap.set(path, (fileMap.get(path) || 0) + 1);
+    });
+    if (!fileMap.size) {
+      container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
+      return null;
+    }
+    // 取证据数最多的前 10 个文件，避免长尾过散
+    const entries = Array.from(fileMap.entries())
+      .sort(function (a, b) {
+        return b[1] - a[1];
+      })
+      .slice(0, 10);
+    const paths = entries.map(function (entry) {
+      const p = entry[0];
+      return p.length > 28 ? "…" + p.slice(-26) : p;
+    });
+    const counts = entries.map(function (entry) {
+      return entry[1];
+    });
+
+    const chart = echarts.init(container);
+    chart.setOption({
+      grid: { left: 8, right: 16, top: 16, bottom: 64, containLabel: true },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff",
+        borderWidth: 0,
+        textStyle: { color: palette.text, fontSize: 12 },
+        formatter: function (params) {
+          const idx = params[0].dataIndex;
+          const fullPath = entries[idx][0];
+          const count = entries[idx][1];
+          return `${IA.escapeHtml(fullPath)}<br/>${IA.escapeHtml(t("report_legend_evidence"))}: <b>${count}</b>`;
+        },
+      },
+      xAxis: {
+        type: "category",
+        data: paths,
+        axisLabel: { color: palette.textDim, fontSize: 11, rotate: 30, interval: 0 },
+        axisLine: { lineStyle: { color: palette.line } },
+        axisTick: { lineStyle: { color: palette.line } },
+      },
+      yAxis: {
+        type: "value",
+        minInterval: 1,
+        axisLabel: { color: palette.textDim, fontSize: 11 },
+        splitLine: { lineStyle: { color: palette.line, type: "dashed" } },
+      },
+      series: [
+        {
+          type: "bar",
+          data: counts,
+          barMaxWidth: 36,
+          itemStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: palette.primary },
+                { offset: 1, color: palette.primaryDim },
+              ],
+            },
+            borderRadius: [4, 4, 0, 0],
+          },
+          emphasis: { itemStyle: { color: palette.primary } },
+        },
+      ],
+    });
+    return chart;
+  }
+
+  // 可信度雷达图：五维度评估（证据/根因/修复方案/回归测试/审查）
+  function renderConfidenceRadar(container, report) {
+    if (!container) return null;
+    if (!echartsAvailable()) {
+      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
+      return null;
+    }
+    const palette = getEchartsPalette();
+    const review = report.review_audit || { status: "not_run" };
+    const evidenceCount = (report.evidence || []).length;
+    const testCount = (report.tests || []).length;
+    const riskCount = (report.risks || []).length;
+    const changesCount = (report.proposed_changes || []).length;
+
+    // 五维度评分（0-100，越高代表该维度支撑越充分）
+    const evidenceScore = Math.min(100, 10 + evidenceCount * 30);
+    const rootCauseScore = report.confidence === "high" ? 90 : report.confidence === "medium" ? 60 : 30;
+    const fixScore = Math.min(100, 20 + changesCount * 25);
+    const testScore = Math.min(100, 10 + testCount * 30);
+    const riskScore = Math.min(100, 30 + riskCount * 25);
+    const reviewScore =
+      review.status === "approved"
+        ? 100
+        : review.status === "revised"
+          ? 70
+          : review.status === "unavailable"
+            ? 40
+            : 20;
+
+    const values = [evidenceScore, rootCauseScore, fixScore, testScore, riskScore, reviewScore];
+    const labels = [
+      t("report_metric_evidence_count"),
+      t("report_root_cause"),
+      t("report_metric_proposed_changes"),
+      t("report_tests"),
+      t("report_metric_risks"),
+      t("report_review_label"),
+    ];
+
+    const chart = echarts.init(container);
+    chart.setOption({
+      radar: {
+        indicator: labels.map(function (name) {
+          return { name: name, max: 100 };
+        }),
+        radius: "62%",
+        center: ["50%", "54%"],
+        axisName: { color: palette.textDim, fontSize: 11 },
+        splitArea: { areaStyle: { color: palette.splitArea } },
+        axisLine: { lineStyle: { color: palette.line } },
+        splitLine: { lineStyle: { color: palette.line } },
+      },
+      tooltip: {
+        backgroundColor: palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff",
+        borderWidth: 0,
+        textStyle: { color: palette.text, fontSize: 12 },
+        formatter: function () {
+          return labels
+            .map(function (label, idx) {
+              return `${IA.escapeHtml(label)}: <b>${values[idx]}</b>`;
+            })
+            .join("<br/>");
+        },
+      },
+      series: [
+        {
+          type: "radar",
+          data: [
+            {
+              value: values,
+              name: t("report_legend_confidence"),
+              symbol: "circle",
+              symbolSize: 5,
+              areaStyle: {
+                color: {
+                  type: "radial",
+                  x: 0.5,
+                  y: 0.5,
+                  r: 0.6,
+                  colorStops: [
+                    { offset: 0, color: palette.fill },
+                    { offset: 1, color: palette.fillDim },
+                  ],
+                },
+              },
+              lineStyle: { color: palette.primary, width: 2 },
+              itemStyle: { color: palette.primary },
+            },
+          ],
+        },
+      ],
+    });
+    return chart;
+  }
+
   function renderReport(r) {
+    disposeReportCharts();
     const d = document.getElementById("report");
     const parts = [];
     const toc = [];
@@ -701,13 +954,57 @@
       return `<section class="report-section" id="${id}"><h4>${IA.escapeHtml(title)}</h4>${bodyHtml}</section>`;
     }
 
-    parts.push(`<h3>${IA.escapeHtml(r.summary)}</h3>`);
-    const confClass = IA.safeClass(r.confidence);
+    // 1. 核心结论卡（金字塔顶端：结论前置）
     parts.push(
-      `<div class="report-meta"><span>${IA.escapeHtml(t("report_confidence"))}</span><span class="badge ${confClass}">${IA.escapeHtml(enumLabel("confidence", r.confidence))}</span></div>`,
+      `<div class="report-conclusion">` +
+        `<span class="report-conclusion-label">${IA.escapeHtml(t("report_conclusion_label"))}</span>` +
+        `<p class="report-conclusion-text">${IA.escapeHtml(r.summary)}</p>` +
+        `</div>`,
     );
 
-    // 报告工具栏：复制 JSON、下载 JSON、下载 Markdown
+    // 2. 关键指标网格（六维度速览）
+    const review = r.review_audit || { status: "not_run" };
+    const reviewLabel =
+      review.status === "not_run" ? t("report_review_pending") : enumLabel("review_status", review.status);
+    const metrics = [
+      { label: t("report_metric_evidence_count"), value: String((r.evidence || []).length) },
+      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length) },
+      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence) },
+      { label: t("report_metric_review"), value: reviewLabel },
+      { label: t("report_metric_proposed_changes"), value: String((r.proposed_changes || []).length) },
+      { label: t("report_metric_risks"), value: String((r.risks || []).length) },
+    ];
+    const metricsHtml = metrics
+      .map(function (m) {
+        return (
+          `<div class="report-metric-card"><span class="report-metric-label">${IA.escapeHtml(m.label)}</span>` +
+          `<span class="report-metric-value">${IA.escapeHtml(m.value)}</span></div>`
+        );
+      })
+      .join("");
+    parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
+
+    // 3. ECharts 证据分布柱状图（仅当存在证据时渲染）
+    if (r.evidence && r.evidence.length) {
+      parts.push(
+        `<div class="report-chart">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("report_evidence_chart_title"))}</div>` +
+          `<div id="report-evidence-chart" class="report-chart-canvas"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("report_evidence_chart_caption"))}</div>` +
+          `</div>`,
+      );
+    }
+
+    // 4. ECharts 可信度雷达图
+    parts.push(
+      `<div class="report-chart">` +
+        `<div class="report-chart-title">${IA.escapeHtml(t("report_confidence_chart_title"))}</div>` +
+        `<div id="report-confidence-chart" class="report-chart-canvas"></div>` +
+        `<div class="report-chart-caption">${IA.escapeHtml(t("report_confidence_chart_caption"))}</div>` +
+        `</div>`,
+    );
+
+    // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
     parts.push(
       `<div class="report-toolbar">` +
         `<button class="report-action" type="button" data-action="copy-json">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button>` +
@@ -716,7 +1013,7 @@
         `</div>`,
     );
 
-    const review = r.review_audit || { status: "not_run", summary: "", findings: [] };
+    // 6. 独立审查（如果执行过）
     if (review.status !== "not_run") {
       const reviewClass = IA.safeClass(review.status);
       let body = `<span class="review-chip ${reviewClass}">${IA.escapeHtml(
@@ -733,11 +1030,13 @@
       parts.push(`<section class="report-section review-section ${reviewClass}">${body}</section>`);
     }
 
+    // 7. 问题根因
     parts.push(pushSection("report-root", t("report_root_cause"), `<p>${IA.escapeHtml(r.root_cause)}</p>`));
 
+    // 8. 代码证据
     if (r.evidence && r.evidence.length) {
       const items = r.evidence
-        .map(function (e, idx) {
+        .map(function (e) {
           const ghUrl = IA.buildGitHubUrl(activeSession, e.path, e.lines);
           const linkHtml = ghUrl
             ? ` <a class="evidence-link" href="${IA.escapeAttr(ghUrl)}" target="_blank" rel="noopener noreferrer" title="${IA.escapeAttr(t("view_source"))}">${IA.svgIcon("external")}<span class="sr-only">${IA.escapeHtml(t("view_source"))}</span></a>`
@@ -748,6 +1047,7 @@
       parts.push(pushSection("report-evidence", t("report_evidence"), `<div class="evidence-list">${items}</div>`));
     }
 
+    // 9. 修复方案
     if (r.proposed_changes && r.proposed_changes.length) {
       const list = r.proposed_changes
         .map(function (c) {
@@ -757,6 +1057,7 @@
       parts.push(pushSection("report-changes", t("report_proposed_changes"), `<ul>${list}</ul>`));
     }
 
+    // 10. 修复补丁
     if (r.patch) {
       const patchId = "report-patch";
       toc.push(`<li><a href="#${patchId}">${IA.escapeHtml(t("report_patch"))}</a></li>`);
@@ -767,6 +1068,7 @@
       parts.push(patchHtml);
     }
 
+    // 11. 回归测试
     if (r.tests && r.tests.length) {
       const list = r.tests
         .map(function (item) {
@@ -776,6 +1078,7 @@
       parts.push(pushSection("report-tests", t("report_tests"), `<ul>${list}</ul>`));
     }
 
+    // 12. 风险提示
     if (r.risks && r.risks.length) {
       const list = r.risks
         .map(function (item) {
@@ -785,11 +1088,26 @@
       parts.push(pushSection("report-risks", t("report_risks"), `<ul>${list}</ul>`));
     }
 
+    // 目录前置（金字塔结构下，TOC 作为快速跳转入口）
     if (toc.length) {
-      parts.unshift(`<details class="report-toc" open><summary>${IA.escapeHtml(t("toc_title"))}</summary><ol>${toc.join("")}</ol></details>`);
+      parts.unshift(
+        `<details class="report-toc" open><summary>${IA.escapeHtml(t("toc_title"))}</summary><ol>${toc.join("")}</ol></details>`,
+      );
     }
 
     d.innerHTML = parts.join("");
+
+    // 渲染 ECharts 图表（必须在 innerHTML 设置后才能拿到 DOM 节点）
+    const evidenceEl = document.getElementById("report-evidence-chart");
+    if (evidenceEl) {
+      const chart = renderEvidenceChart(evidenceEl, r);
+      if (chart) reportChartInstances.push(chart);
+    }
+    const confidenceEl = document.getElementById("report-confidence-chart");
+    if (confidenceEl) {
+      const chart = renderConfidenceRadar(confidenceEl, r);
+      if (chart) reportChartInstances.push(chart);
+    }
   }
 
   function toggleReport(open) {

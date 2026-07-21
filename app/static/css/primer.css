@@ -1,79 +1,80 @@
 /* ============================================================
    GitHub Issue Agent — Stylesheet
-   Faithful to GitHub Primer: flat surfaces, 6px radii, system
-   fonts, standard buttons, color-only transitions.
+   现代极简 B 端设计体系（统一配色 / 圆角 / 阴影 / 间距 / 动画）
    Tokens → Base → Sidebar → Main → Messages → Report → Chrome
    ============================================================ */
 
-/* ── Design tokens (Primer dark) ─────────────────────────── */
+/* ── 设计令牌（深色主题，默认） ─────────────────────────── */
 :root {
   color-scheme: dark;
 
-  /* Canvas */
-  --bg: #0d1117;
-  --card: #161b22;
-  --canvas-subtle: #161b22;
-  --canvas-inset: #010409;
+  /* 画布层级 */
+  --bg: #0f172a;
+  --card: #1e293b;
+  --canvas-subtle: #1e293b;
+  --canvas-inset: #0f172a;
 
-  /* Text */
-  --fg: #e6edf3;
-  --fg-strong: #e6edf3;
-  --muted: #7d8590;
-  --faint: #636e7b;
+  /* 文本 */
+  --fg: #f1f5f9;
+  --fg-strong: #ffffff;
+  --muted: #94a3b8;
+  --faint: #64748b;
 
-  /* Lines */
-  --border: #30363d;
-  --border-muted: #21262d;
+  /* 分割线 */
+  --border: #334155;
+  --border-muted: #1e293b;
 
-  /* Accent */
-  --accent: #2f81f7;
-  --accent-emphasis: #1f6feb;
-  --accent-subtle: rgba(56, 139, 253, 0.15);
-  --accent-muted: rgba(56, 139, 253, 0.4);
-  --ring: rgba(56, 139, 253, 0.4);
+  /* 主色（蓝） */
+  --accent: #3b82f6;
+  --accent-emphasis: #2563eb;
+  --accent-subtle: rgba(59, 130, 246, 0.16);
+  --accent-muted: rgba(59, 130, 246, 0.4);
+  --ring: rgba(59, 130, 246, 0.45);
 
-  /* Semantic */
-  --green: #3fb950;
-  --green-emphasis: #238636;
-  --green-hover: #2ea043;
-  --green-subtle: rgba(46, 160, 67, 0.15);
-  --green-muted: rgba(46, 160, 67, 0.4);
-  --yellow: #d29922;
-  --yellow-emphasis: #9e6a03;
-  --yellow-subtle: rgba(187, 128, 9, 0.15);
-  --yellow-muted: rgba(187, 128, 9, 0.4);
-  --red: #f85149;
-  --red-emphasis: #da3633;
-  --red-subtle: rgba(248, 81, 73, 0.15);
-  --red-muted: rgba(248, 81, 73, 0.4);
-  --neutral-emphasis: #6e7681;
-  --neutral-subtle: rgba(110, 118, 129, 0.1);
+  /* 语义色 */
+  --green: #10b981;
+  --green-emphasis: #059669;
+  --green-hover: #047857;
+  --green-subtle: rgba(16, 185, 129, 0.16);
+  --green-muted: rgba(16, 185, 129, 0.4);
+  --yellow: #f59e0b;
+  --yellow-emphasis: #d97706;
+  --yellow-subtle: rgba(245, 158, 11, 0.16);
+  --yellow-muted: rgba(245, 158, 11, 0.4);
+  --red: #ef4444;
+  --red-emphasis: #dc2626;
+  --red-subtle: rgba(239, 68, 68, 0.16);
+  --red-muted: rgba(239, 68, 68, 0.4);
+  --neutral-emphasis: #64748b;
+  --neutral-subtle: rgba(100, 116, 139, 0.14);
 
-  /* Default button */
-  --control-bg: #21262d;
-  --control-hover: #30363d;
-  --control-active: #282e33;
-  --control-border: rgba(240, 246, 252, 0.1);
-  --control-hover-border: #8b949e;
-  --btn-shadow: 0 0 transparent;
-  --btn-inset-shadow: 0 0 transparent;
-  --input-shadow: 0 0 transparent;
+  /* 控件背景 */
+  --control-bg: #1e293b;
+  --control-hover: #334155;
+  --control-active: #0f172a;
+  --control-border: rgba(241, 245, 249, 0.12);
+  --control-hover-border: #475569;
+  --btn-shadow: 0 1px 2px rgba(15, 23, 42, 0.4);
+  --btn-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --input-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.4);
 
-  /* Radii */
-  --radius-sm: 3px;
-  --radius: 6px;
+  /* 圆角分层 */
+  --radius-sm: 4px;
+  --radius: 8px;
   --radius-lg: 12px;
-  --radius-pill: 2em;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
 
-  /* Type */
+  /* 字号 */
   --text-xs: 12px;
   --text-base: 14px;
   --text-md: 16px;
   --text-lg: 20px;
   --text-xl: 24px;
-  --leading: 1.5;
+  --text-2xl: 30px;
+  --leading: 1.6;
 
-  /* Spacing (4px base) */
+  /* 间距（4px 栅格） */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -82,18 +83,23 @@
   --space-6: 24px;
   --space-8: 32px;
   --space-10: 40px;
+  --space-12: 48px;
 
-  /* Elevation */
-  --shadow-medium: 0 3px 6px #010409;
-  --shadow-large: 0 8px 24px #010409;
-  --shadow-xl: 0 12px 48px #010409;
+  /* 三级阴影体系 */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.24);
+  --shadow-medium: 0 4px 12px rgba(15, 23, 42, 0.32);
+  --shadow-large: 0 8px 24px rgba(15, 23, 42, 0.4);
+  --shadow-xl: 0 16px 48px rgba(15, 23, 42, 0.5);
 
-  /* Motion — color-only, fast */
-  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
-  --dur-fast: 80ms;
+  /* 动画 */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
 
-  /* Fonts — system stacks, like github.com */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
@@ -101,55 +107,56 @@
   color-scheme: light;
 
   --bg: #ffffff;
-  --card: #f6f8fa;
-  --canvas-subtle: #f6f8fa;
-  --canvas-inset: #f6f8fa;
+  --card: #f8fafc;
+  --canvas-subtle: #f1f5f9;
+  --canvas-inset: #f8fafc;
 
-  --fg: #1f2328;
-  --fg-strong: #1f2328;
-  --muted: #59636e;
-  --faint: #6e7781;
+  --fg: #0f172a;
+  --fg-strong: #0f172a;
+  --muted: #64748b;
+  --faint: #94a3b8;
 
-  --border: #d0d7de;
-  --border-muted: #d8dee4;
+  --border: #e2e8f0;
+  --border-muted: #f1f5f9;
 
-  --accent: #0969da;
-  --accent-emphasis: #0969da;
-  --accent-subtle: #ddf4ff;
-  --accent-muted: rgba(84, 174, 255, 0.4);
-  --ring: rgba(84, 174, 255, 0.4);
+  --accent: #2563eb;
+  --accent-emphasis: #1d4ed8;
+  --accent-subtle: #eff6ff;
+  --accent-muted: rgba(59, 130, 246, 0.32);
+  --ring: rgba(37, 99, 235, 0.4);
 
-  --green: #1a7f37;
-  --green-emphasis: #1f883d;
-  --green-hover: #1a7f37;
-  --green-subtle: #dafbe1;
-  --green-muted: rgba(74, 194, 107, 0.4);
-  --yellow: #9a6700;
-  --yellow-emphasis: #9a6700;
-  --yellow-subtle: #fff8c5;
-  --yellow-muted: rgba(212, 167, 44, 0.4);
-  --red: #d1242f;
-  --red-emphasis: #cf222e;
-  --red-subtle: #ffebe9;
-  --red-muted: rgba(255, 129, 130, 0.4);
-  --neutral-emphasis: #6e7781;
-  --neutral-subtle: rgba(234, 238, 242, 0.5);
+  --green: #059669;
+  --green-emphasis: #047857;
+  --green-hover: #065f46;
+  --green-subtle: #ecfdf5;
+  --green-muted: rgba(16, 185, 129, 0.32);
+  --yellow: #d97706;
+  --yellow-emphasis: #b45309;
+  --yellow-subtle: #fffbeb;
+  --yellow-muted: rgba(245, 158, 11, 0.32);
+  --red: #dc2626;
+  --red-emphasis: #b91c1c;
+  --red-subtle: #fef2f2;
+  --red-muted: rgba(239, 68, 68, 0.32);
+  --neutral-emphasis: #64748b;
+  --neutral-subtle: rgba(241, 245, 249, 0.7);
 
-  --control-bg: #f6f8fa;
-  --control-hover: #eff1f3;
-  --control-active: #e6ebf0;
-  --control-border: rgba(31, 35, 40, 0.15);
-  --control-hover-border: rgba(31, 35, 40, 0.15);
-  --btn-shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
-  --btn-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  --input-shadow: inset 0 1px 0 rgba(208, 215, 222, 0.2);
+  --control-bg: #ffffff;
+  --control-hover: #f1f5f9;
+  --control-active: #e2e8f0;
+  --control-border: rgba(15, 23, 42, 0.12);
+  --control-hover-border: rgba(15, 23, 42, 0.2);
+  --btn-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --btn-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --input-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.4);
 
-  --shadow-medium: 0 3px 6px rgba(140, 149, 159, 0.15);
-  --shadow-large: 0 8px 24px rgba(140, 149, 159, 0.2);
-  --shadow-xl: 0 12px 48px rgba(140, 149, 159, 0.3);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-medium: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-large: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --shadow-xl: 0 16px 48px rgba(15, 23, 42, 0.16);
 }
 
-/* ── Reset & base ──────────────────────────────────────────── */
+/* ── 基础重置 ──────────────────────────────────────────── */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -163,11 +170,16 @@
   height: 10px;
 }
 
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-pill);
   background: var(--border);
   background-clip: padding-box;
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -199,13 +211,20 @@ dialog {
   font-family: inherit;
 }
 
-/* GitHub controls transition color/border only (~80ms) */
+/* 三档过渡：颜色/边框快速，阴影/变换中速 */
 button,
-input {
+input,
+.msg,
+.session-row,
+.evidence-item,
+.report-action,
+.timeline-step {
   transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
 button:focus-visible,
@@ -223,14 +242,16 @@ svg {
 a {
   color: var(--accent);
   text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-standard);
 }
 
 a:hover {
   text-decoration: underline;
+  color: var(--accent-emphasis);
 }
 
-/* ── Buttons ───────────────────────────────────────────────── */
-/* Secondary buttons (GitHub .btn) */
+/* ── 按钮 ─────────────────────────────────────────────── */
+/* 次级按钮（B 端标准） */
 #report-toggle,
 .report-close,
 #cancel-analysis,
@@ -242,10 +263,10 @@ a:hover {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
+  min-height: 34px;
   border: 1px solid var(--control-border);
   border-radius: var(--radius);
-  padding: 5px 16px;
+  padding: 6px 16px;
   background: var(--control-bg);
   color: var(--fg);
   font-size: var(--text-base);
@@ -265,6 +286,8 @@ a:hover {
 .patch-copy:hover {
   border-color: var(--control-hover-border);
   background: var(--control-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm), var(--btn-inset-shadow);
 }
 
 #report-toggle:active,
@@ -274,61 +297,74 @@ a:hover {
 .report-action:active,
 .patch-copy:active {
   background: var(--control-active);
+  transform: translateY(0);
+  box-shadow: var(--btn-inset-shadow);
 }
 
-/* Small buttons (GitHub .btn-sm) */
+/* 小号按钮 */
 .report-action,
 .patch-copy {
-  min-height: 28px;
-  padding: 3px 12px;
+  min-height: 30px;
+  padding: 4px 12px;
   font-size: var(--text-xs);
 }
 
-/* Primary buttons (GitHub .btn-primary) */
+/* 主按钮（强调绿） */
 .primary-action,
 #input-bar button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
-  border: 1px solid var(--control-border);
+  min-height: 34px;
+  border: 1px solid var(--green-emphasis);
   border-radius: var(--radius);
-  padding: 5px 16px;
-  background: var(--green-emphasis);
+  padding: 6px 18px;
+  background: linear-gradient(180deg, var(--green) 0%, var(--green-emphasis) 100%);
   color: #ffffff;
   font-size: var(--text-base);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 20px;
   white-space: nowrap;
-  box-shadow: var(--btn-shadow), var(--btn-inset-shadow);
+  box-shadow: var(--btn-shadow), var(--btn-inset-shadow), 0 0 0 1px rgba(16, 185, 129, 0.12);
   cursor: pointer;
   user-select: none;
 }
 
 .primary-action:hover,
 #input-bar button:hover {
-  background: var(--green-hover);
+  background: linear-gradient(180deg, var(--green-hover) 0%, var(--green-emphasis) 100%);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm), var(--btn-inset-shadow), 0 0 0 3px var(--green-muted);
 }
 
-/* Danger button (GitHub .btn-danger: red text, fills red on hover) */
+.primary-action:active,
+#input-bar button:active {
+  transform: translateY(0);
+  box-shadow: var(--btn-inset-shadow);
+}
+
+/* 危险按钮 */
 #cancel-analysis {
   display: none;
   color: var(--red);
+  border-color: var(--red-muted);
 }
 
 #cancel-analysis:hover {
-  border-color: transparent;
+  border-color: var(--red);
   background: var(--red-emphasis);
   color: #ffffff;
+  transform: translateY(-1px);
 }
 
 #cancel-analysis:disabled {
   cursor: wait;
   opacity: 0.6;
+  transform: none;
 }
 
-/* Icon-only buttons (GitHub .btn-octicon: bare, no box) */
+/* 图标按钮 */
 .icon-button,
 .theme-toggle,
 .mobile-history-toggle,
@@ -347,8 +383,8 @@ a:hover {
 .theme-toggle,
 .mobile-history-toggle,
 .back-button {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
 }
 
 .icon-button:hover,
@@ -358,14 +394,21 @@ a:hover {
 .session-action:hover {
   background: var(--neutral-subtle);
   color: var(--fg);
+  transform: scale(1.05);
+}
+
+.icon-button:active,
+.theme-toggle:active,
+.session-action:active {
+  transform: scale(0.95);
 }
 
 .back-button:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: default;
 }
 
-/* ── Sidebar ───────────────────────────────────────────────── */
+/* ── 侧边栏 ───────────────────────────────────────────── */
 #sidebar {
   display: flex;
   flex: 0 0 320px;
@@ -384,37 +427,42 @@ a:hover {
   height: 64px;
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--border-muted);
+  background: linear-gradient(180deg, var(--card) 0%, var(--canvas-inset) 100%);
 }
 
 .brand-identity {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
-  color: var(--fg);
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-emphasis) 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 12px var(--accent-muted);
 }
 
 .brand-copy {
   display: grid;
   min-width: 0;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 
 .brand-copy strong {
   overflow: hidden;
-  color: var(--fg);
+  color: var(--fg-strong);
   font-size: var(--text-md);
-  font-weight: 600;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .brand-copy span {
@@ -431,18 +479,21 @@ a:hover {
   gap: var(--space-1);
 }
 
-/* New-analysis compose */
+/* 新建分析区 */
 .issue-compose {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-4);
   border-bottom: 1px solid var(--border-muted);
+  background: var(--canvas-inset);
 }
 
 .issue-compose label {
   color: var(--fg);
-  font-size: var(--text-base);
+  font-size: var(--text-xs);
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .compose-row {
@@ -451,14 +502,14 @@ a:hover {
   gap: var(--space-2);
 }
 
-/* Text inputs (GitHub .form-control) */
+/* 输入框 */
 #sidebar input,
 .dialog-body input,
 #input-bar input {
-  min-height: 32px;
+  min-height: 34px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 5px 12px;
+  padding: 6px 12px;
   background: var(--bg);
   color: var(--fg);
   font-size: var(--text-base);
@@ -477,7 +528,7 @@ a:hover {
 #input-bar input:focus {
   border-color: var(--accent);
   outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
+  box-shadow: 0 0 0 3px var(--ring), var(--input-shadow);
 }
 
 .primary-action svg,
@@ -487,7 +538,7 @@ a:hover {
   height: 16px;
 }
 
-/* Session history */
+/* 会话历史 */
 .history-panel {
   display: flex;
   flex: 1;
@@ -498,7 +549,7 @@ a:hover {
 .history-toolbar {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: var(--space-3);
   border-bottom: 1px solid var(--border-muted);
 }
 
@@ -510,14 +561,16 @@ a:hover {
 
 .history-heading span {
   color: var(--fg);
-  font-size: var(--text-base);
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .archive-toggle {
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-pill);
-  padding: 2px 8px;
+  padding: 3px 10px;
   background: transparent;
   color: var(--muted);
   font-size: var(--text-xs);
@@ -529,16 +582,18 @@ a:hover {
 .archive-toggle:hover {
   background: var(--neutral-subtle);
   color: var(--fg);
+  border-color: var(--border-muted);
 }
 
 .archive-toggle.active {
   background: var(--accent-subtle);
   color: var(--accent);
+  border-color: var(--accent-muted);
 }
 
 #history-search {
-  padding-left: 30px !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%237d8590' d='M10.5 6.5a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm-.78 4.28a5.5 5.5 0 1 1 1.06-1.06l3.5 3.5a.75.75 0 1 1-1.06 1.06l-3.5-3.5Z'/%3E%3C/svg%3E");
+  padding-left: 32px !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%2394a3b8' d='M10.5 6.5a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm-.78 4.28a5.5 5.5 0 1 1 1.06-1.06l3.5 3.5a.75.75 0 1 1-1.06 1.06l-3.5-3.5Z'/%3E%3C/svg%3E");
   background-position: 10px center;
   background-repeat: no-repeat;
   background-size: 14px;
@@ -548,7 +603,7 @@ a:hover {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-4);
   scrollbar-gutter: stable;
 }
 
@@ -556,24 +611,26 @@ a:hover {
   padding: var(--space-6) var(--space-4);
   text-align: center;
   color: var(--muted);
-  font-size: var(--text-base);
+  font-size: var(--text-sm, 13px);
 }
 
 .session-group {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .session-group-title {
-  padding: var(--space-1) var(--space-2) var(--space-1);
-  color: var(--muted);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  padding: var(--space-2) var(--space-3);
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .session-row {
   position: relative;
   border-radius: var(--radius);
-  transition: background-color var(--dur-fast) var(--ease-out);
+  margin: 2px 0;
 }
 
 .session-row:hover {
@@ -581,20 +638,21 @@ a:hover {
 }
 
 .session-row.active {
-  background: var(--neutral-subtle);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--accent-subtle);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .session-card {
   display: block;
   width: 100%;
-  min-height: 64px;
+  min-height: 68px;
   padding: 10px 44px 10px var(--space-3);
   border: 0;
   background: transparent;
   color: var(--fg);
   text-align: left;
   cursor: pointer;
+  border-radius: var(--radius);
 }
 
 .session-repo {
@@ -616,28 +674,33 @@ a:hover {
   flex: 0 0 8px;
   border-radius: 50%;
   background: var(--muted);
+  box-shadow: 0 0 0 2px var(--canvas-inset);
 }
 
 .status-dot.running {
   background: var(--yellow);
   animation: pulse 2s ease-in-out infinite;
+  box-shadow: 0 0 0 2px var(--canvas-inset), 0 0 8px var(--yellow-muted);
 }
 
 .status-dot.completed {
   background: var(--green);
+  box-shadow: 0 0 0 2px var(--canvas-inset);
 }
 
 .status-dot.failed {
   background: var(--red);
+  box-shadow: 0 0 0 2px var(--canvas-inset);
 }
 
 .status-dot.cancelled {
   background: var(--neutral-emphasis);
+  box-shadow: 0 0 0 2px var(--canvas-inset);
 }
 
 .session-title {
   display: -webkit-box;
-  margin-top: var(--space-1);
+  margin-top: 4px;
   overflow: hidden;
   color: var(--fg);
   font-size: var(--text-base);
@@ -647,9 +710,13 @@ a:hover {
   -webkit-box-orient: vertical;
 }
 
+.session-row.active .session-title {
+  color: var(--accent);
+}
+
 .session-time {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--faint);
   font-size: var(--text-xs);
 }
 
@@ -660,7 +727,7 @@ a:hover {
   display: flex;
   gap: 2px;
   opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
 .session-row:hover .session-actions,
@@ -670,9 +737,10 @@ a:hover {
 }
 
 .session-action {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   font-size: 0;
+  border-radius: var(--radius-sm);
 }
 
 .session-action svg {
@@ -685,13 +753,14 @@ a:hover {
   text-align: center;
   color: var(--muted);
   font-size: var(--text-base);
+  line-height: 1.7;
 }
 
 .history-error {
   color: var(--red);
 }
 
-/* ── Main area ─────────────────────────────────────────────── */
+/* ── 主区 ─────────────────────────────────────────────── */
 #main {
   position: relative;
   display: flex;
@@ -710,7 +779,6 @@ a:hover {
   min-height: 0;
 }
 
-/* Panel headers (GitHub .Box-header) */
 #conversation-header,
 .report-header {
   display: flex;
@@ -723,7 +791,7 @@ a:hover {
 }
 
 #conversation-header {
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-5);
 }
 
 .conversation-heading {
@@ -735,11 +803,12 @@ a:hover {
 
 .conversation-label {
   overflow: hidden;
-  color: var(--fg);
-  font-size: var(--text-base);
+  color: var(--fg-strong);
+  font-size: var(--text-md);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .header-actions {
@@ -752,7 +821,7 @@ a:hover {
   display: none;
 }
 
-/* Message stream */
+/* 消息流 */
 #messages {
   display: flex;
   flex: 1;
@@ -765,10 +834,10 @@ a:hover {
   scrollbar-gutter: stable;
 }
 
-/* Comments (GitHub timeline comment boxes) */
+/* 消息气泡 */
 .msg {
   max-width: min(82%, 780px);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: 12px 16px;
   font-size: var(--text-base);
   line-height: var(--leading);
@@ -779,35 +848,40 @@ a:hover {
 .msg.system {
   align-self: center;
   max-width: min(92%, 780px);
-  padding: var(--space-1) var(--space-4);
+  padding: var(--space-2) var(--space-4);
   color: var(--muted);
   text-align: center;
+  font-size: var(--text-xs);
 }
 
 .msg.user {
   align-self: flex-end;
   border: 1px solid var(--accent-muted);
-  background: var(--bg);
+  background: var(--accent-subtle);
+  color: var(--fg-strong);
 }
 
 .msg.assistant {
   align-self: flex-start;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
 }
 
 .msg.user::before,
-.msg.assistant:not(.report-preview):not(.investigation-timeline)::before {
+.msg.assistant:not(.report-preview):not(.investigation-timeline):not(.reasoning-card)::before {
   content: attr(data-speaker);
   display: block;
   margin-bottom: var(--space-1);
-  color: var(--fg);
-  font-size: var(--text-base);
-  font-weight: 600;
-  line-height: 20px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-/* Report preview card (GitHub .Box) */
+/* 报告预览卡片 */
 .msg.report-preview {
   align-self: flex-start;
   width: min(88%, 780px);
@@ -815,29 +889,34 @@ a:hover {
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-medium);
 }
 
 .report-preview-label {
-  padding: 8px 16px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--card);
-  color: var(--muted);
+  background: linear-gradient(90deg, var(--accent-subtle) 0%, transparent 100%);
+  color: var(--accent);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .report-preview-title {
-  padding: 16px 16px 0;
-  color: var(--fg);
+  padding: 16px 18px 0;
+  color: var(--fg-strong);
   font-size: var(--text-md);
   font-weight: 600;
   line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
 .report-preview-root {
   max-width: 80ch;
-  padding: 8px 16px 16px;
+  padding: 8px 18px 16px;
   color: var(--muted);
   font-size: var(--text-base);
   white-space: pre-wrap;
@@ -852,16 +931,16 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 8px 16px;
+  padding: 10px 18px;
   border-top: 1px solid var(--border-muted);
-  background: var(--card);
+  background: var(--canvas-subtle);
 }
 
 .report-preview-button {
   margin-left: auto;
 }
 
-/* Tool call card (GitHub warning callout) */
+/* 工具卡片 */
 .msg.tool {
   align-self: flex-start;
   border: 1px solid var(--yellow-muted);
@@ -870,10 +949,13 @@ a:hover {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   cursor: pointer;
+  border-radius: var(--radius);
 }
 
 .msg.tool:hover {
   border-color: var(--yellow);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .msg.tool .preview {
@@ -897,12 +979,13 @@ a:hover {
   display: none;
 }
 
-/* Error message (GitHub .flash-error) */
+/* 错误消息 */
 .msg.error {
   align-self: center;
   border: 1px solid var(--red-muted);
   background: var(--red-subtle);
   color: var(--red);
+  border-radius: var(--radius);
 }
 
 .msg.error.with-retry {
@@ -917,19 +1000,20 @@ a:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 30px;
   border: 1px solid var(--red-muted);
   border-radius: var(--radius);
-  padding: 3px 12px;
+  padding: 4px 12px;
   background: transparent;
   color: var(--red);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .retry-button:hover {
   border-color: var(--red);
+  background: var(--red-subtle);
 }
 
 .retry-button svg {
@@ -937,15 +1021,16 @@ a:hover {
   height: 13px;
 }
 
-/* Investigation timeline (GitHub .Box) */
+/* 调查轨迹卡片 */
 .investigation-timeline {
   align-self: flex-start;
   width: min(88%, 780px);
   max-width: 780px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  background: var(--bg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
 }
 
 .timeline-header,
@@ -958,22 +1043,26 @@ a:hover {
 
 .timeline-header {
   justify-content: space-between;
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .timeline-title {
-  color: var(--muted);
+  color: var(--faint);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .timeline-metric {
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  padding: 0 8px;
+  padding: 2px 10px;
+  background: var(--bg);
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  font-weight: 500;
   line-height: 18px;
 }
 
@@ -984,43 +1073,56 @@ a:hover {
 
 .timeline-step {
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-columns: 12px minmax(0, 1fr);
   align-items: start;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: var(--text-base);
 }
 
+.timeline-step:hover {
+  background: var(--neutral-subtle);
+  color: var(--fg);
+}
+
 .timeline-step::before {
   content: "";
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   margin-top: 7px;
   border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
-/* Streaming reasoning card */
+/* 流式推理卡片 */
 .reasoning-card {
   align-self: flex-start;
   width: min(88%, 780px);
   max-width: 780px;
   border: 1px solid var(--border-muted);
   border-radius: var(--radius);
-  padding: 8px 12px;
+  padding: 10px 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
 }
 
 .reasoning-summary {
   color: var(--muted);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 700;
   list-style: none;
   user-select: none;
   cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .reasoning-summary::before {
   content: "▸ ";
+  color: var(--accent);
 }
 
 .reasoning-card[open] .reasoning-summary::before {
@@ -1032,26 +1134,28 @@ a:hover {
   max-height: 280px;
   overflow: auto;
   border-radius: var(--radius);
-  padding: 8px 12px;
-  background: var(--card);
+  padding: 10px 12px;
+  background: var(--canvas-inset);
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.6;
 }
 
 
-/* ── Report panel ──────────────────────────────────────────── */
+/* ── 报告面板 ──────────────────────────────────────────── */
 #report-panel {
   display: none;
-  flex: 0 0 min(520px, 44vw);
+  flex: 0 0 min(560px, 46vw);
   flex-direction: column;
-  width: min(520px, 44vw);
-  min-width: 340px;
+  width: min(560px, 46vw);
+  min-width: 360px;
   min-height: 0;
   border-left: 1px solid var(--border-muted);
   background: var(--bg);
+  box-shadow: -1px 0 0 var(--border-muted);
 }
 
 #main.report-open #report-panel {
@@ -1059,16 +1163,17 @@ a:hover {
 }
 
 .report-header {
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-5);
 }
 
 .report-header h2 {
-  color: var(--fg);
-  font-size: var(--text-base);
+  color: var(--fg-strong);
+  font-size: var(--text-md);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-/* Report body (GitHub markdown style) */
+/* 报告主体 */
 #report {
   flex: 1;
   min-height: 0;
@@ -1082,20 +1187,22 @@ a:hover {
 
 #report h3 {
   margin-bottom: var(--space-4);
-  padding-bottom: var(--space-2);
+  padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--border-muted);
-  color: var(--fg);
-  font-size: var(--text-lg);
-  font-weight: 600;
-  line-height: 1.25;
+  color: var(--fg-strong);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
 }
 
 #report h4 {
-  margin: var(--space-6) 0 var(--space-2);
-  color: var(--fg);
+  margin: var(--space-6) 0 var(--space-3);
+  color: var(--fg-strong);
   font-size: var(--text-md);
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
 }
 
 #report p,
@@ -1105,23 +1212,145 @@ a:hover {
 
 #report ul {
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
   padding-left: var(--space-6);
 }
 
 #report pre {
   max-height: 52vh;
   overflow: auto;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-4);
-  background: var(--card);
+  background: var(--canvas-inset);
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.45;
+  line-height: 1.6;
+  box-shadow: var(--shadow-sm);
 }
 
+/* 金字塔结构：核心结论卡 */
+.report-conclusion {
+  margin-bottom: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--accent-subtle) 0%, var(--card) 100%);
+  box-shadow: var(--shadow-sm);
+}
+
+.report-conclusion-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.report-conclusion-text {
+  color: var(--fg-strong);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+}
+
+/* 关键指标卡 */
+.report-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.report-metric-card {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+
+.report-metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-medium);
+  border-color: var(--accent-muted);
+}
+
+.report-metric-label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.report-metric-value {
+  display: block;
+  margin-top: 4px;
+  color: var(--fg-strong);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+/* 图表容器 */
+.report-chart {
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+
+.report-chart-title {
+  margin-bottom: var(--space-2);
+  color: var(--fg-strong);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.report-chart-canvas {
+  width: 100%;
+  height: 240px;
+}
+
+.report-chart-caption {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.report-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 160px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
+.report-chart-fallback {
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* 报告元信息 */
 .report-meta {
   display: flex;
   align-items: center;
@@ -1140,16 +1369,41 @@ a:hover {
 
 .report-section h4 {
   margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-/* Report toolbar */
+.report-section h4::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+/* 报告工具栏 */
 .report-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border-muted);
+  padding: var(--space-3);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+}
+
+.report-toolbar::before {
+  content: "导出";
+  margin-right: auto;
+  padding: 6px 4px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .report-action svg {
@@ -1157,25 +1411,32 @@ a:hover {
   height: 14px;
 }
 
-/* Report table of contents */
+/* 目录 */
 .report-toc {
   margin-bottom: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 16px;
+  padding: 10px 16px;
+  background: var(--card);
 }
 
 .report-toc summary {
-  color: var(--fg);
-  font-size: var(--text-base);
-  font-weight: 600;
+  color: var(--fg-strong);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   cursor: pointer;
+}
+
+.report-toc summary:hover {
+  color: var(--accent);
 }
 
 .report-toc ol {
   display: grid;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
+  gap: var(--space-2);
+  margin-top: var(--space-3);
   padding-left: var(--space-5);
 }
 
@@ -1189,30 +1450,57 @@ a:hover {
   text-decoration: underline;
 }
 
-/* Evidence list */
+/* 证据列表 */
 .evidence-list {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .evidence-item {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--card);
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              transform var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
 }
 
 .evidence-item:hover {
-  border-color: var(--control-hover-border);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .evidence-path {
-  margin-bottom: var(--space-1);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
+}
+
+.evidence-path::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.evidence-path .evidence-lines {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .evidence-link {
@@ -1236,51 +1524,65 @@ a:hover {
   height: 12px;
 }
 
-/* Status pills (GitHub labels / state badges: solid, white text) */
+/* 状态徽章 */
 .badge,
 .review-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 4px;
   border-radius: var(--radius-pill);
-  padding: 0 7px;
+  padding: 2px 10px;
   color: #ffffff;
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 18px;
   white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.badge::before,
+.review-chip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .badge.high {
-  background: var(--green-emphasis);
+  background: linear-gradient(135deg, var(--green) 0%, var(--green-emphasis) 100%);
+  box-shadow: 0 1px 3px var(--green-muted);
 }
 
 .badge.medium {
-  background: var(--yellow-emphasis);
+  background: linear-gradient(135deg, var(--yellow) 0%, var(--yellow-emphasis) 100%);
+  box-shadow: 0 1px 3px var(--yellow-muted);
 }
 
 .badge.low {
-  background: var(--red-emphasis);
+  background: linear-gradient(135deg, var(--red) 0%, var(--red-emphasis) 100%);
+  box-shadow: 0 1px 3px var(--red-muted);
 }
 
 .review-chip.approved {
-  background: var(--green-emphasis);
+  background: linear-gradient(135deg, var(--green) 0%, var(--green-emphasis) 100%);
 }
 
 .review-chip.revised {
-  background: var(--accent-emphasis);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-emphasis) 100%);
 }
 
 .review-chip.unavailable {
-  background: var(--neutral-emphasis);
+  background: linear-gradient(135deg, var(--neutral-emphasis) 0%, var(--faint) 100%);
 }
 
-/* Independent review block */
+/* 独立审查块 */
 .review-section {
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
   background: var(--card);
+  box-shadow: var(--shadow-sm);
 }
 
 .review-summary {
@@ -1293,26 +1595,46 @@ a:hover {
   color: var(--muted);
 }
 
-/* Report details blocks */
+/* 详情块 */
 #report details {
   margin-top: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  overflow: hidden;
 }
 
 #report summary {
-  padding: 8px 16px;
-  color: var(--fg);
+  padding: 10px 16px;
+  color: var(--fg-strong);
   font-size: var(--text-base);
   font-weight: 600;
   cursor: pointer;
+  list-style: none;
+  position: relative;
+}
+
+#report summary::-webkit-details-marker {
+  display: none;
+}
+
+#report summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: var(--space-2);
+  color: var(--accent);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+#report details[open] summary::before {
+  transform: rotate(90deg);
 }
 
 #report details pre {
   margin: 0 8px 8px;
 }
 
-/* Patch block */
+/* Patch 块 */
 .patch-wrap {
   display: flex;
   flex-direction: column;
@@ -1329,12 +1651,12 @@ a:hover {
   height: 12px;
 }
 
-/* Diff rendering (GitHub diff colors) */
+/* Diff 渲染 */
 .diff-block {
   margin: 0;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: var(--leading);
+  line-height: 1.7;
   white-space: pre;
 }
 
@@ -1342,34 +1664,42 @@ a:hover {
   display: block;
   background: var(--green-subtle);
   color: var(--fg);
+  border-left: 3px solid var(--green);
+  padding-left: 8px;
 }
 
 .diff-del {
   display: block;
   background: var(--red-subtle);
   color: var(--fg);
+  border-left: 3px solid var(--red);
+  padding-left: 8px;
 }
 
 .diff-ctx {
   display: block;
   color: var(--muted);
+  padding-left: 8px;
 }
 
 .diff-hunk {
   display: block;
-  padding: 2px 0;
+  padding: 4px 8px;
   background: var(--accent-subtle);
   color: var(--accent);
+  font-weight: 600;
 }
 
 .diff-add-file,
 .diff-del-file {
   display: block;
-  color: var(--fg);
-  font-weight: 600;
+  padding: 6px 8px;
+  color: var(--fg-strong);
+  font-weight: 700;
+  background: var(--canvas-subtle);
 }
 
-/* ── Input bar ─────────────────────────────────────────────── */
+/* ── 输入栏 ─────────────────────────────────────────────── */
 #input-bar {
   display: none;
   flex: 0 0 auto;
@@ -1383,48 +1713,62 @@ a:hover {
   flex: 1;
 }
 
-/* ── Progress strip (GitHub Actions log style) ─────────────── */
+/* ── 进度条 ─────────────────────────────────────────────── */
 #progress {
-  flex: 0 0 30px;
-  min-height: 30px;
-  padding: 6px var(--space-4);
+  flex: 0 0 32px;
+  min-height: 32px;
+  padding: 8px var(--space-5);
   border-top: 1px solid var(--border-muted);
-  background: var(--bg);
+  background: var(--card);
   color: var(--yellow);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   overflow: hidden;
+  position: relative;
 }
 
-/* ── Dialog ────────────────────────────────────────────────── */
+#progress::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--yellow) 0%, var(--yellow-emphasis) 100%);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* ── 对话框 ────────────────────────────────────────────── */
 dialog {
-  width: min(420px, calc(100vw - 32px));
+  width: min(440px, calc(100vw - 32px));
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--bg);
   color: var(--fg);
   box-shadow: var(--shadow-xl);
 }
 
 dialog::backdrop {
-  background: rgba(1, 4, 9, 0.8);
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(4px);
 }
 
 [data-theme="light"] dialog::backdrop {
-  background: rgba(140, 149, 159, 0.4);
+  background: rgba(15, 23, 42, 0.3);
 }
 
 .dialog-body {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-4);
+  padding: var(--space-5);
 }
 
 .dialog-body h3 {
-  color: var(--fg);
-  font-size: var(--text-base);
+  color: var(--fg-strong);
+  font-size: var(--text-md);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .dialog-body p {
@@ -1440,56 +1784,57 @@ dialog::backdrop {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
 }
 
-/* Confirm = primary green */
 .dialog-actions .confirm {
-  border-color: var(--control-border);
-  background: var(--green-emphasis);
+  border-color: var(--green-emphasis);
+  background: linear-gradient(180deg, var(--green) 0%, var(--green-emphasis) 100%);
   color: #ffffff;
 }
 
 .dialog-actions .confirm:hover {
-  border-color: var(--control-border);
-  background: var(--green-hover);
+  background: linear-gradient(180deg, var(--green-hover) 0%, var(--green-emphasis) 100%);
 }
 
-/* Destructive = danger (red text, fills red on hover) */
 .dialog-actions .danger {
   color: var(--red);
+  border-color: var(--red-muted);
 }
 
 .dialog-actions .danger:hover {
-  border-color: transparent;
+  border-color: var(--red);
   background: var(--red-emphasis);
   color: #ffffff;
 }
 
-/* ── Toast ─────────────────────────────────────────────────── */
+/* ── Toast ─────────────────────────────────────────────── */
 .toast {
   position: fixed;
-  bottom: var(--space-6);
+  bottom: var(--space-8);
   left: 50%;
   z-index: 100;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 16px;
-  background: var(--bg);
+  padding: 10px 18px;
+  background: var(--card);
   color: var(--fg);
   font-size: var(--text-base);
+  font-weight: 500;
   box-shadow: var(--shadow-large);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition: opacity var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out);
 }
 
 .toast.visible {
   opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
-/* ── Utilities ─────────────────────────────────────────────── */
+/* ── 工具类 ─────────────────────────────────────────────── */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1502,14 +1847,37 @@ dialog::backdrop {
   border: 0;
 }
 
-/* ── Keyframes ─────────────────────────────────────────────── */
+/* ── 动画 ─────────────────────────────────────────────── */
 @keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
   50% {
-    opacity: 0.5;
+    opacity: 0.6;
+    transform: scale(0.85);
   }
 }
 
-/* ── Responsive ────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg,
+.investigation-timeline,
+.report-preview,
+.reasoning-card {
+  animation: fadeInUp var(--dur-base) var(--ease-out);
+}
+
+/* ── 响应式 ────────────────────────────────────────────── */
 @media (max-width: 1180px) {
   #sidebar {
     flex: 0 0 280px;
@@ -1520,7 +1888,7 @@ dialog::backdrop {
     position: absolute;
     z-index: 10;
     inset: 0 0 0 auto;
-    width: min(520px, 100%);
+    width: min(560px, 100%);
     min-width: 0;
     box-shadow: var(--shadow-large);
   }
@@ -1537,11 +1905,11 @@ dialog::backdrop {
   }
 
   .compose-row {
-    grid-template-columns: minmax(0, 1fr) 32px;
+    grid-template-columns: minmax(0, 1fr) 34px;
   }
 
   .primary-action {
-    width: 32px;
+    width: 34px;
     padding: 0;
   }
 
@@ -1649,7 +2017,7 @@ dialog::backdrop {
   }
 
   #report-toggle {
-    width: 32px;
+    width: 34px;
     padding: 0;
   }
 
@@ -1710,7 +2078,7 @@ dialog::backdrop {
   }
 
   #input-bar button {
-    width: 32px;
+    width: 34px;
     padding: 0;
   }
 
@@ -1724,6 +2092,10 @@ dialog::backdrop {
 
   .toast {
     bottom: var(--space-4);
+  }
+
+  .report-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
