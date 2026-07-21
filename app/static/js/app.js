@@ -504,6 +504,47 @@
 
   let analyzeInProgress = false;
 
+  // 实时分析计时器：调查过程中在 progress 区域显示阶段文本和已用时间
+  let analysisTimerId = null;
+  let analysisStartTime = 0;
+  let currentPhaseText = "";
+
+  function formatElapsed(seconds) {
+    if (seconds < 60) return seconds + "s";
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m + ":" + (s < 10 ? "0" + s : s);
+  }
+
+  function startAnalysisTimer() {
+    stopAnalysisTimer();
+    analysisStartTime = Date.now();
+    analysisTimerId = window.setInterval(function () {
+      const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
+      const phase = currentPhaseText || t("fetching");
+      document.getElementById("progress").textContent = phase + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+    }, 1000);
+  }
+
+  function stopAnalysisTimer() {
+    if (analysisTimerId !== null) {
+      window.clearInterval(analysisTimerId);
+      analysisTimerId = null;
+    }
+    analysisStartTime = 0;
+  }
+
+  function setAnalysisPhase(text) {
+    currentPhaseText = text || "";
+    if (analysisTimerId !== null) {
+      const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
+      document.getElementById("progress").textContent =
+        currentPhaseText + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+    } else {
+      document.getElementById("progress").textContent = currentPhaseText;
+    }
+  }
+
   async function analyze() {
     // 防重入：快速双击或回车多次时只允许一个流，避免状态错乱和旧 reader 泄漏
     if (analyzeInProgress) return;
@@ -535,7 +576,9 @@
     report = null;
     activeSession = null;
     resetWorkspace(false);
-    document.getElementById("progress").textContent = t("fetching");
+    currentPhaseText = t("fetching");
+    startAnalysisTimer();
+    document.getElementById("progress").textContent = currentPhaseText;
     addMsg("assistant", t("analyzing_prefix") + url);
 
     try {
@@ -582,6 +625,7 @@
       document.getElementById("progress").textContent = "";
       IA.Runtime.setCancelVisible(false);
     } finally {
+      stopAnalysisTimer();
       currentStream = null;
       analyzeInProgress = false;
     }
@@ -594,6 +638,9 @@
   function closeReasoningCard() {
     if (!currentReasoningCard) return;
     currentReasoningCard.open = false;
+    // 完成后将 summary 从"思考中…"更新为"思考完成"，避免结果出来后仍显示思考中
+    const summary = currentReasoningCard.querySelector(".reasoning-summary");
+    if (summary) summary.textContent = t("thinking_complete");
     currentReasoningCard = null;
   }
 
@@ -633,21 +680,24 @@
         loadSessions();
         break;
       case "phase":
-        document.getElementById("progress").textContent = evt.data.label || evt.data.phase;
+        setAnalysisPhase(evt.data.label || evt.data.phase);
         break;
       case "start":
-        document.getElementById("progress").textContent = t("exploring_files", { count: evt.data.file_count });
+        setAnalysisPhase(t("exploring_files", { count: evt.data.file_count }));
         if (evt.data.title) document.querySelector(".conversation-label").textContent = evt.data.title;
         break;
       case "tool_call": {
-        document.getElementById("progress").textContent =
-          evt.data.name + ": " + (() => {
-            try {
-              return JSON.stringify(evt.data.args).substring(0, 60);
-            } catch (e) {
-              return "";
-            }
-          })();
+        setAnalysisPhase(
+          evt.data.name +
+            ": " +
+            (() => {
+              try {
+                return JSON.stringify(evt.data.args).substring(0, 60);
+              } catch (e) {
+                return "";
+              }
+            })(),
+        );
         const card = addToolCard(evt.data.name, evt.data.args);
         toolCardRef.setToolCard(card);
         break;
@@ -662,11 +712,14 @@
         appendReasoningDelta(evt.data.delta || "");
         break;
       case "review":
-        document.getElementById("progress").textContent = t("review_progress", { status: evt.data.status });
+        setAnalysisPhase(t("review_progress", { status: evt.data.status }));
         break;
       case "report":
         report = evt.data;
         activeSession = activeSession || {};
+        // 报告生成后停止计时器并清空 progress，避免仍显示"思考中"
+        stopAnalysisTimer();
+        currentPhaseText = "";
         renderReport(report);
         document.getElementById("input-bar").style.display = "flex";
         document.getElementById("report-toggle").style.display = "inline-flex";
@@ -676,17 +729,25 @@
         loadSessions();
         break;
       case "error":
+        stopAnalysisTimer();
+        currentPhaseText = "";
         addMsg("error", evt.message || t("error_prefix").trim());
         document.getElementById("progress").textContent = "";
         loadSessions();
         break;
       case "cancelled":
+        stopAnalysisTimer();
+        currentPhaseText = "";
         addMsg("system", t("cancelled_message"));
         document.getElementById("progress").textContent = "";
         IA.Runtime.setCancelVisible(false);
         loadSessions();
         break;
       case "done":
+        // 兜底：确保 done 事件一定停止计时器并清空 progress
+        stopAnalysisTimer();
+        currentPhaseText = "";
+        document.getElementById("progress").textContent = "";
         IA.Runtime.setCancelVisible(false);
         loadSessions();
         break;
@@ -795,12 +856,14 @@
 
     const chart = echarts.init(container);
     chart.setOption({
-      grid: { left: 8, right: 16, top: 16, bottom: 64, containLabel: true },
+      grid: { left: 8, right: 24, top: 16, bottom: 72, containLabel: true },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
+        confine: true,
         backgroundColor: palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff",
         borderWidth: 0,
+        padding: [8, 12],
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function (params) {
           const idx = params[0].dataIndex;
@@ -812,7 +875,7 @@
       xAxis: {
         type: "category",
         data: paths,
-        axisLabel: { color: palette.textDim, fontSize: 11, rotate: 30, interval: 0 },
+        axisLabel: { color: palette.textDim, fontSize: 11, rotate: 35, interval: 0, width: 80, overflow: "truncate", hideOverlap: false },
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { lineStyle: { color: palette.line } },
       },
@@ -893,16 +956,18 @@
         indicator: labels.map(function (name) {
           return { name: name, max: 100 };
         }),
-        radius: "62%",
-        center: ["50%", "54%"],
-        axisName: { color: palette.textDim, fontSize: 11 },
+        radius: "58%",
+        center: ["50%", "52%"],
+        axisName: { color: palette.textDim, fontSize: 11, padding: [3, 6] },
         splitArea: { areaStyle: { color: palette.splitArea } },
         axisLine: { lineStyle: { color: palette.line } },
         splitLine: { lineStyle: { color: palette.line } },
       },
       tooltip: {
+        confine: true,
         backgroundColor: palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff",
         borderWidth: 0,
+        padding: [8, 12],
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function () {
           return labels
@@ -999,7 +1064,7 @@
     parts.push(
       `<div class="report-chart">` +
         `<div class="report-chart-title">${IA.escapeHtml(t("report_confidence_chart_title"))}</div>` +
-        `<div id="report-confidence-chart" class="report-chart-canvas"></div>` +
+        `<div id="report-confidence-chart" class="report-chart-canvas radar-chart"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("report_confidence_chart_caption"))}</div>` +
         `</div>`,
     );

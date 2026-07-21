@@ -1301,16 +1301,20 @@ a:hover {
 
 /* 图表容器 */
 .report-chart {
-  margin: var(--space-4) 0;
-  padding: var(--space-4);
+  margin: 0 0 var(--space-5) 0;
+  padding: var(--space-4) var(--space-4) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 
+.report-chart + .report-chart {
+  margin-top: 0;
+}
+
 .report-chart-title {
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
   color: var(--fg-strong);
   font-size: var(--text-base);
   font-weight: 600;
@@ -1318,7 +1322,13 @@ a:hover {
 
 .report-chart-canvas {
   width: 100%;
-  height: 240px;
+  height: 280px;
+  min-height: 280px;
+}
+
+.report-chart-canvas.radar-chart {
+  height: 260px;
+  min-height: 260px;
 }
 
 .report-chart-caption {
