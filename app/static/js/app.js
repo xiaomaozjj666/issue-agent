@@ -625,6 +625,9 @@
 
   function resetWorkspace(showWelcome) {
     const wasReportOpen = document.getElementById("main").classList.contains("report-open");
+    // M7 修复：切到无 report 的会话时必须 dispose ECharts 实例，
+    // 否则 canvas 绑定的事件监听不会释放，长期切换会累积内存泄漏
+    disposeReportCharts();
     document.getElementById("messages").innerHTML = "";
     document.getElementById("main").classList.remove("report-open");
     document.getElementById("report-toggle").style.display = "none";
@@ -750,8 +753,10 @@
   // H5 修复：用户上滑阅读时不要把视图拉回底部。threshold=80px 容许小幅滚动仍跟随。
   function scrollToBottomIfNear(container, threshold) {
     if (!container) return;
+    // 动态 threshold：视口高度的比例，避免大代码块/长表格时贴底用户被甩出
+    const dynamicThreshold = Math.max(threshold || 80, (container.clientHeight || 400) * 0.15);
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distance > (threshold || 80)) return;
+    if (distance > dynamicThreshold) return;
     requestAnimationFrame(function () {
       container.scrollTop = container.scrollHeight;
     });
@@ -1828,9 +1833,15 @@
     if (!msg || !sessionId) {
       return;
     }
+    // H1 修复：捕获当前会话 ID。catch/finally 中若 sessionId 已变（用户切换了会话），
+    // 不向新视图写入"已停止生成"等脏数据，也不操作新视图的输入框/progress
+    const chatSessionId = sessionId;
     chatInProgress = true;
-    inp.value = "";
-    autoResizeTextarea(inp);
+    // M3 修复：重试（messageOverride）时不清空用户可能已输入的新文本
+    if (messageOverride === undefined) {
+      inp.value = "";
+      autoResizeTextarea(inp);
+    }
     setChatDisabled(true);
     // 显示停止生成按钮
     const stopBtn = document.getElementById("chat-stop-btn");
@@ -1878,7 +1889,7 @@
       assistantBody = document.createElement("div");
       assistantBody.className = "msg-body markdown-body";
       assistantMsg.appendChild(assistantBody);
-      // 打字光标
+      // 打字光标：持久节点，不随 delta 重建
       const cursor = document.createElement("span");
       cursor.className = "typewriter-cursor";
       cursor.setAttribute("aria-hidden", "true");
@@ -1887,11 +1898,10 @@
       scrollToBottomIfNear(messagesEl, 80);
     }
 
-    function appendDelta(text) {
-      ensureAssistantMsg();
-      assistantContent += text;
-      // 重新渲染 markdown + 追加光标
+    function renderAssistantContent() {
+      if (!assistantBody) return;
       assistantBody.innerHTML = renderMarkdown(assistantContent);
+      // 重新追加持久光标
       const cursor = document.createElement("span");
       cursor.className = "typewriter-cursor";
       cursor.setAttribute("aria-hidden", "true");
@@ -1899,17 +1909,60 @@
       scrollToBottomIfNear(messagesEl, 80);
     }
 
+    // H3 修复：rAF 节流 — 多个 delta 在同一帧内合并为一次 markdown 渲染，
+    // 避免高频 delta 下 marked.parse + DOMPurify.sanitize + innerHTML 的 O(N²) 开销
+    let pendingRender = false;
+    function scheduleRender() {
+      if (pendingRender) return;
+      pendingRender = true;
+      requestAnimationFrame(function () {
+        pendingRender = false;
+        // H1 守卫：会话已切换时不渲染
+        if (chatSessionId !== sessionId) return;
+        renderAssistantContent();
+      });
+    }
+
+    function appendDelta(text) {
+      ensureAssistantMsg();
+      assistantContent += text;
+      scheduleRender();
+    }
+
     function finalizeAssistant() {
       if (finalized) return;
       finalized = true;
+      // 刷新尚未渲染的 delta
+      if (pendingRender) {
+        pendingRender = false;
+        renderAssistantContent();
+      }
       if (!assistantMsg) {
-        // 没收到任何 delta（极端情况），创建一个空消息占位
         ensureAssistantMsg();
       }
       assistantBody.innerHTML = renderMarkdown(assistantContent);
       enhanceCodeBlocks(assistantBody);
       appendMsgActions(assistantMsg, assistantContent);
       scrollToBottomIfNear(messagesEl, 80);
+    }
+
+    // M1 修复：chat 看门狗 — 30s 无 delta 提示"连接变慢"，90s 提示"连接可能已断开"
+    let lastEventTime = Date.now();
+    let watchdogTimer = setInterval(function () {
+      if (chatSessionId !== sessionId) { clearInterval(watchdogTimer); return; }
+      const elapsed = Date.now() - lastEventTime;
+      if (elapsed > 90000) {
+        progressEl.textContent = t("connection_stalled");
+        clearInterval(watchdogTimer);
+      } else if (elapsed > 30000) {
+        progressEl.textContent = t("connection_slow");
+      }
+    }, 5000);
+    function resetWatchdog() {
+      lastEventTime = Date.now();
+      if (progressEl.textContent === t("connection_slow") || progressEl.textContent === t("connection_stalled")) {
+        progressEl.textContent = "";
+      }
     }
 
     // firstEventReceived 需在 try 块外声明，catch 块也要访问它判断是否清理 progressEl
@@ -1928,6 +1981,7 @@
       }
       // SSE 事件处理：解析单个 data: 事件并分发到 delta/tool_call/done/error
       function processSseEvent(event) {
+        resetWatchdog();
         if (!firstEventReceived) {
           firstEventReceived = true;
           progressEl.textContent = "";
@@ -2005,6 +2059,8 @@
         }
       }
     } catch (e) {
+      // H1 守卫：会话已切换时不向新视图写入任何 UI 副作用
+      if (chatSessionId !== sessionId) return;
       if (skeletonMsg.parentNode) skeletonMsg.remove();
       if (!firstEventReceived) progressEl.textContent = "";
       if (stopped || e.name === "AbortError") {
@@ -2022,12 +2078,20 @@
         addErrorWithRetry(t("error_prefix") + e.message);
       }
     } finally {
+      if (watchdogTimer) clearInterval(watchdogTimer);
+      // 刷新尚未渲染的剩余 delta
+      if (pendingRender && chatSessionId === sessionId) {
+        pendingRender = false;
+        renderAssistantContent();
+      }
       chatInProgress = false;
       chatAbortController = null;
       if (stopBtn) {
         stopBtn.style.display = "none";
         stopBtn.removeEventListener("click", onStop);
       }
+      // H1 守卫：会话已切换时不操作新视图的输入框
+      if (chatSessionId !== sessionId) return;
       setChatDisabled(false);
       inp.focus();
     }
@@ -2055,6 +2119,8 @@
     retryBtn.addEventListener(
       "click",
       function () {
+        // M2 修复：chat 进行中时不销毁重试按钮，避免消息丢失且 UI 无反馈
+        if (chatInProgress) return;
         m.remove();
         if (lastFailedChat !== null) chat(lastFailedChat);
       },

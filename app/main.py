@@ -326,6 +326,12 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> Streamin
             session.phase = "completed"
             session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
             await session_mgr.save(session)
+        except asyncio.CancelledError:
+            # 客户端断开连接（浏览器关闭/网络中断）：标记会话为中断，
+            # 避免 session.status 永远卡在 "running" 且锁被持有
+            logger.info("chat stream cancelled (client disconnect) for session %s", session.session_id)
+            await mark_stream_interrupted(session_mgr, session.session_id, started_at)
+            raise
         except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
             logger.exception("chat stream failed for session %s", session.session_id)
             await mark_session_failed(session_mgr, session, exc)

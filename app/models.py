@@ -93,7 +93,7 @@ class SourceFile(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str | None = None
     issue_url: HttpUrl | None = None
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=32_000)
 
 
 class ChatResponse(BaseModel):

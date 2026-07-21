@@ -303,7 +303,7 @@ class IssueAgent:
                     yield event
             except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
                 logger.exception("chat_stream failed for session %s", session.session_id)
-                yield {"type": "error", "message": str(exc)[:500]}
+                yield {"type": "error", "message": _friendly_chat_error(exc)}
 
     async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
         if session.issue is None:
@@ -365,6 +365,14 @@ class IssueAgent:
                                     entry["arguments"] += fn.arguments
 
                 collected_content = "".join(collected_content_parts)
+                # LLM 返回空 stream（零 chunk 或全部空 content）且无 tool 调用：
+                # 不写入空 assistant 消息污染上下文，直接报错让用户重试
+                if not collected_content and not tool_call_buffers:
+                    yield {
+                        "type": "error",
+                        "message": "Model returned an empty response. Please try rephrasing your question.",
+                    }
+                    return
                 serialized: dict = {"role": "assistant", "content": collected_content}
                 ordered_tool_calls = [tool_call_buffers[i] for i in sorted(tool_call_buffers)]
                 if ordered_tool_calls:
@@ -626,6 +634,23 @@ def _serialize_message(message: ChatCompletionMessage) -> dict:
             for tc in message.tool_calls
         ]
     return msg
+
+
+def _friendly_chat_error(exc: Exception) -> str:
+    """Map SDK/network exceptions to user-friendly messages for SSE error events."""
+    status = getattr(exc, "status_code", None)
+    if status == 401:
+        return "API key is invalid. Please check the configuration."
+    if status == 429:
+        return "Model rate limit reached. Please wait a moment and retry."
+    if status is not None and 500 <= status < 600:
+        return f"Model service error (HTTP {status}). Please retry shortly."
+    name = type(exc).__name__
+    if "Timeout" in name:
+        return "Model response timed out. Please try again."
+    if "Connection" in name or "APIConnection" in name:
+        return "Unable to connect to the model service. Check your network."
+    return str(exc)[:500]
 
 
 def _trim_session_messages(messages: list[dict], max_chars: int, max_messages: int = 50) -> None:

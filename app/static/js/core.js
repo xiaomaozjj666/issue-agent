@@ -61,6 +61,8 @@
     no_report_default: "This investigation has not produced a report yet.",
     tools_used_label: "Tools: ",
     connection_error: "Connection error: ",
+    connection_slow: "Connection seems slow, waiting for response…",
+    connection_stalled: "Connection may have stalled. Consider stopping and retrying",
     error_prefix: "Error: ",
     invalid_issue_url: "Please enter a valid GitHub issue URL (https://github.com/owner/repo/issues/123).",
     analysis_complete_label: "Analysis complete",
