@@ -916,7 +916,8 @@
     }, 120);
   });
 
-  // 证据分布柱状图：按文件聚合证据数量，定位问题热点模块
+  // 证据模块分布（横向柱状图）：按目录前缀聚合证据数量
+  // 真实意义：回答"问题集中在哪里"，比按单文件聚合更有决策价值
   function renderEvidenceChart(container, report) {
     if (!container) return null;
     if (!echartsAvailable()) {
@@ -924,177 +925,243 @@
       return null;
     }
     const palette = getEchartsPalette();
-    const fileMap = new Map();
+
+    // 按目录前缀聚合：src/auth/login.py → src/auth/；根目录文件 → 文件名
+    // 同时记录每个模块下的具体文件，供 tooltip 展示
+    const moduleMap = new Map();
     (report.evidence || []).forEach(function (e) {
       const path = e.path || "unknown";
-      fileMap.set(path, (fileMap.get(path) || 0) + 1);
+      const slashIdx = path.lastIndexOf("/");
+      let module;
+      if (slashIdx === -1) {
+        module = path;
+      } else if (slashIdx === 0) {
+        module = "/(root)";
+      } else {
+        // 取最后两级目录作为模块名，避免过深
+        const parts = path.split("/");
+        if (parts.length <= 3) {
+          module = parts.slice(0, -1).join("/") + "/";
+        } else {
+          module = "…/" + parts.slice(-3, -1).join("/") + "/";
+        }
+      }
+      if (!moduleMap.has(module)) {
+        moduleMap.set(module, { count: 0, files: new Set() });
+      }
+      const entry = moduleMap.get(module);
+      entry.count += 1;
+      entry.files.add(path);
     });
-    if (!fileMap.size) {
+
+    if (!moduleMap.size) {
       container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
       return null;
     }
-    // 取证据数最多的前 10 个文件，避免长尾过散
-    const entries = Array.from(fileMap.entries())
+
+    // 按证据数升序排列（横向柱状图：最大的在顶部更易读）
+    const entries = Array.from(moduleMap.entries())
       .sort(function (a, b) {
-        return b[1] - a[1];
+        return a[1].count - b[1].count;
       })
-      .slice(0, 10);
-    const paths = entries.map(function (entry) {
-      const p = entry[0];
-      return p.length > 28 ? "…" + p.slice(-26) : p;
+      .slice(-10); // 最多展示 10 个模块
+    const modules = entries.map(function (entry) {
+      return entry[0];
     });
     const counts = entries.map(function (entry) {
-      return entry[1];
+      return entry[1].count;
+    });
+    const fileLists = entries.map(function (entry) {
+      return Array.from(entry[1].files);
     });
 
+    const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
     const chart = echarts.init(container);
     chart.setOption({
-      grid: { left: 8, right: 24, top: 16, bottom: 72, containLabel: true },
+      grid: { left: 8, right: 32, top: 12, bottom: 12, containLabel: true },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
         confine: true,
-        backgroundColor: palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff",
+        backgroundColor: tooltipBg,
         borderWidth: 0,
-        padding: [8, 12],
+        padding: [10, 14],
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function (params) {
           const idx = params[0].dataIndex;
-          const fullPath = entries[idx][0];
-          const count = entries[idx][1];
-          return `${IA.escapeHtml(fullPath)}<br/>${IA.escapeHtml(t("report_legend_evidence"))}: <b>${count}</b>`;
+          const module = entries[idx][0];
+          const count = entries[idx][1].count;
+          const files = fileLists[idx];
+          const filesHtml = files
+            .slice(0, 5)
+            .map(function (f) {
+              return `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">· ${IA.escapeHtml(f)}</div>`;
+            })
+            .join("");
+          const more = files.length > 5 ? `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">+${files.length - 5}</div>` : "";
+          return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(module)}</div>` +
+            `<div>${IA.escapeHtml(t("report_legend_evidence"))}: <b>${count}</b></div>` +
+            filesHtml + more;
         },
       },
       xAxis: {
-        type: "category",
-        data: paths,
-        axisLabel: { color: palette.textDim, fontSize: 11, rotate: 35, interval: 0, width: 80, overflow: "truncate", hideOverlap: false },
-        axisLine: { lineStyle: { color: palette.line } },
-        axisTick: { lineStyle: { color: palette.line } },
-      },
-      yAxis: {
         type: "value",
         minInterval: 1,
         axisLabel: { color: palette.textDim, fontSize: 11 },
+        axisLine: { lineStyle: { color: palette.line } },
         splitLine: { lineStyle: { color: palette.line, type: "dashed" } },
+      },
+      yAxis: {
+        type: "category",
+        data: modules,
+        axisLabel: {
+          color: palette.textDim,
+          fontSize: 11,
+          width: 120,
+          overflow: "truncate",
+          margin: 12,
+        },
+        axisLine: { lineStyle: { color: palette.line } },
+        axisTick: { show: false },
       },
       series: [
         {
           type: "bar",
           data: counts,
-          barMaxWidth: 36,
+          barMaxWidth: 22,
           itemStyle: {
             color: {
               type: "linear",
               x: 0,
               y: 0,
-              x2: 0,
-              y2: 1,
+              x2: 1,
+              y2: 0,
               colorStops: [
-                { offset: 0, color: palette.primary },
-                { offset: 1, color: palette.primaryDim },
+                { offset: 0, color: palette.primaryDim },
+                { offset: 1, color: palette.primary },
               ],
             },
-            borderRadius: [4, 4, 0, 0],
+            borderRadius: [0, 4, 4, 0],
           },
           emphasis: { itemStyle: { color: palette.primary } },
+          label: {
+            show: true,
+            position: "right",
+            color: palette.text,
+            fontSize: 11,
+            fontWeight: 600,
+          },
         },
       ],
     });
     return chart;
   }
 
-  // 可信度雷达图：五维度评估（证据/根因/修复方案/回归测试/审查）
+  // 报告产出构成（环形图）：展示报告各部分实际产出数量
+  // 真实意义：一眼看出报告重心 —— 证据为主/修复为主/测试为主/风险为主
+  // 比硬编码雷达图诚实：所有数据都来自 report 实际字段
   function renderConfidenceRadar(container, report) {
     if (!container) return null;
     if (!echartsAvailable()) {
-      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
+      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("report_composition_empty"))}</div>`;
       return null;
     }
     const palette = getEchartsPalette();
-    const review = report.review_audit || { status: "not_run" };
+
     const evidenceCount = (report.evidence || []).length;
+    const changesCount = (report.proposed_changes || []).length;
     const testCount = (report.tests || []).length;
     const riskCount = (report.risks || []).length;
-    const changesCount = (report.proposed_changes || []).length;
+    const total = evidenceCount + changesCount + testCount + riskCount;
 
-    // 五维度评分（0-100，越高代表该维度支撑越充分）
-    const evidenceScore = Math.min(100, 10 + evidenceCount * 30);
-    const rootCauseScore = report.confidence === "high" ? 90 : report.confidence === "medium" ? 60 : 30;
-    const fixScore = Math.min(100, 20 + changesCount * 25);
-    const testScore = Math.min(100, 10 + testCount * 30);
-    const riskScore = Math.min(100, 30 + riskCount * 25);
-    const reviewScore =
-      review.status === "approved"
-        ? 100
-        : review.status === "revised"
-          ? 70
-          : review.status === "unavailable"
-            ? 40
-            : 20;
+    if (total === 0) {
+      container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("report_composition_empty"))}</div>`;
+      return null;
+    }
 
-    const values = [evidenceScore, rootCauseScore, fixScore, testScore, riskScore, reviewScore];
-    const labels = [
-      t("report_metric_evidence_count"),
-      t("report_root_cause"),
-      t("report_metric_proposed_changes"),
-      t("report_tests"),
-      t("report_metric_risks"),
-      t("report_review_label"),
-    ];
+    const data = [
+      { name: t("report_composition_evidence"), value: evidenceCount, color: palette.primary },
+      { name: t("report_composition_changes"), value: changesCount, color: palette.success },
+      { name: t("report_composition_tests"), value: testCount, color: palette.warning },
+      { name: t("report_composition_risks"), value: riskCount, color: palette.danger },
+    ].filter(function (d) {
+      return d.value > 0;
+    });
 
+    const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
     const chart = echarts.init(container);
     chart.setOption({
-      radar: {
-        indicator: labels.map(function (name) {
-          return { name: name, max: 100 };
-        }),
-        radius: "58%",
-        center: ["50%", "52%"],
-        axisName: { color: palette.textDim, fontSize: 11, padding: [3, 6] },
-        splitArea: { areaStyle: { color: palette.splitArea } },
-        axisLine: { lineStyle: { color: palette.line } },
-        splitLine: { lineStyle: { color: palette.line } },
-      },
       tooltip: {
+        trigger: "item",
         confine: true,
-        backgroundColor: palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff",
+        backgroundColor: tooltipBg,
         borderWidth: 0,
-        padding: [8, 12],
+        padding: [10, 14],
         textStyle: { color: palette.text, fontSize: 12 },
-        formatter: function () {
-          return labels
-            .map(function (label, idx) {
-              return `${IA.escapeHtml(label)}: <b>${values[idx]}</b>`;
-            })
-            .join("<br/>");
+        formatter: function (params) {
+          const pct = total > 0 ? ((params.value / total) * 100).toFixed(1) : "0";
+          return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(params.name)}</div>` +
+            `<div>${IA.escapeHtml(t("report_legend_evidence"))}: <b>${params.value}</b> (${pct}%)</div>`;
         },
       },
+      legend: {
+        orient: "horizontal",
+        bottom: 4,
+        icon: "circle",
+        itemWidth: 8,
+        itemHeight: 8,
+        itemGap: 12,
+        textStyle: { color: palette.textDim, fontSize: 11 },
+      },
+      graphic: [
+        {
+          type: "text",
+          left: "center",
+          top: "38%",
+          style: {
+            text: String(total),
+            fontSize: 28,
+            fontWeight: 700,
+            fill: palette.text,
+            textAlign: "center",
+          },
+        },
+        {
+          type: "text",
+          left: "center",
+          top: "52%",
+          style: {
+            text: t("report_composition_total"),
+            fontSize: 11,
+            fill: palette.textDim,
+            textAlign: "center",
+          },
+        },
+      ],
       series: [
         {
-          type: "radar",
-          data: [
-            {
-              value: values,
-              name: t("report_legend_confidence"),
-              symbol: "circle",
-              symbolSize: 5,
-              areaStyle: {
-                color: {
-                  type: "radial",
-                  x: 0.5,
-                  y: 0.5,
-                  r: 0.6,
-                  colorStops: [
-                    { offset: 0, color: palette.fill },
-                    { offset: 1, color: palette.fillDim },
-                  ],
-                },
-              },
-              lineStyle: { color: palette.primary, width: 2 },
-              itemStyle: { color: palette.primary },
-            },
-          ],
+          type: "pie",
+          radius: ["52%", "72%"],
+          center: ["50%", "44%"],
+          avoidLabelOverlap: true,
+          itemStyle: {
+            borderColor: palette.text === "#f1f5f9" ? "#1e293b" : "#ffffff",
+            borderWidth: 2,
+          },
+          label: { show: false },
+          labelLine: { show: false },
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+            itemStyle: { shadowBlur: 12, shadowColor: "rgba(0,0,0,0.3)" },
+          },
+          data: data.map(function (d) {
+            return {
+              name: d.name,
+              value: d.value,
+              itemStyle: { color: d.color },
+            };
+          }),
         },
       ],
     });
@@ -1142,25 +1209,32 @@
       .join("");
     parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
 
-    // 3. ECharts 证据分布柱状图（仅当存在证据时渲染）
-    if (r.evidence && r.evidence.length) {
-      parts.push(
-        `<div class="report-chart">` +
+    // 3 & 4. ECharts 双图表并排：证据模块分布 + 报告产出构成
+    // 仅当存在证据时才渲染证据图；产出构成图始终渲染（除非全为 0）
+    const hasEvidence = r.evidence && r.evidence.length;
+    const hasComposition =
+      (r.evidence || []).length +
+        (r.proposed_changes || []).length +
+        (r.tests || []).length +
+        (r.risks || []).length >
+      0;
+    if (hasEvidence || hasComposition) {
+      const evidenceChartHtml = hasEvidence
+        ? `<div class="report-chart report-chart-half">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("report_evidence_chart_title"))}</div>` +
           `<div id="report-evidence-chart" class="report-chart-canvas"></div>` +
           `<div class="report-chart-caption">${IA.escapeHtml(t("report_evidence_chart_caption"))}</div>` +
-          `</div>`,
-      );
+          `</div>`
+        : "";
+      const compositionChartHtml = hasComposition
+        ? `<div class="report-chart report-chart-half">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("report_confidence_chart_title"))}</div>` +
+          `<div id="report-confidence-chart" class="report-chart-canvas"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("report_confidence_chart_caption"))}</div>` +
+          `</div>`
+        : "";
+      parts.push(`<div class="report-charts-row">${evidenceChartHtml}${compositionChartHtml}</div>`);
     }
-
-    // 4. ECharts 可信度雷达图
-    parts.push(
-      `<div class="report-chart">` +
-        `<div class="report-chart-title">${IA.escapeHtml(t("report_confidence_chart_title"))}</div>` +
-        `<div id="report-confidence-chart" class="report-chart-canvas radar-chart"></div>` +
-        `<div class="report-chart-caption">${IA.escapeHtml(t("report_confidence_chart_caption"))}</div>` +
-        `</div>`,
-    );
 
     // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
     parts.push(

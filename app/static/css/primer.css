@@ -1680,17 +1680,31 @@ a:hover {
 }
 
 /* 图表容器 */
+.report-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
 .report-chart {
-  margin: 0 0 var(--space-5) 0;
+  margin: 0;
   padding: var(--space-4) var(--space-4) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--card);
   box-shadow: var(--shadow-sm);
+  min-width: 0;
 }
 
 .report-chart + .report-chart {
   margin-top: 0;
+}
+
+.report-chart-half {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .report-chart-title {
@@ -1702,13 +1716,8 @@ a:hover {
 
 .report-chart-canvas {
   width: 100%;
-  height: 280px;
-  min-height: 280px;
-}
-
-.report-chart-canvas.radar-chart {
-  height: 260px;
-  min-height: 260px;
+  height: 240px;
+  min-height: 240px;
 }
 
 .report-chart-caption {
@@ -1716,6 +1725,13 @@ a:hover {
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: 1.6;
+}
+
+/* 窄屏：图表垂直堆叠 */
+@media (max-width: 1180px) {
+  .report-charts-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .report-chart-empty {
