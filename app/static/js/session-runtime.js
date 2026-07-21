@@ -79,12 +79,14 @@
   }
 
   async function pollCancellation(sessionId) {
+    let consecutiveErrors = 0;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await new Promise(function (resolve) {
         window.setTimeout(resolve, 500);
       });
       try {
         const session = await IA.apiJson(`/session/${encodeURIComponent(sessionId)}`);
+        consecutiveErrors = 0;
         if (session.status !== "running") {
           if (window.IssueAgent.sessionId === sessionId && window.IssueAgent.restoreSession) {
             await window.IssueAgent.restoreSession(sessionId, false);
@@ -93,8 +95,22 @@
           return;
         }
       } catch (error) {
+        consecutiveErrors += 1;
         console.warn("Unable to refresh cancellation state", error);
-        return;
+        // 容忍单次抖动；连续 3 次失败说明网络/后端确有问题，必须给用户恢复路径
+        if (consecutiveErrors >= 3) {
+          const button = document.getElementById("cancel-analysis");
+          if (button) {
+            button.style.display = "inline-flex";
+            button.disabled = false;
+            button.textContent = t("cancel_button");
+          }
+          document.getElementById("progress").textContent = "";
+          if (window.IssueAgent.addMsg) {
+            window.IssueAgent.addMsg("error", t("cancel_failed_retry"));
+          }
+          return;
+        }
       }
     }
     document.getElementById("progress").textContent = t("cancellation_requested");

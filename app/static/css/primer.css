@@ -1224,6 +1224,9 @@ a:hover {
 /* 响应式：窄屏下压缩间距 */
 @media (max-width: 900px) {
   .msg.hero {
+    /* H6 修复：窄屏下父容器 padding 较小，桌面端的 clamp 负 margin 会让 hero 超出容器，
+       这里把水平 margin 重置为与父容器 padding 一致的负值，避免横向滚动条 */
+    margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) calc(var(--space-8) * -1);
     padding: var(--space-8) var(--space-4) var(--space-8);
   }
   .hero-steps {
@@ -1801,8 +1804,7 @@ a:hover {
   background: var(--canvas-subtle);
 }
 
-.report-toolbar::before {
-  content: "导出";
+.report-toolbar-label {
   margin-right: auto;
   padding: 6px 4px;
   color: var(--faint);
@@ -2131,6 +2133,24 @@ a:hover {
   font-size: var(--text-xs);
   overflow: hidden;
   position: relative;
+  /* M5 修复：长文本省略号收尾，避免被截断显示半个字 */
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* M11 修复：URL 输入校验失败时的视觉提示，2s 后由 JS 移除 */
+#issueUrl.invalid-input,
+#sidebar input.invalid-input,
+#input-bar input.invalid-input {
+  border-color: var(--red) !important;
+  box-shadow: 0 0 0 3px var(--red-muted), var(--input-shadow) !important;
+  animation: invalid-shake 220ms var(--ease-standard);
+}
+
+@keyframes invalid-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
 }
 
 #progress::before {

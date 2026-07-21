@@ -175,7 +175,12 @@
     card.dataset.sessionId = session.session_id;
     const repository = session.owner && session.repo ? session.owner + "/" + session.repo : repositoryFromUrl(session.issue_url);
     const issue = session.issue_number ? " #" + session.issue_number : "";
-    card.title = session.phase ? session.phase.replace(/_/g, " ") : session.status;
+    // H9 修复：tooltip 显示本地化的 phase / status，而非原始 enum 值
+    card.title = session.phase
+      ? enumLabel("phase", session.phase)
+      : session.status
+        ? enumLabel("status", session.status)
+        : "";
     card.innerHTML =
       `<div class="session-repo"><span class="status-dot ${IA.safeClass(session.status)}" aria-hidden="true"></span><span>${IA.escapeHtml(repository + issue)}</span></div>` +
       `<div class="session-title">${IA.escapeHtml(session.title)}</div>` +
@@ -184,7 +189,7 @@
 
     const actions = document.createElement("div");
     actions.className = "session-actions";
-    actions.appendChild(sessionAction("rename", t("dialog_rename_title").split(" ")[0] || "Rename", function () {
+    actions.appendChild(sessionAction("rename", t("action_rename_short"), function () {
       renameSession(session);
     }));
     actions.appendChild(sessionAction(showArchived ? "restore" : "archive", showArchived ? t("restore_session") : t("archive_session"), function () {
@@ -220,15 +225,52 @@
 
   function repositoryFromUrl(url) {
     const match = String(url || "").match(/github\.com\/([^/]+)\/([^/]+)/i);
-    return match ? match[1] + "/" + match[2] : "GitHub Issue";
+    return match ? match[1] + "/" + match[2] : t("fallback_repo_name");
   }
+
+  // 抽取公共的"取消当前 stream"逻辑：
+  // 用于 restoreSession/goBack/analyze 互相切换时清理上一次分析的 reader 与状态
+  // 避免旧 stream 事件继续往新视图写入造成 UI 错乱
+  async function cancelCurrentStream() {
+    if (currentStream) {
+      try {
+        await currentStream.cancel();
+      } catch (e) {
+        /* ignore */
+      }
+      currentStream = null;
+    }
+    stopAnalysisTimer();
+    currentPhaseText = "";
+    analyzeInProgress = false;
+    document.getElementById("progress").textContent = "";
+  }
+
+  // restoreSession 请求追踪：避免快速连续切换会话时旧响应覆盖新视图
+  let restoreRequestId = 0;
 
   async function restoreSession(id, recordHistory) {
     if (recordHistory === undefined) recordHistory = true;
+    // C1/C2 修复：切换会话前必须取消正在进行的分析流，否则旧 stream 事件
+    // 会继续写 sessionId/渲染消息，覆盖用户刚切换到的会话视图
+    await cancelCurrentStream();
+    // C3 修复：chat 进行中切换会话时也要中断 chat 请求，否则响应会落到新视图
+    if (chatAbortController) {
+      try {
+        chatAbortController.abort();
+      } catch (e) {
+        /* ignore */
+      }
+      chatAbortController = null;
+      chatInProgress = false;
+    }
+    const myRequestId = ++restoreRequestId;
     const messagesContainer = document.getElementById("messages");
     messagesContainer.innerHTML = `<div class="history-loading">${IA.escapeHtml(t("loading_session"))}</div>`;
     try {
       const session = await IA.apiJson("/session/" + encodeURIComponent(id));
+      // 防竞态：await 期间用户可能又点了另一个会话，丢弃过期响应
+      if (myRequestId !== restoreRequestId) return false;
       if (recordHistory && sessionId !== session.session_id) navigationStack.push(sessionId || null);
       sessionId = session.session_id;
       IA.sessionId = sessionId;
@@ -269,6 +311,7 @@
       await loadSessions();
       return true;
     } catch (error) {
+      if (myRequestId !== restoreRequestId) return false;
       messagesContainer.innerHTML = "";
       addMsg("error", error.message);
       return false;
@@ -446,7 +489,7 @@
       `<div class="hero-inner">` +
       // 标题区
       `<header class="hero-head">` +
-      `<span class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>GitHub Issue Agent</span>` +
+      `<span class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>${IA.escapeHtml(t("hero_eyebrow_text"))}</span>` +
       `<h1 class="hero-title">${IA.escapeHtml(t("hero_title"))}` +
       `<span class="hero-title-accent">${IA.escapeHtml(t("hero_title_accent"))}</span></h1>` +
       `<p class="hero-subtitle">${IA.escapeHtml(t("hero_subtitle"))}</p>` +
@@ -493,18 +536,33 @@
     }
   }
 
+  // H5 修复：用户上滑阅读时不要把视图拉回底部。threshold=80px 容许小幅滚动仍跟随。
+  function scrollToBottomIfNear(container, threshold) {
+    if (!container) return;
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distance > (threshold || 80)) return;
+    requestAnimationFrame(function () {
+      container.scrollTop = container.scrollHeight;
+    });
+  }
+
   function addMsg(role, content, cls) {
     const d = document.getElementById("messages");
     const m = document.createElement("div");
     m.className = "msg " + role + (cls ? " " + cls : "");
     if (role === "user") m.dataset.speaker = t("speaker_you");
     if (role === "assistant") m.dataset.speaker = t("speaker_agent");
+    // M8 修复：错误消息声明 role=alert，让屏幕阅读器立即朗读；普通系统消息保持 polite
+    if (role === "error") {
+      m.setAttribute("role", "alert");
+      m.setAttribute("aria-live", "assertive");
+    } else if (role === "system") {
+      m.setAttribute("role", "status");
+    }
     m.textContent = content;
     d.appendChild(m);
-    // requestAnimationFrame 避免同步回流
-    requestAnimationFrame(function () {
-      d.scrollTop = d.scrollHeight;
-    });
+    // H5 修复：仅在用户已在底部附近时自动滚动，避免打断阅读
+    scrollToBottomIfNear(d, 80);
     return m;
   }
 
@@ -529,9 +587,8 @@
       toggleReport(true);
     });
     container.appendChild(card);
-    requestAnimationFrame(function () {
-      container.scrollTop = container.scrollHeight;
-    });
+    // H5 修复：报告预览出现时也尊重用户当前滚动位置
+    scrollToBottomIfNear(container, 120);
     return card;
   }
 
@@ -555,9 +612,8 @@
       m.classList.toggle("expanded");
     });
     d.appendChild(m);
-    requestAnimationFrame(function () {
-      d.scrollTop = d.scrollHeight;
-    });
+    // H5 修复：工具卡片创建时尊重用户滚动位置
+    scrollToBottomIfNear(d, 80);
     return m;
   }
 
@@ -641,6 +697,18 @@
   async function analyze() {
     // 防重入：快速双击或回车多次时只允许一个流，避免状态错乱和旧 reader 泄漏
     if (analyzeInProgress) return;
+    // C3 修复：chat 进行中开始新分析会丢失 chat 响应，需要先中断 chat
+    if (chatInProgress) {
+      if (chatAbortController) {
+        try {
+          chatAbortController.abort();
+        } catch (e) {
+          /* ignore */
+        }
+        chatAbortController = null;
+      }
+      chatInProgress = false;
+    }
     const raw = document.getElementById("issueUrl").value.trim();
     if (!raw) return;
     // 从可能粘贴的多行文本中提取第一个 GitHub issue URL，避免把终端日志整体当 URL 发送
@@ -648,7 +716,15 @@
     const url = match ? match[0] : raw.split(/\s+/)[0];
     if (!ISSUE_URL_PATTERN.test(url)) {
       addMsg("error", t("error_prefix") + t("invalid_issue_url"));
-      document.getElementById("issueUrl").focus();
+      // M11 修复：URL 错误时输入框加视觉提示
+      const input = document.getElementById("issueUrl");
+      input.setAttribute("aria-invalid", "true");
+      input.classList.add("invalid-input");
+      input.focus();
+      setTimeout(function () {
+        input.removeAttribute("aria-invalid");
+        input.classList.remove("invalid-input");
+      }, 2000);
       return;
     }
 
@@ -681,7 +757,7 @@
         body: JSON.stringify({ issue_url: url }),
       });
       if (!resp.ok) {
-        let detail = "Unable to start analysis";
+        let detail = t("error_unable_to_start");
         try {
           const body = await resp.json();
           detail = formatErrorDetail(body.detail) || detail;
@@ -695,23 +771,45 @@
       let buf = "";
       let toolCard = null;
 
-      while (true) {
-        const { value, done } = await currentStream.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          // 后端从不发送 [DONE]；done 状态通过 done 事件类型处理，无需此分支
-          try {
-            const evt = JSON.parse(data);
-            await handleStreamEvent(evt, { getToolCard: () => toolCard, setToolCard: (c) => (toolCard = c) });
-          } catch (e) {
-            console.warn("Ignored malformed stream event", e);
+      // C4 修复：stream 看门狗。30s 无事件显示"连接似乎变慢"提示，
+      // 90s 仍未恢复则提示用户取消。每次收到任意事件重置计时器。
+      let lastEventTime = Date.now();
+      let slowWarned = false;
+      let stallWarned = false;
+      const watchdogTimer = window.setInterval(function () {
+        const elapsed = Date.now() - lastEventTime;
+        if (elapsed >= 90000 && !stallWarned) {
+          stallWarned = true;
+          addMsg("system", t("stream_stalled"));
+        } else if (elapsed >= 30000 && !slowWarned && !stallWarned) {
+          slowWarned = true;
+          addMsg("system", t("stream_slow"));
+        }
+      }, 5000);
+
+      try {
+        while (true) {
+          const { value, done } = await currentStream.read();
+          if (done) break;
+          // 收到数据即重置看门狗
+          lastEventTime = Date.now();
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6);
+            // 后端从不发送 [DONE]；done 状态通过 done 事件类型处理，无需此分支
+            try {
+              const evt = JSON.parse(data);
+              await handleStreamEvent(evt, { getToolCard: () => toolCard, setToolCard: (c) => (toolCard = c) });
+            } catch (e) {
+              console.warn("Ignored malformed stream event", e);
+            }
           }
         }
+      } finally {
+        window.clearInterval(watchdogTimer);
       }
     } catch (e) {
       addMsg("error", t("connection_error") + e.message);
@@ -756,9 +854,8 @@
     }
     const body = currentReasoningCard.querySelector(".reasoning-body");
     body.textContent += delta;
-    requestAnimationFrame(function () {
-      container.scrollTop = container.scrollHeight;
-    });
+    // H5 修复：思考流式输出仅在用户在底部时跟随，避免抢占阅读
+    scrollToBottomIfNear(container, 80);
   }
 
   async function handleStreamEvent(evt, toolCardRef) {
@@ -921,7 +1018,8 @@
   function renderEvidenceChart(container, report) {
     if (!container) return null;
     if (!echartsAvailable()) {
-      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
+      // M12 修复：图表库加载失败与"暂无证据"是两件事，文案必须区分
+      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("chart_load_failed"))}</div>`;
       return null;
     }
     const palette = getEchartsPalette();
@@ -1063,7 +1161,8 @@
   function renderConfidenceRadar(container, report) {
     if (!container) return null;
     if (!echartsAvailable()) {
-      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("report_composition_empty"))}</div>`;
+      // M12 修复：图表库加载失败与"暂无产出"是两件事，文案必须区分
+      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("chart_load_failed"))}</div>`;
       return null;
     }
     const palette = getEchartsPalette();
@@ -1239,6 +1338,7 @@
     // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
     parts.push(
       `<div class="report-toolbar">` +
+        `<span class="report-toolbar-label">${IA.escapeHtml(t("report_export_label"))}</span>` +
         `<button class="report-action" type="button" data-action="copy-json">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-json">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_json"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-md">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_markdown"))}</span></button>` +
@@ -1349,6 +1449,14 @@
       document.getElementById("report").scrollTop = 0;
       const closeBtn = document.querySelector(".report-close");
       if (closeBtn) closeBtn.focus();
+      // M1 修复：panel 展开后容器宽度变化，下一帧触发 ECharts resize 以适配新宽度
+      requestAnimationFrame(function () {
+        if (reportChartInstances && reportChartInstances.length) {
+          reportChartInstances.forEach(function (chart) {
+            try { chart.resize(); } catch (e) { /* ignore */ }
+          });
+        }
+      });
     } else if (document.getElementById("input-bar").style.display !== "none") {
       document.getElementById("chatInput").focus();
     }
@@ -1376,7 +1484,7 @@
         body: JSON.stringify({ session_id: sessionId, message: msg }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || "Unable to continue session");
+      if (!resp.ok) throw new Error(data.detail || t("error_unable_to_continue"));
       document.getElementById("progress").textContent = "";
       addMsg("assistant", data.reply);
       if (data.tools_used && data.tools_used.length) addMsg("system", t("tools_used_label") + data.tools_used.join(", "));
@@ -1421,9 +1529,8 @@
     );
     m.appendChild(retryBtn);
     d.appendChild(m);
-    requestAnimationFrame(function () {
-      d.scrollTop = d.scrollHeight;
-    });
+    // H5 修复：错误消息出现时尊重用户当前滚动位置
+    scrollToBottomIfNear(d, 120);
   }
 
   function reportAsMarkdown(r) {
@@ -1500,9 +1607,12 @@
     } else if (action === "download-json") {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       IA.downloadFile(`report-${stamp}.json`, JSON.stringify(reportData, null, 2), "application/json;charset=utf-8");
+      // M6 修复：下载按钮也要有反馈，否则用户不知道是否触发
+      flashToast(t("download_started"));
     } else if (action === "download-md") {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       IA.downloadFile(`report-${stamp}.md`, reportAsMarkdown(reportData), "text/markdown;charset=utf-8");
+      flashToast(t("download_started"));
     } else if (action === "copy-patch") {
       if (!reportData.patch) return;
       const ok = await IA.copyToClipboard(reportData.patch);
@@ -1578,9 +1688,12 @@
       handleReportAction(btn.dataset.action, report);
     });
 
-    // ESC 关闭报告
+    // ESC 关闭报告（H7 修复：对话框打开时让原生 ESC 优先关闭对话框，不叠加关闭报告）
     document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && document.getElementById("main").classList.contains("report-open")) {
+      if (event.key !== "Escape") return;
+      const dialog = document.getElementById("session-dialog");
+      if (dialog && dialog.open) return;
+      if (document.getElementById("main").classList.contains("report-open")) {
         toggleReport(false);
       }
     });
