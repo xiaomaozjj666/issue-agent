@@ -737,6 +737,18 @@ a:hover {
   opacity: 1;
 }
 
+/* #6 修复：触摸设备无 :hover，actions 永远不可见。用 @media (hover: none)
+   统一覆盖平板/触屏笔记本（641px-1180px 区间原规则失效）。
+   桌面带鼠标设备仍保持悬停才显示的简洁视觉。 */
+@media (hover: none) {
+  .session-actions {
+    opacity: 1;
+  }
+  .session-card {
+    padding-right: 64px;
+  }
+}
+
 .session-action {
   width: 28px;
   height: 28px;
@@ -1325,6 +1337,13 @@ a:hover {
 
 /* 工具卡片 */
 .msg.tool {
+  /* #2 修复：tool 卡片改用 button 元素以获得键盘可达性，这里重置 button 默认样式 */
+  display: block;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
   align-self: flex-start;
   border: 1px solid var(--yellow-muted);
   background: var(--yellow-subtle);
@@ -1339,6 +1358,13 @@ a:hover {
   border-color: var(--yellow);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
+}
+
+/* #2 修复：键盘 focus 时给到与 hover 一致的视觉反馈 */
+.msg.tool:focus-visible {
+  outline: 2px solid var(--yellow);
+  outline-offset: 2px;
+  border-color: var(--yellow);
 }
 
 .msg.tool .preview {

@@ -73,6 +73,17 @@
     if (sidebar.classList.contains("mobile-history-open")) {
       sidebar.classList.remove("mobile-history-open");
       document.getElementById("toggle-history-btn").setAttribute("aria-expanded", "false");
+      // #5 修复：关闭 sidebar 后焦点移回主交互区
+      const issueUrlEl = document.getElementById("issueUrl");
+      if (issueUrlEl && issueUrlEl.offsetParent !== null) {
+        issueUrlEl.focus();
+      } else {
+        const messages = document.getElementById("messages");
+        if (messages) {
+          messages.setAttribute("tabindex", "-1");
+          messages.focus();
+        }
+      }
       updateBackButton();
       return;
     }
@@ -133,21 +144,93 @@
     }
   }
 
+  // #10 修复：key-based diff 渲染，避免每次 loadSessions 全量重建 DOM。
+  // 复用已有 .session-row 节点（按 session_id 匹配），仅更新 title/time/active 类，
+  // 保留用户当前 hover 状态和滚动位置。新增/消失的节点按最小变更原则插入/移除。
   function renderSessions(sessions) {
     const list = document.getElementById("history-list");
-    list.innerHTML = "";
+    const wasScrolling = list.scrollTop;
+    const hadFocus = document.activeElement && list.contains(document.activeElement)
+      ? document.activeElement.dataset.sessionId
+      : null;
+
     if (!sessions.length) {
       const emptyKey = showArchived ? "history_empty_archive" : "history_empty_active";
       list.innerHTML = `<div class="history-empty">${t(emptyKey)}</div>`;
       return;
     }
+
+    // 收集新数据按分组顺序的扁平列表
     const groups = new Map();
     sessions.forEach(function (session) {
       const group = session.status === "running" ? t("history_group_running") : historyGroup(session.updated_at);
       if (!groups.has(group)) groups.set(group, []);
       groups.get(group).push(session);
     });
-    [t("history_group_running"), t("history_group_today"), t("history_group_week"), t("history_group_older")].forEach(function (groupName) {
+    const orderedGroupNames = [
+      t("history_group_running"),
+      t("history_group_today"),
+      t("history_group_week"),
+      t("history_group_older"),
+    ];
+
+    // 第一渲染直接走全量构建路径
+    if (!list.querySelector(".session-group")) {
+      list.innerHTML = "";
+      buildSessionList(list, orderedGroupNames, groups);
+      if (hadFocus) {
+        const restored = document.getElementById(SESSION_ROW_KEY + hadFocus);
+        if (restored) {
+          const card = restored.querySelector(".session-card");
+          if (card) card.focus();
+        }
+      }
+      return;
+    }
+
+    // 增量 diff：按 session_id 复用 row 节点，重建分组容器
+    // 策略：清空 list 重新组装分组，但 row 节点从旧 DOM 复用（DOM 节点引用不变）
+    const existingRows = new Map();
+    list.querySelectorAll(".session-row").forEach(function (row) {
+      existingRows.set(row.dataset.sessionId, row);
+    });
+
+    list.innerHTML = "";
+    orderedGroupNames.forEach(function (groupName) {
+      const items = groups.get(groupName);
+      if (!items) return;
+      const group = document.createElement("section");
+      group.className = "session-group";
+      const heading = document.createElement("div");
+      heading.className = "session-group-title";
+      heading.textContent = groupName;
+      group.appendChild(heading);
+      items.forEach(function (item) {
+        const oldRow = existingRows.get(item.session_id);
+        if (oldRow) {
+          // 复用旧节点，仅更新动态字段
+          updateSessionRow(oldRow, item);
+          group.appendChild(oldRow);
+        } else {
+          group.appendChild(createSessionRow(item));
+        }
+      });
+      list.appendChild(group);
+    });
+
+    // 恢复滚动位置和焦点
+    list.scrollTop = wasScrolling;
+    if (hadFocus) {
+      const restored = document.getElementById(SESSION_ROW_KEY + hadFocus);
+      if (restored) {
+        const card = restored.querySelector(".session-card");
+        if (card) card.focus();
+      }
+    }
+  }
+
+  function buildSessionList(list, orderedGroupNames, groups) {
+    orderedGroupNames.forEach(function (groupName) {
       const items = groups.get(groupName);
       if (!items) return;
       const group = document.createElement("section");
@@ -161,6 +244,28 @@
       });
       list.appendChild(group);
     });
+  }
+
+  // #10 修复：仅更新 row 内动态字段，不重建 DOM，避免 hover 状态丢失
+  function updateSessionRow(row, session) {
+    const card = row.querySelector(".session-card");
+    if (!card) return;
+    row.classList.toggle("active", session.session_id === sessionId);
+    const repository = session.owner && session.repo ? session.owner + "/" + session.repo : repositoryFromUrl(session.issue_url);
+    const issue = session.issue_number ? " #" + session.issue_number : "";
+    card.title = session.phase
+      ? enumLabel("phase", session.phase)
+      : session.status
+        ? enumLabel("status", session.status)
+        : "";
+    const repoEl = card.querySelector(".session-repo span:last-child");
+    if (repoEl) repoEl.textContent = repository + issue;
+    const titleEl = card.querySelector(".session-title");
+    if (titleEl) titleEl.textContent = session.title;
+    const timeEl = card.querySelector(".session-time");
+    if (timeEl) timeEl.textContent = IA.formatRelativeTime(session.updated_at);
+    const dotEl = card.querySelector(".status-dot");
+    if (dotEl) dotEl.className = "status-dot " + IA.safeClass(session.status);
   }
 
   function createSessionRow(session) {
@@ -307,6 +412,17 @@
       document.getElementById("sidebar").classList.remove("mobile-history-open");
       const toggleBtn = document.getElementById("toggle-history-btn");
       if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
+      // #5 修复：移动端关闭 sidebar 后焦点原本留在隐藏的 session-card 上，
+      // 主动移到主交互区，避免屏幕阅读器读屏焦点消失
+      if (window.matchMedia("(max-width: 900px)").matches) {
+        const chatInput = document.getElementById("chatInput");
+        if (chatInput && chatInput.offsetParent !== null) {
+          chatInput.focus();
+        } else {
+          const issueUrlEl = document.getElementById("issueUrl");
+          if (issueUrlEl && issueUrlEl.offsetParent !== null) issueUrlEl.focus();
+        }
+      }
       updateBackButton();
       await loadSessions();
       return true;
@@ -353,6 +469,32 @@
     dialogMode = null;
   }
 
+  // #3 修复：dialog 操作完成后焦点恢复到触发该操作的 session 行（或相邻行/搜索框）
+  // 调用时机：loadSessions 完成后。返回 true 表示焦点已恢复。
+  function restoreFocusToSessionRow(sessionIdToFocus) {
+    if (!sessionIdToFocus) return false;
+    const row = document.getElementById(SESSION_ROW_KEY + sessionIdToFocus);
+    if (row) {
+      const card = row.querySelector(".session-card");
+      if (card) {
+        card.focus();
+        return true;
+      }
+    }
+    // 触发行已被删除：focus 到列表中第一个可聚焦元素，避免焦点跌到 body
+    const firstCard = document.querySelector(".session-card");
+    if (firstCard) {
+      firstCard.focus();
+      return true;
+    }
+    const search = document.getElementById("history-search");
+    if (search) {
+      search.focus();
+      return true;
+    }
+    return false;
+  }
+
   async function submitSessionDialog(event) {
     event.preventDefault();
     if (!dialogSession) return;
@@ -360,14 +502,19 @@
       const session = dialogSession;
       closeSessionDialog();
       await deleteSession(session);
+      // #3 修复：delete 后触发行已不存在，focus 到相邻行保持键盘上下文
+      restoreFocusToSessionRow(null);
       return;
     }
     const title = document.getElementById("dialog-input").value.trim();
     if (!title) return;
     if (title === dialogSession.title) {
+      const focusId = dialogSession.session_id;
       closeSessionDialog();
+      restoreFocusToSessionRow(focusId);
       return;
     }
+    const focusId = dialogSession.session_id;
     try {
       await IA.apiJson("/session/" + encodeURIComponent(dialogSession.session_id), {
         method: "PATCH",
@@ -376,12 +523,15 @@
       });
       closeSessionDialog();
       await loadSessions();
+      // #3 修复：loadSessions 重建 DOM 后焦点恢复到重命名的那一行
+      restoreFocusToSessionRow(focusId);
     } catch (error) {
       addMsg("error", error.message);
     }
   }
 
   async function archiveSession(session, archived) {
+    const focusId = session && session.session_id;
     try {
       await IA.apiJson("/session/" + encodeURIComponent(session.session_id), {
         method: "PATCH",
@@ -406,6 +556,8 @@
         }
       }
       await loadSessions();
+      // #3 修复：归档/恢复后焦点回到原行（若仍在当前列表中）
+      restoreFocusToSessionRow(focusId);
     } catch (error) {
       addMsg("error", error.message);
     }
@@ -428,6 +580,7 @@
   }
 
   function resetWorkspace(showWelcome) {
+    const wasReportOpen = document.getElementById("main").classList.contains("report-open");
     document.getElementById("messages").innerHTML = "";
     document.getElementById("main").classList.remove("report-open");
     document.getElementById("report-toggle").style.display = "none";
@@ -439,6 +592,20 @@
     if (showWelcome) {
       document.getElementById("issueUrl").value = "";
       renderHero();
+    }
+    // #4 修复：若报告面板原本是展开的，焦点可能落在已被清空的 report 容器内，
+    // 主动把焦点移回主交互区，避免键盘用户 Tab 落空
+    if (wasReportOpen) {
+      const issueUrl = document.getElementById("issueUrl");
+      if (issueUrl && issueUrl.offsetParent !== null) {
+        issueUrl.focus();
+      } else {
+        const messages = document.getElementById("messages");
+        if (messages) {
+          messages.setAttribute("tabindex", "-1");
+          messages.focus();
+        }
+      }
     }
     updateBackButton();
   }
@@ -595,9 +762,12 @@
   // 工具卡片：tool_call 时仅创建头部，等到 tool_result 再展开
   function addToolCard(name, args) {
     const d = document.getElementById("messages");
-    const m = document.createElement("div");
+    // #2 修复：用 button 元素让键盘用户也能展开/折叠工具结果
+    const m = document.createElement("button");
+    m.type = "button";
     m.className = "msg tool";
     m.setAttribute("data-tool-name", IA.safeClass(name));
+    m.setAttribute("aria-expanded", "false");
     const argsText = (() => {
       try {
         return JSON.stringify(args).substring(0, 80);
@@ -609,7 +779,8 @@
       `<div class="preview"><b>${IA.escapeHtml(name)}</b> ${IA.escapeHtml(argsText)}${argsText.length >= 80 ? "..." : ""}</div>` +
       `<div class="full" aria-hidden="true"></div>`;
     m.addEventListener("click", function () {
-      m.classList.toggle("expanded");
+      const expanded = m.classList.toggle("expanded");
+      m.setAttribute("aria-expanded", String(expanded));
     });
     d.appendChild(m);
     // H5 修复：工具卡片创建时尊重用户滚动位置

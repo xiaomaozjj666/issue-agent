@@ -189,10 +189,16 @@
   }
 
   function formatRelativeTime(value) {
+    // #9 修复：null/undefined/空字符串都会让 new Date() 返回 epoch（1970-01-01），
+    // 与 Invalid Date 不同（getTime 返回 0 而非 NaN）。后端字段未落库时显示
+    // "1970年1月1日" 极其荒谬，这里提前拦截。
+    if (value === null || value === undefined || value === "") return "";
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "";
+    const time = date.getTime();
+    if (Number.isNaN(time)) return "";
+    if (time === 0) return "";
     const locale = document.documentElement.lang || navigator.language || "en";
-    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
     const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
     if (seconds < 60) return formatter.format(0, "second");
     if (seconds < 3600) return formatter.format(-Math.floor(seconds / 60), "minute");
