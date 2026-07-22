@@ -114,7 +114,8 @@
 
   async function pollCancellation(sessionId) {
     let consecutiveErrors = 0;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    // 轮询 60 次 × 500ms = 30s，覆盖 search_code 等耗时工具调用的取消等待
+    for (let attempt = 0; attempt < 60; attempt += 1) {
       await new Promise(function (resolve) {
         window.setTimeout(resolve, 500);
       });

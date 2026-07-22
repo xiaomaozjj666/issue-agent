@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 
@@ -22,4 +23,19 @@ def calculate_build_id(app_dir: Path = _APP_DIR) -> str:
     return digest.hexdigest()[:16]
 
 
-BUILD_ID = calculate_build_id()
+@lru_cache(maxsize=1)
+def _cached_build_id() -> str:
+    """延迟计算并缓存 BUILD_ID，避免模块加载时同步遍历文件系统。"""
+    return calculate_build_id()
+
+
+def get_build_id() -> str:
+    """获取构建 ID（首次调用时计算，后续从缓存返回）。"""
+    return _cached_build_id()
+
+
+# 向后兼容：保留 BUILD_ID 模块级属性，但通过 __getattr__ 延迟计算
+def __getattr__(name: str) -> str:
+    if name == "BUILD_ID":
+        return _cached_build_id()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
