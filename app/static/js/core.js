@@ -136,6 +136,23 @@
     funnel_conversion: "Step conversion",
     funnel_overall: "Overall conversion",
     funnel_empty: "No investigation data available",
+    chart_save_image: "Save as image",
+    chart_restore: "Restore",
+    report_fullscreen: "Fullscreen",
+    report_exit_fullscreen: "Exit fullscreen",
+    report_print: "Print / Export PDF",
+    cdn_offline_notice: "Some resources failed to load; charts or code highlighting may be unavailable",
+    batch_select_all: "Select all",
+    batch_select_none: "Clear selection",
+    batch_selected_count: "{count} selected",
+    batch_archive_selected: "Archive selected",
+    batch_restore_selected: "Restore selected",
+    batch_delete_selected: "Delete selected",
+    batch_confirm_delete: "Permanently delete {count} selected session(s)? This cannot be undone.",
+    batch_archive_done: "Archived {count} session(s)",
+    batch_restore_done: "Restored {count} session(s)",
+    batch_delete_done: "Deleted {count} session(s)",
+    batch_partial_error: "{failed} session(s) failed",
     report_evidence_chart_empty: "No code evidence yet",
   };
 
@@ -219,6 +236,31 @@
     return response.status === 204 ? null : response.json();
   }
 
+  // SSE 流解析：从 buffer 中提取完整的 SSE 事件，返回剩余未完成的 buffer
+  // analyze() 和 chat() 共用此解析器，避免两套不一致的 data: 行解析逻辑
+  function parseSseEvents(buffer) {
+    const events = [];
+    let remaining = buffer;
+    let sepIdx;
+    while ((sepIdx = remaining.indexOf("\n\n")) !== -1) {
+      const rawEvent = remaining.slice(0, sepIdx);
+      remaining = remaining.slice(sepIdx + 2);
+      // SSE 规范：data: 字段可能跨多行，需拼接
+      const dataLines = rawEvent
+        .split("\n")
+        .filter(function (line) { return line.startsWith("data:"); })
+        .map(function (line) { return line.slice(5).replace(/^ /, ""); });
+      if (!dataLines.length) continue;
+      const dataStr = dataLines.join("\n");
+      try {
+        events.push(JSON.parse(dataStr));
+      } catch (e) {
+        // 非 JSON 的 data 行（如 [DONE]）跳过
+      }
+    }
+    return { events: events, remaining: remaining };
+  }
+
   function formatDuration(milliseconds) {
     if (milliseconds < 1000) return `${milliseconds} ms`;
     const seconds = Math.round(milliseconds / 1000);
@@ -261,6 +303,7 @@
     delete: '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .78 5.78 0 6.75 0h2.5C10.22 0 11 .78 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.75 1.75 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 0 1 1.492-.15Z"/></svg>',
     menu: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M2.75 2.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Zm0 4.75a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Zm0 4.75a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Z"/></svg>',
     sun: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM8 0a.75.75 0 0 1 .75.75V2a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0Zm0 13.25a.75.75 0 0 1 .75.75v1.25a.75.75 0 0 1-1.5 0V14a.75.75 0 0 1 .75-.75ZM16 8a.75.75 0 0 1-.75.75H14a.75.75 0 0 1 0-1.5h1.25A.75.75 0 0 1 16 8ZM2.75 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5H2A.75.75 0 0 1 2.75 8Z"/></svg>',
+    alert: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575L6.457 1.047ZM8 5a.75.75 0 0 0-.75.75v2.5a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8 5Zm0 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/></svg>',
   };
 
   function svgIcon(name) {
@@ -360,6 +403,7 @@
     downloadFile,
     highlightDiff,
     buildGitHubUrl,
+    parseSseEvents,
   };
 
   window.IssueAgent = ns;
