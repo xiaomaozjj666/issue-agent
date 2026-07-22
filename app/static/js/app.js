@@ -19,6 +19,8 @@
   let chatAbortController = null;
   let lastFailedChat = null;
   let activeSession = null; // 当前活跃会话详情（用于生成 GitHub 链接）
+  // E28: 实时文件追踪 — 记录 Agent 调查过程中浏览过的文件，按目录分组展示
+  let exploredFiles = null; // Map<path, {tool: string, count: number, time: number}>
 
   function enumLabel(prefix, value) {
     const key = `${prefix}_${IA.safeClass(value)}`;
@@ -1434,6 +1436,150 @@
     scrollToBottomIfNear(container, 80);
   }
 
+  // ── E28 实时文件树浏览 ─────────────────────────────────
+  // 从工具调用参数中提取文件路径。支持 read_file/grep_content/list_dir 等常见工具
+  function extractFilePaths(toolName, args) {
+    const paths = [];
+    if (!args || typeof args !== "object") return paths;
+    // 常见字段名：file_path / path / file / filepath
+    const directFields = ["file_path", "path", "file", "filepath", "filename"];
+    for (const f of directFields) {
+      const v = args[f];
+      if (typeof v === "string" && v.trim() && !v.includes("*")) {
+        paths.push(v.trim());
+      }
+    }
+    // grep_content 的 path 字段可能是文件或目录，都记录
+    // 多文件字段：files / paths
+    const multiFields = ["files", "paths"];
+    for (const f of multiFields) {
+      const v = args[f];
+      if (Array.isArray(v)) {
+        v.forEach(function (p) {
+          if (typeof p === "string" && p.trim()) paths.push(p.trim());
+        });
+      }
+    }
+    return paths;
+  }
+
+  // 规范化路径：去除 ./ 前缀，去除首尾空白
+  function normalizePath(p) {
+    if (!p) return "";
+    let s = String(p).trim();
+    if (s.startsWith("./")) s = s.slice(2);
+    return s;
+  }
+
+  // 重置文件追踪状态，移除旧卡片
+  function resetFilesTracker() {
+    exploredFiles = new Map();
+    const old = document.querySelector(".files-tracker");
+    if (old) old.remove();
+  }
+
+  // 记录一个被浏览的文件，并更新追踪面板
+  function trackExploredFile(toolName, args) {
+    if (!exploredFiles) exploredFiles = new Map();
+    const paths = extractFilePaths(toolName, args);
+    if (!paths.length) return;
+    let changed = false;
+    const now = Date.now();
+    paths.forEach(function (raw) {
+      const p = normalizePath(raw);
+      if (!p || p.length > 512) return; // 跳过异常长路径
+      const existing = exploredFiles.get(p);
+      if (existing) {
+        existing.count += 1;
+        existing.time = now;
+      } else {
+        exploredFiles.set(p, { tool: toolName, count: 1, time: now });
+        changed = true;
+      }
+    });
+    if (changed || paths.length) updateFilesTracker();
+  }
+
+  // 按目录分组文件路径
+  function groupFilesByDir(files) {
+    const groups = {};
+    files.forEach(function (p) {
+      const idx = p.lastIndexOf("/");
+      const dir = idx > 0 ? p.slice(0, idx) : "(root)";
+      const name = idx > 0 ? p.slice(idx + 1) : p;
+      if (!groups[dir]) groups[dir] = [];
+      groups[dir].push(name);
+    });
+    return groups;
+  }
+
+  // 渲染或更新文件追踪面板
+  function updateFilesTracker() {
+    const container = document.getElementById("messages");
+    if (!container) return;
+    let card = container.querySelector(".files-tracker");
+    const files = exploredFiles ? Array.from(exploredFiles.keys()).sort() : [];
+    const dirs = Object.keys(groupFilesByDir(files));
+
+    if (!card) {
+      card = document.createElement("section");
+      card.className = "msg assistant files-tracker";
+      card.setAttribute("aria-label", t("files_tracker_title"));
+      // 插入到对话区顶部（第一条消息之前）
+      container.insertBefore(card, container.firstChild);
+    }
+
+    if (!files.length) {
+      card.innerHTML =
+        `<div class="files-tracker-header">` +
+        `<span class="files-tracker-icon" aria-hidden="true">📁</span>` +
+        `<span class="files-tracker-title">${IA.escapeHtml(t("files_tracker_title"))}</span>` +
+        `<span class="files-tracker-summary">${IA.escapeHtml(t("files_tracker_empty"))}</span>` +
+        `</div>`;
+      return;
+    }
+
+    const summary = t("files_tracker_summary", { files: files.length, dirs: dirs.length });
+    const groups = groupFilesByDir(files);
+    // 按目录名字母排序，每个目录下的文件也排序
+    const sortedDirs = Object.keys(groups).sort();
+    const dirItems = sortedDirs.map(function (dir) {
+      const fileItems = groups[dir].sort().map(function (name) {
+        return `<li class="files-tracker-file"><code>${IA.escapeHtml(name)}</code></li>`;
+      }).join("");
+      return `<li class="files-tracker-dir">` +
+        `<span class="files-tracker-dirname">${IA.escapeHtml(dir)}</span>` +
+        `<ul class="files-tracker-filelist">${fileItems}</ul>` +
+        `</li>`;
+    }).join("");
+
+    card.innerHTML =
+      `<div class="files-tracker-header">` +
+      `<span class="files-tracker-icon" aria-hidden="true">📁</span>` +
+      `<span class="files-tracker-title">${IA.escapeHtml(t("files_tracker_title"))}</span>` +
+      `<span class="files-tracker-summary">${IA.escapeHtml(summary)}</span>` +
+      `<button type="button" class="files-tracker-toggle" aria-expanded="false">${IA.escapeHtml(t("files_tracker_expand"))}</button>` +
+      `</div>` +
+      `<ul class="files-tracker-tree" hidden>${dirItems}</ul>`;
+
+    const toggleBtn = card.querySelector(".files-tracker-toggle");
+    const tree = card.querySelector(".files-tracker-tree");
+    if (toggleBtn && tree) {
+      toggleBtn.addEventListener("click", function () {
+        const expanded = toggleBtn.getAttribute("aria-expanded") === "true";
+        if (expanded) {
+          tree.setAttribute("hidden", "");
+          toggleBtn.setAttribute("aria-expanded", "false");
+          toggleBtn.textContent = t("files_tracker_expand");
+        } else {
+          tree.removeAttribute("hidden");
+          toggleBtn.setAttribute("aria-expanded", "true");
+          toggleBtn.textContent = t("files_tracker_collapse");
+        }
+      });
+    }
+  }
+
   async function handleStreamEvent(evt, toolCardRef) {
     if (evt.type !== "reasoning") closeReasoningCard();
     switch (evt.type) {
@@ -1451,6 +1597,8 @@
       case "start":
         setAnalysisPhase(t("exploring_files", { count: evt.data.file_count }));
         if (evt.data.title) document.querySelector(".conversation-label").textContent = evt.data.title;
+        // E28: 分析开始时初始化文件追踪
+        resetFilesTracker();
         break;
       case "tool_call": {
         setAnalysisPhase(
@@ -1466,6 +1614,8 @@
         );
         const card = addToolCard(evt.data.name, evt.data.args);
         toolCardRef.setToolCard(card);
+        // E28: 从工具参数提取文件路径并更新文件追踪面板
+        trackExploredFile(evt.data.name, evt.data.args || {});
         break;
       }
       case "tool_result":
@@ -2450,26 +2600,63 @@
       }
     });
 
-    // #4 证据列表懒渲染：超过 10 条时折叠，点击"显示更多"展开
+    // E14 证据列表分页加载：IntersectionObserver 无限滚动，每批 20 条
+    // 避免大量证据一次性渲染导致 DOM 暴增卡顿，同时保留"显示全部"兜底按钮
     const evidenceList = d.querySelector(".evidence-list");
-    if (evidenceList && evidenceList.children.length > 10) {
-      const EVIDENCE_VISIBLE = 10;
+    if (evidenceList && evidenceList.children.length > 20) {
+      const PAGE_SIZE = 20;
       const items = Array.from(evidenceList.children);
-      items.slice(EVIDENCE_VISIBLE).forEach(function (item) { item.style.display = "none"; });
-      const moreBtn = document.createElement("button");
-      moreBtn.type = "button";
-      moreBtn.className = "evidence-load-more";
-      const hiddenCount = items.length - EVIDENCE_VISIBLE;
-      moreBtn.innerHTML = IA.svgIcon("plus") + `<span>${IA.escapeHtml(t("evidence_show_more", { count: hiddenCount }))}</span>`;
-      let expanded = false;
-      moreBtn.addEventListener("click", function () {
-        expanded = !expanded;
-        items.slice(EVIDENCE_VISIBLE).forEach(function (item) { item.style.display = expanded ? "" : "none"; });
-        moreBtn.innerHTML = expanded
-          ? `<span>${IA.escapeHtml(t("evidence_show_less"))}</span>`
-          : IA.svgIcon("plus") + `<span>${IA.escapeHtml(t("evidence_show_more", { count: hiddenCount }))}</span>`;
-      });
-      evidenceList.parentNode.insertBefore(moreBtn, evidenceList.nextSibling);
+      const total = items.length;
+      let shownCount = PAGE_SIZE;
+      // 初始只显示前 20 条
+      items.slice(PAGE_SIZE).forEach(function (item) { item.style.display = "none"; });
+      // 哨兵元素 + 观察器
+      const sentinel = document.createElement("div");
+      sentinel.className = "evidence-sentinel";
+      sentinel.setAttribute("aria-hidden", "true");
+      evidenceList.parentNode.insertBefore(sentinel, evidenceList.nextSibling);
+      const loadMore = function () {
+        const next = Math.min(shownCount + PAGE_SIZE, total);
+        for (let i = shownCount; i < next; i++) items[i].style.display = "";
+        shownCount = next;
+        return shownCount >= total;
+      };
+      if ("IntersectionObserver" in window) {
+        const obs = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              const done = loadMore();
+              if (done) {
+                obs.disconnect();
+                sentinel.remove();
+                if (showAllBtn) showAllBtn.remove();
+              }
+            }
+          });
+        }, { rootMargin: "300px 0px", threshold: 0 });
+        obs.observe(sentinel);
+      }
+      // "显示全部"兜底按钮
+      let showAllBtn = null;
+      if (total > PAGE_SIZE * 2) {
+        showAllBtn = document.createElement("button");
+        showAllBtn.type = "button";
+        showAllBtn.className = "evidence-load-more";
+        const remaining = total - shownCount;
+        showAllBtn.innerHTML = IA.svgIcon("plus") + `<span>${IA.escapeHtml(t("evidence_show_more", { count: remaining }))}</span>`;
+        showAllBtn.addEventListener("click", function () {
+          items.slice(shownCount).forEach(function (item) { item.style.display = ""; });
+          shownCount = total;
+          if ("IntersectionObserver" in window) {
+            // 观察器可能已 disconnect，这里直接清理哨兵
+          }
+          sentinel.remove();
+          showAllBtn.remove();
+        });
+        if (sentinel.parentNode) {
+          sentinel.parentNode.insertBefore(showAllBtn, sentinel.nextSibling);
+        }
+      }
     }
 
     // #16 图表懒加载 + #28 骨架屏：IntersectionObserver 触发初始化
