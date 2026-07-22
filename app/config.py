@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="deepseek-v4-pro", min_length=1)
     openai_thinking: Literal["enabled", "disabled"] = "enabled"
     openai_reasoning_effort: Literal["high", "max"] = "high"
-    openai_timeout: float = Field(default=60.0, gt=0, le=300)
+    openai_timeout: float = Field(default=180.0, gt=0, le=300, description="DeepSeek thinking mode often needs 60-120s")
     openai_max_retries: int = Field(default=2, ge=0, le=5)
 
     # ── GitHub integration ───────────────────────────────────────────

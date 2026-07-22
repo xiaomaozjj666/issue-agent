@@ -1768,6 +1768,16 @@ a:hover {
   min-width: 0;
 }
 
+.report-chart-full {
+  grid-column: 1 / -1;
+}
+
+/* 矩阵图和桑基图需要更高画布以容纳标签 */
+.report-chart-canvas-tall {
+  height: 300px;
+  min-height: 300px;
+}
+
 .report-chart-title {
   margin-bottom: var(--space-3);
   color: var(--fg-strong);

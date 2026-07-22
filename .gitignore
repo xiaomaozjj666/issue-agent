@@ -17,3 +17,5 @@ dist/
 *.py[cod]
 reports/
 data/
+.qoder/
+*.tmp_*.json
