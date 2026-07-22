@@ -1396,7 +1396,10 @@
     }
 
     // 从 session 数据提取已读文件列表和行数信息
-    const filesRead = (sessionData && sessionData.files_read) || report.files_examined || [];
+    // files_read 可能为空数组（truthy），需检查 length 后再 fallback 到 files_examined
+    const filesRead = (sessionData && sessionData.files_read && sessionData.files_read.length)
+      ? sessionData.files_read
+      : (report.files_examined || []);
     const filesReadSet = new Set(filesRead);
     // 审查状态：approved = 审查通过
     const reviewPassed = report.review_audit && report.review_audit.status === "approved";
@@ -1520,7 +1523,9 @@
       return null;
     }
 
-    const filesRead = (sessionData && sessionData.files_read) || report.files_examined || [];
+    const filesRead = (sessionData && sessionData.files_read && sessionData.files_read.length)
+      ? sessionData.files_read
+      : (report.files_examined || []);
     const filesReadSet = new Set(filesRead);
 
     // 从 root_cause 提取关键短语作为中间节点（按句号/分号拆分，取前 2 段）
@@ -1541,11 +1546,12 @@
     causeNodes.forEach(function (c) {
       nodes.push({ name: c, itemStyle: { color: palette.warning } });
     });
-    // 右侧：证据文件
+    // 右侧：证据文件（添加行号后缀确保节点名唯一，Sankey 要求 name 唯一）
     const fileNames = evidence.map(function (e) {
       const path = e.path || "unknown";
       const parts = path.split("/");
-      return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : path;
+      const shortPath = parts.length > 2 ? "…/" + parts.slice(-2).join("/") : path;
+      return e.lines ? shortPath + " " + e.lines : shortPath;
     });
     fileNames.forEach(function (f, i) {
       const e = evidence[i];
@@ -1635,7 +1641,11 @@
 
     const modelCalls = parseInt(metrics.model_calls, 10) || 0;
     const toolCalls = parseInt(metrics.tool_calls, 10) || 0;
-    const filesRead = (sessionData && sessionData.files_read ? sessionData.files_read.length : (report.files_examined || []).length) || 0;
+    // 优先使用 metrics.files_read（后端实时统计），其次 files_read 数组长度，最后 files_examined
+    const filesRead = parseInt(metrics.files_read, 10)
+      || (sessionData && sessionData.files_read ? sessionData.files_read.length : 0)
+      || (report.files_examined || []).length
+      || 0;
     const validEvidence = report.evidence_audit ? report.evidence_audit.valid_references : (report.evidence || []).length;
 
     // 如果所有值都是 0，展示空状态
@@ -1661,14 +1671,18 @@
         padding: [10, 14],
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function (params) {
-          const idx = params.dataIndex;
-          const raw = data[idx].raw;
-          const prevRaw = idx > 0 ? data[idx - 1].raw : 0;
+          // sort:descending 后 dataIndex 不一定对应原数组索引，用 name 查找
+          const item = data.find(function (d) { return d.name === params.name; });
+          if (!item) return `<div style="font-weight:600;">${IA.escapeHtml(params.name)}</div>`;
+          const raw = item.raw;
+          const prevItem = data[data.indexOf(item) - 1];
+          const prevRaw = prevItem ? prevItem.raw : 0;
           const conversionRate = prevRaw > 0 ? ((raw / prevRaw) * 100).toFixed(1) : "100";
           const overallRate = modelCalls > 0 ? ((raw / modelCalls) * 100).toFixed(1) : "100";
+          const hasPrev = data.indexOf(item) > 0;
           return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(params.name)}</div>` +
             `<div>${IA.escapeHtml(t("funnel_count"))}: <b>${raw}</b></div>` +
-            (idx > 0 ? `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_conversion"))}: ${conversionRate}%</div>` : "") +
+            (hasPrev ? `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_conversion"))}: ${conversionRate}%</div>` : "") +
             `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_overall"))}: ${overallRate}%</div>`;
         },
       },
@@ -1693,8 +1707,8 @@
             fontSize: 11,
             fontWeight: 600,
             formatter: function (params) {
-              const idx = params.dataIndex;
-              return params.name + ": " + data[idx].raw;
+              const item = data.find(function (d) { return d.name === params.name; });
+              return params.name + ": " + (item ? item.raw : params.value);
             },
           },
           labelLine: { show: false },
