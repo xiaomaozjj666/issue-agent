@@ -54,14 +54,20 @@
   // 用于主题切换等仅需更新配色的场景，保留 #report 滚动位置和用户当前 focus/hover 状态
   function refreshReportCharts() {
     disposeReportCharts();
+    const sessionData = activeSession || {};
     const evidenceEl = document.getElementById("report-evidence-chart");
     if (evidenceEl) {
-      const chart = renderEvidenceChart(evidenceEl, report);
+      const chart = renderEvidenceMatrix(evidenceEl, report, sessionData);
       if (chart) reportChartInstances.push(chart);
     }
     const confidenceEl = document.getElementById("report-confidence-chart");
     if (confidenceEl) {
-      const chart = renderConfidenceRadar(confidenceEl, report);
+      const chart = renderEvidenceSankey(confidenceEl, report, sessionData);
+      if (chart) reportChartInstances.push(chart);
+    }
+    const funnelEl = document.getElementById("report-funnel-chart");
+    if (funnelEl) {
+      const chart = renderInvestigationFunnel(funnelEl, report, sessionData);
       if (chart) reportChartInstances.push(chart);
     }
   }
@@ -1373,141 +1379,241 @@
     }, 120);
   });
 
-  // 证据模块分布（横向柱状图）：按目录前缀聚合证据数量
-  // 真实意义：回答"问题集中在哪里"，比按单文件聚合更有决策价值
-  function renderEvidenceChart(container, report) {
+  // ── 图表 1：证据可信度矩阵（Heatmap） ──────────────────────
+  // 回答"这个分析的可信度到底如何"：每条证据在 4 个维度上的通过/未通过状态。
+  // 绿色 = 通过，红色 = 未通过。用户一眼看出哪些证据扎实、哪些是凑数。
+  function renderEvidenceMatrix(container, report, sessionData) {
     if (!container) return null;
     if (!echartsAvailable()) {
-      // M12 修复：图表库加载失败与"暂无证据"是两件事，文案必须区分
       container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("chart_load_failed"))}</div>`;
       return null;
     }
     const palette = getEchartsPalette();
-
-    // 按目录前缀聚合：src/auth/login.py → src/auth/；根目录文件 → 文件名
-    // 同时记录每个模块下的具体文件，供 tooltip 展示
-    const moduleMap = new Map();
-    (report.evidence || []).forEach(function (e) {
-      const path = e.path || "unknown";
-      const slashIdx = path.lastIndexOf("/");
-      let module;
-      if (slashIdx === -1) {
-        module = path;
-      } else if (slashIdx === 0) {
-        module = "/(root)";
-      } else {
-        // 取最后两级目录作为模块名，避免过深
-        const parts = path.split("/");
-        if (parts.length <= 3) {
-          module = parts.slice(0, -1).join("/") + "/";
-        } else {
-          module = "…/" + parts.slice(-3, -1).join("/") + "/";
-        }
-      }
-      if (!moduleMap.has(module)) {
-        moduleMap.set(module, { count: 0, files: new Set() });
-      }
-      const entry = moduleMap.get(module);
-      entry.count += 1;
-      entry.files.add(path);
-    });
-
-    if (!moduleMap.size) {
+    const evidence = report.evidence || [];
+    if (!evidence.length) {
       container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
       return null;
     }
 
-    // 按证据数升序排列（横向柱状图：最大的在顶部更易读）
-    const entries = Array.from(moduleMap.entries())
-      .sort(function (a, b) {
-        return a[1].count - b[1].count;
-      })
-      .slice(-10); // 最多展示 10 个模块
-    const modules = entries.map(function (entry) {
-      return entry[0];
+    // 从 session 数据提取已读文件列表和行数信息
+    const filesRead = (sessionData && sessionData.files_read) || report.files_examined || [];
+    const filesReadSet = new Set(filesRead);
+    // 审查状态：approved = 审查通过
+    const reviewPassed = report.review_audit && report.review_audit.status === "approved";
+
+    // 4 个验证维度
+    const dimensions = [
+      t("matrix_dim_file_read"),
+      t("matrix_dim_lines_valid"),
+      t("matrix_dim_has_reason"),
+      t("matrix_dim_review_verified"),
+    ];
+
+    // 构造 heatmap 数据：[x, y, value]
+    // value: 1 = 通过, 0 = 未通过
+    const heatData = [];
+    const fileLabels = evidence.map(function (e, i) {
+      // 文件名缩短显示
+      const path = e.path || "unknown";
+      const parts = path.split("/");
+      return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : path;
     });
-    const counts = entries.map(function (entry) {
-      return entry[1].count;
-    });
-    const fileLists = entries.map(function (entry) {
-      return Array.from(entry[1].files);
+
+    evidence.forEach(function (e, i) {
+      // 维度 0：文件是否被实际读取
+      const fileRead = filesReadSet.has(e.path) ? 1 : 0;
+      heatData.push([i, 0, fileRead]);
+
+      // 维度 1：行号是否有效（非空且格式正确）
+      const linesValid = e.lines && /^L\d+(-L?\d+)?$/.test(e.lines) ? 1 : 0;
+      heatData.push([i, 1, linesValid]);
+
+      // 维度 2：是否有 reason 说明
+      const hasReason = e.reason && e.reason.trim() ? 1 : 0;
+      heatData.push([i, 2, hasReason]);
+
+      // 维度 3：是否被独立审查验证
+      heatData.push([i, 3, reviewPassed ? 1 : 0]);
     });
 
     const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
     const chart = echarts.init(container);
     chart.setOption({
-      grid: { left: 8, right: 32, top: 12, bottom: 12, containLabel: true },
       tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "shadow" },
         confine: true,
         backgroundColor: tooltipBg,
         borderWidth: 0,
         padding: [10, 14],
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function (params) {
-          const idx = params[0].dataIndex;
-          const module = entries[idx][0];
-          const count = entries[idx][1].count;
-          const files = fileLists[idx];
-          const filesHtml = files
-            .slice(0, 5)
-            .map(function (f) {
-              return `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">· ${IA.escapeHtml(f)}</div>`;
-            })
-            .join("");
-          const more = files.length > 5 ? `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">+${files.length - 5}</div>` : "";
-          return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(module)}</div>` +
-            `<div>${IA.escapeHtml(t("report_legend_evidence"))}: <b>${count}</b></div>` +
-            filesHtml + more;
+          const e = evidence[params.data[0]];
+          const dim = dimensions[params.data[1]];
+          const passed = params.data[2] === 1;
+          const status = passed ? t("matrix_pass") : t("matrix_fail");
+          const statusColor = passed ? palette.success : palette.danger;
+          return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(e.path)}</div>` +
+            `<div style="color:${palette.textDim};font-size:11px;margin-bottom:4px;">${IA.escapeHtml(dim)}</div>` +
+            `<div style="color:${statusColor};font-weight:600;">${IA.escapeHtml(status)}</div>` +
+            (e.lines ? `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">${IA.escapeHtml(e.lines)}</div>` : "");
         },
       },
+      grid: { left: 8, right: 16, top: 8, bottom: 60, containLabel: true },
       xAxis: {
-        type: "value",
-        minInterval: 1,
-        axisLabel: { color: palette.textDim, fontSize: 11 },
-        axisLine: { lineStyle: { color: palette.line } },
-        splitLine: { lineStyle: { color: palette.line, type: "dashed" } },
-      },
-      yAxis: {
         type: "category",
-        data: modules,
+        data: fileLabels,
+        splitArea: { show: true },
         axisLabel: {
           color: palette.textDim,
-          fontSize: 11,
-          width: 120,
+          fontSize: 10,
+          rotate: 30,
+          width: 80,
           overflow: "truncate",
-          margin: 12,
         },
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { show: false },
       },
+      yAxis: {
+        type: "category",
+        data: dimensions,
+        splitArea: { show: true },
+        axisLabel: {
+          color: palette.textDim,
+          fontSize: 11,
+          width: 100,
+          overflow: "truncate",
+        },
+        axisLine: { lineStyle: { color: palette.line } },
+        axisTick: { show: false },
+      },
+      visualMap: {
+        min: 0,
+        max: 1,
+        show: false,
+        inRange: { color: [palette.danger, palette.success] },
+      },
       series: [
         {
-          type: "bar",
-          data: counts,
-          barMaxWidth: 22,
-          itemStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 1,
-              y2: 0,
-              colorStops: [
-                { offset: 0, color: palette.primaryDim },
-                { offset: 1, color: palette.primary },
-              ],
-            },
-            borderRadius: [0, 4, 4, 0],
-          },
-          emphasis: { itemStyle: { color: palette.primary } },
+          type: "heatmap",
+          data: heatData,
+          itemStyle: { borderRadius: 3, borderColor: palette.text === "#f1f5f9" ? "#1e293b" : "#ffffff", borderWidth: 2 },
+          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          label: { show: false },
+        },
+      ],
+    });
+    return chart;
+  }
+
+  // ── 图表 2：证据-根因支撑关系图（Sankey） ──────────────────────
+  // 回答"结论是怎么推导出来的"：issue → 根因 → 证据的流向，
+  // 流量粗细表示支撑强度（强支撑=有效行号+已读，弱支撑=仅有 reason）
+  function renderEvidenceSankey(container, report, sessionData) {
+    if (!container) return null;
+    if (!echartsAvailable()) {
+      container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("chart_load_failed"))}</div>`;
+      return null;
+    }
+    const palette = getEchartsPalette();
+    const evidence = report.evidence || [];
+    if (!evidence.length) {
+      container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("report_evidence_chart_empty"))}</div>`;
+      return null;
+    }
+
+    const filesRead = (sessionData && sessionData.files_read) || report.files_examined || [];
+    const filesReadSet = new Set(filesRead);
+
+    // 从 root_cause 提取关键短语作为中间节点（按句号/分号拆分，取前 2 段）
+    const causeText = report.root_cause || t("sankey_default_cause");
+    const causeParts = causeText.split(/[。.；;]/).filter(function (s) { return s.trim(); });
+    const causeNodes = causeParts.slice(0, 2).map(function (s, i) {
+      const trimmed = s.trim();
+      // 缩短为 40 字符
+      return trimmed.length > 40 ? trimmed.substring(0, 40) + "…" : trimmed;
+    });
+    if (!causeNodes.length) causeNodes.push(t("sankey_default_cause"));
+
+    // 构造 Sankey 节点
+    const nodes = [];
+    // 左侧：issue
+    nodes.push({ name: t("sankey_issue_node"), itemStyle: { color: palette.primary } });
+    // 中间：根因论点
+    causeNodes.forEach(function (c) {
+      nodes.push({ name: c, itemStyle: { color: palette.warning } });
+    });
+    // 右侧：证据文件
+    const fileNames = evidence.map(function (e) {
+      const path = e.path || "unknown";
+      const parts = path.split("/");
+      return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : path;
+    });
+    fileNames.forEach(function (f, i) {
+      const e = evidence[i];
+      const isStrong = filesReadSet.has(e.path) && e.lines && /^L\d+/.test(e.lines);
+      nodes.push({ name: f, itemStyle: { color: isStrong ? palette.success : palette.textDim } });
+    });
+
+    // 构造连线
+    const links = [];
+    // issue → 每个根因论点
+    causeNodes.forEach(function (c) {
+      links.push({ source: t("sankey_issue_node"), target: c, value: 1 });
+    });
+    // 根因论点 → 证据（轮流分配到各论点，避免单点过载）
+    evidence.forEach(function (e, i) {
+      const targetCause = causeNodes[i % causeNodes.length];
+      const fileName = fileNames[i];
+      const isStrong = filesReadSet.has(e.path) && e.lines && /^L\d+/.test(e.lines);
+      links.push({ source: targetCause, target: fileName, value: isStrong ? 2 : 1 });
+    });
+
+    const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
+    const chart = echarts.init(container);
+    chart.setOption({
+      tooltip: {
+        confine: true,
+        backgroundColor: tooltipBg,
+        borderWidth: 0,
+        padding: [10, 14],
+        textStyle: { color: palette.text, fontSize: 12 },
+        formatter: function (params) {
+          if (params.dataType === "edge") {
+            const strong = params.data.value >= 2;
+            const label = strong ? t("sankey_strong_support") : t("sankey_weak_support");
+            const color = strong ? palette.success : palette.textDim;
+            return `<div style="font-weight:600;">${IA.escapeHtml(params.data.source)} → ${IA.escapeHtml(params.data.target)}</div>` +
+              `<div style="color:${color};font-size:11px;margin-top:2px;">${IA.escapeHtml(label)}</div>`;
+          }
+          return `<div style="font-weight:600;">${IA.escapeHtml(params.name)}</div>`;
+        },
+      },
+      series: [
+        {
+          type: "sankey",
+          data: nodes,
+          links: links,
+          orient: "horizontal",
+          left: 16,
+          right: 80,
+          top: 16,
+          bottom: 16,
+          nodeWidth: 14,
+          nodeGap: 10,
+          nodeAlign: "justify",
+          layoutIterations: 32,
           label: {
-            show: true,
-            position: "right",
             color: palette.text,
             fontSize: 11,
-            fontWeight: 600,
+            fontWeight: 500,
+          },
+          lineStyle: {
+            color: "gradient",
+            curveness: 0.5,
+            opacity: 0.5,
+          },
+          emphasis: {
+            focus: "adjacency",
+            lineStyle: { opacity: 0.8 },
           },
         },
       ],
@@ -1515,112 +1621,90 @@
     return chart;
   }
 
-  // 报告产出构成（环形图）：展示报告各部分实际产出数量
-  // 真实意义：一眼看出报告重心 —— 证据为主/修复为主/测试为主/风险为主
-  // 比硬编码雷达图诚实：所有数据都来自 report 实际字段
-  function renderConfidenceRadar(container, report) {
+  // ── 图表 3：调查过程效率漏斗（Funnel） ──────────────────────
+  // 回答"这次分析花了多少步、效率如何"：模型调用 → 工具调用 → 文件读取 → 有效证据。
+  // 每层宽度按比例收缩，hover 显示转化率。
+  function renderInvestigationFunnel(container, report, sessionData) {
     if (!container) return null;
     if (!echartsAvailable()) {
-      // M12 修复：图表库加载失败与"暂无产出"是两件事，文案必须区分
       container.innerHTML = `<div class="report-chart-fallback">${IA.escapeHtml(t("chart_load_failed"))}</div>`;
       return null;
     }
     const palette = getEchartsPalette();
+    const metrics = (sessionData && sessionData.metrics) || {};
 
-    const evidenceCount = (report.evidence || []).length;
-    const changesCount = (report.proposed_changes || []).length;
-    const testCount = (report.tests || []).length;
-    const riskCount = (report.risks || []).length;
-    const total = evidenceCount + changesCount + testCount + riskCount;
+    const modelCalls = parseInt(metrics.model_calls, 10) || 0;
+    const toolCalls = parseInt(metrics.tool_calls, 10) || 0;
+    const filesRead = (sessionData && sessionData.files_read ? sessionData.files_read.length : (report.files_examined || []).length) || 0;
+    const validEvidence = report.evidence_audit ? report.evidence_audit.valid_references : (report.evidence || []).length;
 
-    if (total === 0) {
-      container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("report_composition_empty"))}</div>`;
+    // 如果所有值都是 0，展示空状态
+    if (!modelCalls && !toolCalls && !filesRead && !validEvidence) {
+      container.innerHTML = `<div class="report-chart-empty">${IA.escapeHtml(t("funnel_empty"))}</div>`;
       return null;
     }
 
     const data = [
-      { name: t("report_composition_evidence"), value: evidenceCount, color: palette.primary },
-      { name: t("report_composition_changes"), value: changesCount, color: palette.success },
-      { name: t("report_composition_tests"), value: testCount, color: palette.warning },
-      { name: t("report_composition_risks"), value: riskCount, color: palette.danger },
-    ].filter(function (d) {
-      return d.value > 0;
-    });
+      { name: t("funnel_model_calls"), value: Math.max(modelCalls, 1), raw: modelCalls, color: palette.primary },
+      { name: t("funnel_tool_calls"), value: Math.max(toolCalls, 1), raw: toolCalls, color: palette.warning },
+      { name: t("funnel_files_read"), value: Math.max(filesRead, 1), raw: filesRead, color: palette.success },
+      { name: t("funnel_valid_evidence"), value: Math.max(validEvidence, 1), raw: validEvidence, color: palette.danger },
+    ];
 
     const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
     const chart = echarts.init(container);
     chart.setOption({
       tooltip: {
-        trigger: "item",
         confine: true,
         backgroundColor: tooltipBg,
         borderWidth: 0,
         padding: [10, 14],
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function (params) {
-          const pct = total > 0 ? ((params.value / total) * 100).toFixed(1) : "0";
+          const idx = params.dataIndex;
+          const raw = data[idx].raw;
+          const prevRaw = idx > 0 ? data[idx - 1].raw : 0;
+          const conversionRate = prevRaw > 0 ? ((raw / prevRaw) * 100).toFixed(1) : "100";
+          const overallRate = modelCalls > 0 ? ((raw / modelCalls) * 100).toFixed(1) : "100";
           return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(params.name)}</div>` +
-            `<div>${IA.escapeHtml(t("report_legend_evidence"))}: <b>${params.value}</b> (${pct}%)</div>`;
+            `<div>${IA.escapeHtml(t("funnel_count"))}: <b>${raw}</b></div>` +
+            (idx > 0 ? `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_conversion"))}: ${conversionRate}%</div>` : "") +
+            `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_overall"))}: ${overallRate}%</div>`;
         },
       },
-      legend: {
-        orient: "horizontal",
-        bottom: 4,
-        icon: "circle",
-        itemWidth: 8,
-        itemHeight: 8,
-        itemGap: 12,
-        textStyle: { color: palette.textDim, fontSize: 11 },
-      },
-      graphic: [
-        {
-          type: "text",
-          left: "center",
-          top: "38%",
-          style: {
-            text: String(total),
-            fontSize: 28,
-            fontWeight: 700,
-            fill: palette.text,
-            textAlign: "center",
-          },
-        },
-        {
-          type: "text",
-          left: "center",
-          top: "52%",
-          style: {
-            text: t("report_composition_total"),
-            fontSize: 11,
-            fill: palette.textDim,
-            textAlign: "center",
-          },
-        },
-      ],
       series: [
         {
-          type: "pie",
-          radius: ["52%", "72%"],
-          center: ["50%", "44%"],
-          avoidLabelOverlap: true,
-          itemStyle: {
-            borderColor: palette.text === "#f1f5f9" ? "#1e293b" : "#ffffff",
-            borderWidth: 2,
-          },
-          label: { show: false },
-          labelLine: { show: false },
-          emphasis: {
-            scale: true,
-            scaleSize: 6,
-            itemStyle: { shadowBlur: 12, shadowColor: "rgba(0,0,0,0.3)" },
-          },
+          type: "funnel",
           data: data.map(function (d) {
-            return {
-              name: d.name,
-              value: d.value,
-              itemStyle: { color: d.color },
-            };
+            return { name: d.name, value: d.value, itemStyle: { color: d.color } };
           }),
+          left: "10%",
+          right: "10%",
+          top: 16,
+          bottom: 16,
+          width: "80%",
+          minSize: "20%",
+          maxSize: "100%",
+          sort: "descending",
+          gap: 4,
+          label: {
+            show: true,
+            color: palette.text,
+            fontSize: 11,
+            fontWeight: 600,
+            formatter: function (params) {
+              const idx = params.dataIndex;
+              return params.name + ": " + data[idx].raw;
+            },
+          },
+          labelLine: { show: false },
+          itemStyle: {
+            borderWidth: 0,
+            borderRadius: 2,
+          },
+          emphasis: {
+            itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" },
+          },
         },
       ],
     });
@@ -1668,31 +1752,33 @@
       .join("");
     parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
 
-    // 3 & 4. ECharts 双图表并排：证据模块分布 + 报告产出构成
-    // 仅当存在证据时才渲染证据图；产出构成图始终渲染（除非全为 0）
+    // 3. ECharts 三图表：证据可信度矩阵 + 证据-根因支撑图 + 调查效率漏斗
+    // 每个图表回答一个用户真正会问的问题，而非堆砌数量统计
     const hasEvidence = r.evidence && r.evidence.length;
-    const hasComposition =
-      (r.evidence || []).length +
-        (r.proposed_changes || []).length +
-        (r.tests || []).length +
-        (r.risks || []).length >
-      0;
-    if (hasEvidence || hasComposition) {
-      const evidenceChartHtml = hasEvidence
-        ? `<div class="report-chart report-chart-half">` +
-          `<div class="report-chart-title">${IA.escapeHtml(t("report_evidence_chart_title"))}</div>` +
-          `<div id="report-evidence-chart" class="report-chart-canvas"></div>` +
-          `<div class="report-chart-caption">${IA.escapeHtml(t("report_evidence_chart_caption"))}</div>` +
-          `</div>`
-        : "";
-      const compositionChartHtml = hasComposition
-        ? `<div class="report-chart report-chart-half">` +
-          `<div class="report-chart-title">${IA.escapeHtml(t("report_confidence_chart_title"))}</div>` +
-          `<div id="report-confidence-chart" class="report-chart-canvas"></div>` +
-          `<div class="report-chart-caption">${IA.escapeHtml(t("report_confidence_chart_caption"))}</div>` +
-          `</div>`
-        : "";
-      parts.push(`<div class="report-charts-row">${evidenceChartHtml}${compositionChartHtml}</div>`);
+    const sessionData = activeSession || {};
+    if (hasEvidence) {
+      // 图表 1 + 图表 2 并排
+      const matrixHtml =
+        `<div class="report-chart report-chart-half">` +
+        `<div class="report-chart-title">${IA.escapeHtml(t("matrix_chart_title"))}</div>` +
+        `<div id="report-evidence-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
+        `<div class="report-chart-caption">${IA.escapeHtml(t("matrix_chart_caption"))}</div>` +
+        `</div>`;
+      const sankeyHtml =
+        `<div class="report-chart report-chart-half">` +
+        `<div class="report-chart-title">${IA.escapeHtml(t("sankey_chart_title"))}</div>` +
+        `<div id="report-confidence-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
+        `<div class="report-chart-caption">${IA.escapeHtml(t("sankey_chart_caption"))}</div>` +
+        `</div>`;
+      parts.push(`<div class="report-charts-row">${matrixHtml}${sankeyHtml}</div>`);
+      // 图表 3 单独一行（漏斗图居中显示）
+      const funnelHtml =
+        `<div class="report-chart report-chart-full">` +
+        `<div class="report-chart-title">${IA.escapeHtml(t("funnel_chart_title"))}</div>` +
+        `<div id="report-funnel-chart" class="report-chart-canvas"></div>` +
+        `<div class="report-chart-caption">${IA.escapeHtml(t("funnel_chart_caption"))}</div>` +
+        `</div>`;
+      parts.push(`<div class="report-charts-row">${funnelHtml}</div>`);
     }
 
     // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
@@ -1792,12 +1878,17 @@
     // 渲染 ECharts 图表（必须在 innerHTML 设置后才能拿到 DOM 节点）
     const evidenceEl = document.getElementById("report-evidence-chart");
     if (evidenceEl) {
-      const chart = renderEvidenceChart(evidenceEl, r);
+      const chart = renderEvidenceMatrix(evidenceEl, r, sessionData);
       if (chart) reportChartInstances.push(chart);
     }
     const confidenceEl = document.getElementById("report-confidence-chart");
     if (confidenceEl) {
-      const chart = renderConfidenceRadar(confidenceEl, r);
+      const chart = renderEvidenceSankey(confidenceEl, r, sessionData);
+      if (chart) reportChartInstances.push(chart);
+    }
+    const funnelEl = document.getElementById("report-funnel-chart");
+    if (funnelEl) {
+      const chart = renderInvestigationFunnel(funnelEl, r, sessionData);
       if (chart) reportChartInstances.push(chart);
     }
   }
