@@ -4558,3 +4558,123 @@ body.modal-open {
   height: 240px;
   min-height: 240px;
 }
+
+/* ============================================================
+   E14 证据分页哨兵 + E28 实时文件追踪面板
+   ============================================================ */
+
+/* E14: 证据列表无限滚动哨兵 — 高度 1px，仅在视口内时触发加载 */
+.evidence-sentinel {
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+}
+
+/* E28: 实时文件追踪卡片 */
+.files-tracker {
+  display: block;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+  font-size: var(--text-sm);
+}
+
+.files-tracker-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.files-tracker-icon {
+  flex: 0 0 auto;
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+.files-tracker-title {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+
+.files-tracker-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.files-tracker-toggle {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.files-tracker-toggle:hover {
+  border-color: var(--control-hover-border);
+  background: var(--control-hover);
+}
+
+.files-tracker-toggle[aria-expanded="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent-muted);
+}
+
+.files-tracker-tree {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.files-tracker-dir {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border);
+  background: var(--card);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.files-tracker-dirname {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.files-tracker-filelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--space-2);
+}
+
+.files-tracker-file code {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--canvas-inset);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
