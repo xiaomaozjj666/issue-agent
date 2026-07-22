@@ -425,6 +425,10 @@
     actions.appendChild(sessionAction("rename", t("action_rename_short"), function () {
       renameSession(session);
     }));
+    // E32: 导出会话按钮（仅非归档视图显示，归档会话仍可导出）
+    actions.appendChild(sessionAction("download", t("action_export_session"), function () {
+      exportSession(session);
+    }));
     actions.appendChild(sessionAction(showArchived ? "restore" : "archive", showArchived ? t("restore_session") : t("archive_session"), function () {
       archiveSession(session, !showArchived);
     }));
@@ -447,6 +451,85 @@
       handler();
     });
     return button;
+  }
+
+  // ── E32 会话导出/导入 ──────────────────────────────────
+  // 导出：调用 GET /session/{id}/export，触发浏览器下载 JSON 文件
+  async function exportSession(session) {
+    if (!session || !session.session_id) return;
+    try {
+      const resp = await fetch(`/session/${encodeURIComponent(session.session_id)}/export`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `session-${session.session_id}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    } catch (e) {
+      addMsg("error", t("import_session_failed", { reason: e.message }));
+    }
+  }
+
+  // 导入：读取用户选择的 JSON 文件，POST /session/import
+  async function importSessionFile(file) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      let data;
+      try { data = JSON.parse(text); } catch (e) {
+        addMsg("error", t("import_session_invalid"));
+        return;
+      }
+      if (!data || data.format !== "issue-agent-session") {
+        addMsg("error", t("import_session_invalid"));
+        return;
+      }
+      const resp = await fetch("/session/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!resp.ok) {
+        let detail = `HTTP ${resp.status}`;
+        try { const b = await resp.json(); detail = b.detail || detail; } catch (e) { /* ignore */ }
+        throw new Error(detail);
+      }
+      addMsg("system", t("import_session_success"));
+      loadSessions();
+    } catch (e) {
+      addMsg("error", t("import_session_failed", { reason: e.message }));
+    }
+  }
+
+  // 初始化导入按钮：隐藏 file input，点击按钮触发选择文件
+  function setupImportButton() {
+    const toolbar = document.querySelector(".history-toolbar");
+    if (!toolbar || document.getElementById("import-session-btn")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "import-session-btn";
+    btn.className = "import-session-btn";
+    btn.title = t("action_import_session");
+    btn.setAttribute("aria-label", t("action_import_session"));
+    btn.innerHTML = IA.svgIcon("upload") || '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 2.5a.75.75 0 0 1 .75.75v6.94l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V3.25A.75.75 0 0 1 8 2.5ZM3.5 12.5a.75.75 0 0 1 .75.75v.5h7.5v-.5a.75.75 0 0 1 1.5 0v1.25a.75.75 0 0 1-.75.75H3.75a.75.75 0 0 1-.75-.75v-1.25a.75.75 0 0 1 .75-.75Z"/></svg>';
+    btn.innerHTML += `<span>${IA.escapeHtml(t("action_import_session"))}</span>`;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.style.display = "none";
+    input.addEventListener("change", function () {
+      if (input.files && input.files[0]) {
+        importSessionFile(input.files[0]);
+        input.value = ""; // 允许重复导入同一文件
+      }
+    });
+    btn.addEventListener("click", function () { input.click(); });
+    toolbar.appendChild(btn);
+    toolbar.appendChild(input);
   }
 
   function historyGroup(value) {
@@ -3561,6 +3644,8 @@
     document.getElementById("toggle-history-btn").addEventListener("click", toggleMobileHistory);
     document.getElementById("analyze-btn").addEventListener("click", analyze);
     document.getElementById("archive-toggle").addEventListener("click", toggleArchiveView);
+    // E32: 初始化会话导入按钮
+    setupImportButton();
     // 拖拽 GitHub issue URL 到输入框
     const issueUrlInput = document.getElementById("issueUrl");
     issueUrlInput.addEventListener("dragover", function (e) {

@@ -4678,3 +4678,37 @@ body.modal-open {
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+
+/* ============================================================
+   E32 会话导出/导入按钮
+   ============================================================ */
+.import-session-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: var(--btn-shadow), var(--btn-inset-shadow);
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.import-session-btn:hover {
+  border-color: var(--control-hover-border);
+  background: var(--control-hover);
+  transform: translateY(-1px);
+}
+
+.import-session-btn svg {
+  width: 14px;
+  height: 14px;
+}
