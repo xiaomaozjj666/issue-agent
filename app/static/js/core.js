@@ -153,6 +153,21 @@
     batch_restore_done: "Restored {count} session(s)",
     batch_delete_done: "Deleted {count} session(s)",
     batch_partial_error: "{failed} session(s) failed",
+    back_to_top: "Back to top",
+    patch_view_unified: "Unified",
+    patch_view_split: "Split view",
+    patch_download: "Download .patch",
+    tests_copy_pytest: "Copy as pytest",
+    risk_severity_high: "High",
+    risk_severity_medium: "Medium",
+    risk_severity_low: "Low",
+    chart_zoom: "Zoom",
+    chart_zoom_title: "Chart zoom view",
+    evidence_show_more: "Show {count} more",
+    evidence_show_less: "Collapse",
+    sankey_medium_support: "Medium support (read, lines invalid)",
+    chart_data_view: "View data",
+    chart_data_view_refresh: "Refresh",
     report_evidence_chart_empty: "No code evidence yet",
   };
 
@@ -367,6 +382,61 @@
       .join("");
   }
 
+  // #6 双栏 diff 对比：左栏显示删除/上下文，右栏显示新增/上下文
+  // 按 hunk 分组对齐，删除行与新增行一一对照
+  function renderSideBySideDiff(patch) {
+    if (!patch) return "";
+    const lines = String(patch).split("\n");
+    const leftLines = [];
+    const rightLines = [];
+    lines.forEach(function (rawLine) {
+      if (rawLine.startsWith("+++") || rawLine.startsWith("---")) {
+        // 文件头：只显示在左侧
+        leftLines.push({ cls: rawLine.startsWith("+++") ? "diff-add-file" : "diff-del-file", text: rawLine });
+        rightLines.push({ cls: "diff-empty", text: "" });
+        return;
+      }
+      if (rawLine.startsWith("@@")) {
+        leftLines.push({ cls: "diff-hunk", text: rawLine });
+        rightLines.push({ cls: "diff-hunk", text: rawLine });
+        return;
+      }
+      if (rawLine.startsWith("+")) {
+        // 新增：只进右栏
+        rightLines.push({ cls: "diff-add", text: rawLine });
+        return;
+      }
+      if (rawLine.startsWith("-")) {
+        // 删除：只进左栏
+        leftLines.push({ cls: "diff-del", text: rawLine });
+        return;
+      }
+      // 上下文行：两边都显示
+      leftLines.push({ cls: "diff-ctx", text: rawLine });
+      rightLines.push({ cls: "diff-ctx", text: rawLine });
+    });
+    // 补齐：让左右两栏行数相同，便于对齐
+    while (leftLines.length < rightLines.length) {
+      leftLines.push({ cls: "diff-empty", text: "" });
+    }
+    while (rightLines.length < leftLines.length) {
+      rightLines.push({ cls: "diff-empty", text: "" });
+    }
+    const renderCol = function (items, side) {
+      return `<div class="diff-split-col diff-split-${side}">` +
+        items.map(function (item) {
+          return `<span class="${item.cls}">${item.text || "&nbsp;"}</span>`;
+        }).join("") +
+        `</div>`;
+    };
+    return `<div class="diff-split-wrap">` +
+      `<div class="diff-split-header"><span>— before</span><span>++ after</span></div>` +
+      `<div class="diff-split-body">` +
+        renderCol(leftLines, "left") +
+        renderCol(rightLines, "right") +
+      `</div></div>`;
+  }
+
   function buildGitHubUrl(session, path, lines) {
     if (!session || !session.owner || !session.repo) return null;
     const owner = encodeURIComponent(String(session.owner));
@@ -402,6 +472,7 @@
     copyToClipboard,
     downloadFile,
     highlightDiff,
+    renderSideBySideDiff,
     buildGitHubUrl,
     parseSseEvents,
   };

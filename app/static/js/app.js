@@ -74,25 +74,38 @@
   }
 
   // 仅刷新报告内 ECharts 图表实例，不重建整个 DOM
-  // 用于主题切换等仅需更新配色的场景，保留 #report 滚动位置和用户当前 focus/hover 状态
+  // #26+#27 主题切换用 setOption 合并替代 dispose+reinit：
+  // 只更新配色相关 option（textStyle/color/tooltip 背景），保留图表实例与用户交互状态
+  // 加淡入淡出过渡，避免硬切
   function refreshReportCharts() {
-    disposeReportCharts();
-    const sessionData = activeSession || {};
-    const evidenceEl = document.getElementById("report-evidence-chart");
-    if (evidenceEl) {
-      const chart = renderEvidenceMatrix(evidenceEl, report, sessionData);
-      if (chart) reportChartInstances.push(chart);
-    }
-    const confidenceEl = document.getElementById("report-confidence-chart");
-    if (confidenceEl) {
-      const chart = renderEvidenceSankey(confidenceEl, report, sessionData);
-      if (chart) reportChartInstances.push(chart);
-    }
-    const funnelEl = document.getElementById("report-funnel-chart");
-    if (funnelEl) {
-      const chart = renderInvestigationFunnel(funnelEl, report, sessionData);
-      if (chart) reportChartInstances.push(chart);
-    }
+    const palette = getEchartsPalette();
+    if (!reportChartInstances.length) return;
+    // 给图表容器加一个淡入过渡，掩盖 setOption 刷新的瞬间跳变
+    reportChartInstances.forEach(function (chart) {
+      const dom = chart.getDom();
+      if (dom) {
+        dom.style.transition = "opacity 200ms ease";
+        dom.style.opacity = "0.4";
+      }
+    });
+    // 下一帧恢复 opacity + 用 setOption merge 更新配色
+    requestAnimationFrame(function () {
+      reportChartInstances.forEach(function (chart) {
+        const dom = chart.getDom();
+        if (dom) dom.style.opacity = "1";
+        // notMerge=false：合并更新，仅覆盖以下字段
+        chart.setOption({
+          color: [palette.primary, palette.success, palette.warning, palette.danger],
+          textStyle: { color: palette.text },
+          tooltip: {
+            backgroundColor: palette.tooltipBg,
+            borderColor: palette.tooltipBorder,
+            textStyle: { color: palette.text },
+          },
+        }, { notMerge: false });
+        try { chart.resize(); } catch (e) { /* ignore */ }
+      });
+    });
   }
 
   // 移动端侧边栏切换
@@ -1523,6 +1536,9 @@
     fill: "rgba(59, 130, 246, 0.45)",
     fillDim: "rgba(59, 130, 246, 0.05)",
     splitArea: ["rgba(59,130,246,0.04)", "rgba(59,130,246,0.08)"],
+    // #24 显式 tooltip 背景色字段，替代硬编码颜色值判断
+    tooltipBg: "#0f172a",
+    tooltipBorder: "#1e293b",
   };
   const ECHARTS_PALETTE_LIGHT = {
     primary: "#2563eb",
@@ -1536,6 +1552,9 @@
     fill: "rgba(37, 99, 235, 0.4)",
     fillDim: "rgba(37, 99, 235, 0.05)",
     splitArea: ["rgba(37,99,235,0.04)", "rgba(37,99,235,0.08)"],
+    // #24 显式 tooltip 背景色字段
+    tooltipBg: "#ffffff",
+    tooltipBorder: "#e2e8f0",
   };
 
   function getEchartsPalette() {
@@ -1576,6 +1595,18 @@
     }, 120);
   });
 
+  // #8 风险严重程度分级：根据关键词匹配 high/medium/low
+  // 中文关键词：高/严重/关键/致命 → high；中/一般/可能 → medium；低/小/轻微 → low
+  // 英文关键词：critical/high/severe → high；medium/moderate → medium；low/minor → low
+  function classifyRisk(text) {
+    const s = String(text || "").toLowerCase();
+    if (/(严重|致命|关键|高风险|critical|severe|fatal|crash|data loss|security|vulnerab)/i.test(s)) return "high";
+    if (/(中等|一般|可能|潜在|medium|moderate|warning|caution)/i.test(s)) return "medium";
+    if (/(轻微|低风险|小|low|minor|cosmetic|nitpick)/i.test(s)) return "low";
+    // 默认无明确级别时归为 medium，避免被忽视
+    return "medium";
+  }
+
   // ── 图表 1：证据可信度矩阵（Heatmap） ──────────────────────
   // 回答"这个分析的可信度到底如何"：每条证据在 4 个维度上的通过/未通过状态。
   // 绿色 = 通过，红色 = 未通过。用户一眼看出哪些证据扎实、哪些是凑数。
@@ -1587,6 +1618,16 @@
       feature: {
         saveAsImage: { title: t("chart_save_image"), pixelRatio: 2, backgroundColor: "transparent" },
         restore: { title: t("chart_restore") },
+        // #18 dataView：查看图表原始数据（可复制为 CSV/JSON）
+        dataView: {
+          title: t("chart_data_view"),
+          lang: [t("chart_data_view"), t("report_close"), t("chart_data_view_refresh")],
+          readOnly: true,
+          backgroundColor: palette.tooltipBg,
+          textColor: palette.text,
+          textareaColor: palette.tooltipBorder,
+          textareaBorderColor: palette.line,
+        },
       },
       iconStyle: { borderColor: palette.textDim },
       emphasis: { iconStyle: { borderColor: palette.text } },
@@ -1626,11 +1667,18 @@
     // 构造 heatmap 数据：[x, y, value]
     // value: 1 = 通过, 0 = 未通过
     const heatData = [];
-    const fileLabels = evidence.map(function (e, i) {
-      // 文件名缩短显示
-      const path = e.path || "unknown";
+    // #23 文件名智能去重：先收集所有短名，发现冲突时回退到完整路径
+    const rawPaths = evidence.map(function (e) { return e.path || "unknown"; });
+    const shortNames = rawPaths.map(function (path) {
       const parts = path.split("/");
       return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : path;
+    });
+    // 检测短名冲突：相同短名出现多次时，改用完整路径
+    const nameCount = {};
+    shortNames.forEach(function (name) { nameCount[name] = (nameCount[name] || 0) + 1; });
+    const fileLabels = shortNames.map(function (name, i) {
+      if (nameCount[name] > 1) return rawPaths[i];
+      return name;
     });
 
     evidence.forEach(function (e, i) {
@@ -1650,7 +1698,7 @@
       heatData.push([i, 3, reviewPassed ? 1 : 0]);
     });
 
-    const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
+    const tooltipBg = palette.tooltipBg;
     const chart = echarts.init(container);
     chart.setOption({
       tooltip: {
@@ -1710,7 +1758,7 @@
         {
           type: "heatmap",
           data: heatData,
-          itemStyle: { borderRadius: 3, borderColor: palette.text === "#f1f5f9" ? "#1e293b" : "#ffffff", borderWidth: 2 },
+          itemStyle: { borderRadius: 3, borderColor: palette.tooltipBorder, borderWidth: 2 },
           emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
           label: { show: false },
         },
@@ -1779,14 +1827,20 @@
       links.push({ source: t("sankey_issue_node"), target: c, value: 1 });
     });
     // 根因论点 → 证据（轮流分配到各论点，避免单点过载）
+    // #20 value 多档化：3 = 强支撑（已读 + 行号有效）；2 = 中等支撑（已读但行号缺失/不规范）；
+    // 1 = 弱支撑（仅 reason，未读取文件）。反映证据支撑强度的梯度
     evidence.forEach(function (e, i) {
       const targetCause = causeNodes[i % causeNodes.length];
       const fileName = fileNames[i];
-      const isStrong = filesReadSet.has(e.path) && e.lines && /^L\d+/.test(e.lines);
-      links.push({ source: targetCause, target: fileName, value: isStrong ? 2 : 1 });
+      const fileRead = filesReadSet.has(e.path);
+      const linesValid = e.lines && /^L\d+/.test(e.lines);
+      let supportValue = 1;
+      if (fileRead && linesValid) supportValue = 3;
+      else if (fileRead) supportValue = 2;
+      links.push({ source: targetCause, target: fileName, value: supportValue });
     });
 
-    const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
+    const tooltipBg = palette.tooltipBg;
     const chart = echarts.init(container);
     chart.setOption({
       tooltip: {
@@ -1797,9 +1851,12 @@
         textStyle: { color: palette.text, fontSize: 12 },
         formatter: function (params) {
           if (params.dataType === "edge") {
-            const strong = params.data.value >= 2;
-            const label = strong ? t("sankey_strong_support") : t("sankey_weak_support");
-            const color = strong ? palette.success : palette.textDim;
+            // #20 三档支撑强度：3=强 / 2=中 / 1=弱
+            const v = params.data.value;
+            let label, color;
+            if (v >= 3) { label = t("sankey_strong_support"); color = palette.success; }
+            else if (v === 2) { label = t("sankey_medium_support"); color = palette.warning; }
+            else { label = t("sankey_weak_support"); color = palette.textDim; }
             return `<div style="font-weight:600;">${IA.escapeHtml(params.data.source)} → ${IA.escapeHtml(params.data.target)}</div>` +
               `<div style="color:${color};font-size:11px;margin-top:2px;">${IA.escapeHtml(label)}</div>`;
           }
@@ -1886,7 +1943,7 @@
       .filter(function (d) { return d.raw > 0; })
       .map(function (d) { return { name: d.name, value: d.raw, raw: d.raw, color: d.color }; });
 
-    const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
+    const tooltipBg = palette.tooltipBg;
     const chart = echarts.init(container);
     chart.setOption({
       tooltip: {
@@ -1963,29 +2020,38 @@
     }
 
     // 1. 核心结论卡（金字塔顶端：结论前置）
+    // #12 置信度 badge：high/medium/low 颜色区分，结论卡本身一目了然
+    const confClass = IA.safeClass(r.confidence);
     parts.push(
       `<div class="report-conclusion">` +
-        `<span class="report-conclusion-label">${IA.escapeHtml(t("report_conclusion_label"))}</span>` +
+        `<div class="report-conclusion-header">` +
+          `<span class="report-conclusion-label">${IA.escapeHtml(t("report_conclusion_label"))}</span>` +
+          `<span class="confidence-badge confidence-${confClass}">${IA.escapeHtml(enumLabel("confidence", r.confidence))}</span>` +
+        `</div>` +
         `<p class="report-conclusion-text">${IA.escapeHtml(r.summary)}</p>` +
         `</div>`,
     );
 
     // 2. 关键指标网格（六维度速览）
+    // #11 点击下钻：每张卡片可点击跳转到对应章节锚点
     const review = r.review_audit || { status: "not_run" };
     const reviewLabel =
       review.status === "not_run" ? t("report_review_pending") : enumLabel("review_status", review.status);
     const metrics = [
-      { label: t("report_metric_evidence_count"), value: String((r.evidence || []).length) },
-      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length) },
-      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence) },
-      { label: t("report_metric_review"), value: reviewLabel },
-      { label: t("report_metric_proposed_changes"), value: String((r.proposed_changes || []).length) },
-      { label: t("report_metric_risks"), value: String((r.risks || []).length) },
+      { label: t("report_metric_evidence_count"), value: String((r.evidence || []).length), href: "#report-evidence" },
+      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length), href: null },
+      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence), href: null },
+      { label: t("report_metric_review"), value: reviewLabel, href: review.status !== "not_run" ? ".review-section" : null },
+      { label: t("report_metric_proposed_changes"), value: String((r.proposed_changes || []).length), href: "#report-changes" },
+      { label: t("report_metric_risks"), value: String((r.risks || []).length), href: "#report-risks" },
     ];
     const metricsHtml = metrics
       .map(function (m) {
+        const interactive = m.href ? " clickable" : "";
+        const role = m.href ? ` role="link" tabindex="0" data-href="${IA.escapeAttr(m.href)}"` : "";
         return (
-          `<div class="report-metric-card"><span class="report-metric-label">${IA.escapeHtml(m.label)}</span>` +
+          `<div class="report-metric-card${interactive}"${role}>` +
+          `<span class="report-metric-label">${IA.escapeHtml(m.label)}</span>` +
           `<span class="report-metric-value">${IA.escapeHtml(m.value)}</span></div>`
         );
       })
@@ -2076,34 +2142,54 @@
     }
 
     // 10. 修复补丁
+    // #6 双栏 diff 对比 + #15 下载 .patch 文件按钮
     if (r.patch) {
       const patchId = "report-patch";
       toc.push(`<li><a href="#${patchId}">${IA.escapeHtml(t("report_patch"))}</a></li>`);
+      const diffView = IA.renderSideBySideDiff(r.patch);
+      const patchActions =
+        `<div class="patch-actions">` +
+          `<div class="patch-view-toggle">` +
+            `<button type="button" class="patch-view-btn active" data-view="unified">${IA.escapeHtml(t("patch_view_unified"))}</button>` +
+            `<button type="button" class="patch-view-btn" data-view="split">${IA.escapeHtml(t("patch_view_split"))}</button>` +
+          `</div>` +
+          `<button type="button" class="patch-copy" data-action="copy-patch">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button>` +
+          `<button type="button" class="patch-download" data-action="download-patch">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("patch_download"))}</span></button>` +
+        `</div>`;
       const patchHtml =
-        `<details id="${patchId}"><summary>${IA.escapeHtml(t("report_patch"))}</summary>` +
-        `<div class="patch-wrap"><div class="patch-actions"><button type="button" class="patch-copy" data-action="copy-patch">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button></div>` +
-        `<pre class="diff-block">${IA.highlightDiff(r.patch)}</pre></div></details>`;
+        `<details id="${patchId}" open><summary>${IA.escapeHtml(t("report_patch"))}</summary>` +
+        `<div class="patch-wrap">${patchActions}` +
+        `<div class="patch-view patch-view-unified"><pre class="diff-block">${IA.highlightDiff(r.patch)}</pre></div>` +
+        `<div class="patch-view patch-view-split" style="display:none;">${diffView}</div>` +
+        `</div></details>`;
       parts.push(patchHtml);
     }
 
     // 11. 回归测试
+    // #7 添加"复制为 pytest 文件"按钮
     if (r.tests && r.tests.length) {
       const list = r.tests
         .map(function (item) {
           return `<li>${IA.escapeHtml(item)}</li>`;
         })
         .join("");
-      parts.push(pushSection("report-tests", t("report_tests"), `<ul>${list}</ul>`));
+      const copyPytestBtn =
+        `<div class="tests-actions">` +
+          `<button type="button" class="report-action" data-action="copy-pytest">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("tests_copy_pytest"))}</span></button>` +
+        `</div>`;
+      parts.push(pushSection("report-tests", t("report_tests"), `${copyPytestBtn}<ul>${list}</ul>`));
     }
 
     // 12. 风险提示
+    // #8 严重程度分级：前端解析 high/medium/low 关键词
     if (r.risks && r.risks.length) {
       const list = r.risks
         .map(function (item) {
-          return `<li>${IA.escapeHtml(item)}</li>`;
+          const severity = classifyRisk(item);
+          return `<li class="risk-item risk-${severity}"><span class="risk-badge risk-badge-${severity}">${IA.escapeHtml(t("risk_severity_" + severity))}</span><span class="risk-text">${IA.escapeHtml(item)}</span></li>`;
         })
         .join("");
-      parts.push(pushSection("report-risks", t("report_risks"), `<ul>${list}</ul>`));
+      parts.push(pushSection("report-risks", t("report_risks"), `<ul class="risk-list">${list}</ul>`));
     }
 
     // 目录前置（金字塔结构下，TOC 作为快速跳转入口）
@@ -2117,22 +2203,14 @@
 
     d.innerHTML = parts.join("");
 
-    // 渲染 ECharts 图表（必须在 innerHTML 设置后才能拿到 DOM 节点）
-    const evidenceEl = document.getElementById("report-evidence-chart");
-    if (evidenceEl) {
-      const chart = renderEvidenceMatrix(evidenceEl, r, sessionData);
-      if (chart) reportChartInstances.push(chart);
-    }
-    const confidenceEl = document.getElementById("report-confidence-chart");
-    if (confidenceEl) {
-      const chart = renderEvidenceSankey(confidenceEl, r, sessionData);
-      if (chart) reportChartInstances.push(chart);
-    }
-    const funnelEl = document.getElementById("report-funnel-chart");
-    if (funnelEl) {
-      const chart = renderInvestigationFunnel(funnelEl, r, sessionData);
-      if (chart) reportChartInstances.push(chart);
-    }
+    // #16 图表懒加载：用骨架屏占位，IntersectionObserver 触发时再初始化 ECharts
+    // 避免首次渲染三个图表导致页面卡顿（移动端尤其明显）
+    ["report-evidence-chart", "report-confidence-chart", "report-funnel-chart"].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el && !el.querySelector(".chart-skeleton")) {
+        el.innerHTML = `<div class="chart-skeleton" aria-hidden="true"><div class="skeleton-bar long"></div><div class="skeleton-bar medium"></div><div class="skeleton-bar short"></div></div>`;
+      }
+    });
 
     // TOC 折叠/展开状态持久化到 localStorage
     const tocEl = d.querySelector(".report-toc");
@@ -2166,6 +2244,182 @@
         sections.forEach(function (s) { scrollSpyObserver.observe(s); });
       }
     }
+
+    // #11 指标网格点击下钻：跳转到对应章节
+    d.querySelectorAll(".report-metric-card.clickable").forEach(function (card) {
+      const href = card.dataset.href;
+      if (!href) return;
+      const jump = function () {
+        let target;
+        if (href.charAt(0) === ".") {
+          target = d.querySelector(href);
+        } else {
+          target = document.getElementById(href.slice(1));
+        }
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+          // 临时高亮目标章节，1.5s 后淡出
+          target.classList.add("section-highlight");
+          setTimeout(function () { target.classList.remove("section-highlight"); }, 1500);
+        }
+      };
+      card.addEventListener("click", jump);
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          jump();
+        }
+      });
+    });
+
+    // #13 返回顶部按钮：滚动超过一屏后显示
+    const reportEl = d.parentElement; // #report-panel
+    let backTopBtn = document.getElementById("report-back-top");
+    if (!backTopBtn) {
+      backTopBtn = document.createElement("button");
+      backTopBtn.id = "report-back-top";
+      backTopBtn.type = "button";
+      backTopBtn.className = "report-back-top";
+      backTopBtn.setAttribute("aria-label", t("back_to_top"));
+      backTopBtn.title = t("back_to_top");
+      backTopBtn.innerHTML = IA.svgIcon("back") ||
+        '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 5.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 8 5.5ZM3.97 7.78a.75.75 0 0 1 1.06 0L8 4.81l3.22 3.22a.75.75 0 1 0 1.06-1.06L8 2.69 3.97 6.72a.75.75 0 0 0 0 1.06Z"/></svg>';
+      // 旋转 180 度指向上方
+      backTopBtn.style.transform = "rotate(180deg)";
+      backTopBtn.addEventListener("click", function () {
+        d.scrollTop = 0;
+        d.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      reportEl.appendChild(backTopBtn);
+    }
+    d.addEventListener("scroll", function () {
+      if (d.scrollTop > 400) {
+        backTopBtn.classList.add("visible");
+      } else {
+        backTopBtn.classList.remove("visible");
+      }
+    });
+
+    // #4 证据列表懒渲染：超过 10 条时折叠，点击"显示更多"展开
+    const evidenceList = d.querySelector(".evidence-list");
+    if (evidenceList && evidenceList.children.length > 10) {
+      const EVIDENCE_VISIBLE = 10;
+      const items = Array.from(evidenceList.children);
+      items.slice(EVIDENCE_VISIBLE).forEach(function (item) { item.style.display = "none"; });
+      const moreBtn = document.createElement("button");
+      moreBtn.type = "button";
+      moreBtn.className = "evidence-load-more";
+      const hiddenCount = items.length - EVIDENCE_VISIBLE;
+      moreBtn.innerHTML = IA.svgIcon("plus") + `<span>${IA.escapeHtml(t("evidence_show_more", { count: hiddenCount }))}</span>`;
+      let expanded = false;
+      moreBtn.addEventListener("click", function () {
+        expanded = !expanded;
+        items.slice(EVIDENCE_VISIBLE).forEach(function (item) { item.style.display = expanded ? "" : "none"; });
+        moreBtn.innerHTML = expanded
+          ? `<span>${IA.escapeHtml(t("evidence_show_less"))}</span>`
+          : IA.svgIcon("plus") + `<span>${IA.escapeHtml(t("evidence_show_more", { count: hiddenCount }))}</span>`;
+      });
+      evidenceList.parentNode.insertBefore(moreBtn, evidenceList.nextSibling);
+    }
+
+    // #16 图表懒加载 + #28 骨架屏：IntersectionObserver 触发初始化
+    initLazyCharts(r, sessionData);
+  }
+
+  // #16 图表懒加载：进入视口时再初始化 ECharts 实例，减少首屏渲染开销
+  // 同时支持 #17 点击放大到模态框：每个图表容器有 .chart-zoom-btn 按钮
+  function initLazyCharts(r, sessionData) {
+    const chartSpecs = [
+      { id: "report-evidence-chart", render: renderEvidenceMatrix },
+      { id: "report-confidence-chart", render: renderEvidenceSankey },
+      { id: "report-funnel-chart", render: renderInvestigationFunnel },
+    ];
+    chartSpecs.forEach(function (spec) {
+      const el = document.getElementById(spec.id);
+      if (!el) return;
+      // #17 添加放大按钮（懒加载时即可见，无需等待图表初始化）
+      if (!el.querySelector(".chart-zoom-btn")) {
+        const zoomBtn = document.createElement("button");
+        zoomBtn.type = "button";
+        zoomBtn.className = "chart-zoom-btn";
+        zoomBtn.setAttribute("aria-label", t("chart_zoom"));
+        zoomBtn.title = t("chart_zoom");
+        zoomBtn.innerHTML = IA.svgIcon("external") ||
+          '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3.75 2h3.5a.75.75 0 0 1 0 1.5H4.5v7h7v-2.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-8.5a.75.75 0 0 1-.75-.75v-8.5A.75.75 0 0 1 3.75 2Z"/></svg>';
+        zoomBtn.addEventListener("click", function () { openChartModal(el, spec, r, sessionData); });
+        el.appendChild(zoomBtn);
+      }
+      // 无 IntersectionObserver 时立即初始化（降级兼容）
+      if (!("IntersectionObserver" in window)) {
+        const chart = spec.render(el, r, sessionData);
+        if (chart) reportChartInstances.push(chart);
+        return;
+      }
+      const observer = new IntersectionObserver(function (entries, obs) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            obs.disconnect();
+            const skeleton = el.querySelector(".chart-skeleton");
+            if (skeleton) skeleton.remove();
+            const chart = spec.render(el, r, sessionData);
+            if (chart) reportChartInstances.push(chart);
+          }
+        });
+      }, { rootMargin: "200px 0px", threshold: 0 });
+      observer.observe(el);
+    });
+  }
+
+  // #17 图表放大模态框：克隆当前图表到一个全屏 modal 中重新渲染，更清晰的查看细节
+  function openChartModal(sourceEl, spec, r, sessionData) {
+    let modal = document.getElementById("chart-modal");
+    if (modal) modal.remove();
+    modal = document.createElement("div");
+    modal.id = "chart-modal";
+    modal.className = "chart-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.innerHTML =
+      `<div class="chart-modal-backdrop"></div>` +
+      `<div class="chart-modal-content">` +
+        `<div class="chart-modal-header">` +
+          `<h3>${IA.escapeHtml(t("chart_zoom_title"))}</h3>` +
+          `<button type="button" class="chart-modal-close" aria-label="${IA.escapeHtml(t("report_close"))}">${IA.svgIcon("close")}</button>` +
+        `</div>` +
+        `<div id="chart-modal-canvas" class="chart-modal-canvas"></div>` +
+      `</div>`;
+    document.body.appendChild(modal);
+    document.body.classList.add("modal-open");
+    const close = function () {
+      const inst = echarts.getInstanceByDom(document.getElementById("chart-modal-canvas"));
+      if (inst) inst.dispose();
+      modal.remove();
+      document.body.classList.remove("modal-open");
+    };
+    modal.querySelector(".chart-modal-backdrop").addEventListener("click", close);
+    modal.querySelector(".chart-modal-close").addEventListener("click", close);
+    document.addEventListener("keydown", function escHandler(e) {
+      if (e.key === "Escape") {
+        close();
+        document.removeEventListener("keydown", escHandler);
+      }
+    });
+    // 延迟一帧让 modal 进入 DOM 后再初始化，确保尺寸正确
+    requestAnimationFrame(function () {
+      const canvas = document.getElementById("chart-modal-canvas");
+      if (canvas) {
+        const chart = spec.render(canvas, r, sessionData);
+        if (chart) {
+          // 关闭时自动 dispose
+          const origDispose = chart.dispose.bind(chart);
+          chart.dispose = function () {
+            origDispose();
+            if (modal.parentNode) modal.remove();
+            document.body.classList.remove("modal-open");
+          };
+        }
+      }
+    });
   }
 
   function toggleReport(open) {
@@ -2576,7 +2830,49 @@
       if (!reportData.patch) return;
       const ok = await IA.copyToClipboard(reportData.patch);
       flashToast(ok ? t("copied") : t("copy_failed"));
+    } else if (action === "download-patch") {
+      // #15 下载 .patch 文件，可直接 git apply 使用
+      if (!reportData.patch) return;
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      IA.downloadFile(`patch-${stamp}.patch`, reportData.patch, "text/x-diff;charset=utf-8");
+      flashToast(t("download_started"));
+    } else if (action === "copy-pytest") {
+      // #7 复制为 pytest 文件：将测试建议转换为可执行的 pytest 测试骨架
+      const tests = reportData.tests || [];
+      if (!tests.length) return;
+      const stamp = new Date().toISOString().slice(0, 10);
+      const pyContent = generatePytestSkeleton(tests, stamp);
+      const ok = await IA.copyToClipboard(pyContent);
+      flashToast(ok ? t("copied") : t("copy_failed"));
     }
+  }
+
+  // #7 生成 pytest 测试骨架：把自然语言测试建议包装为 pytest 函数
+  function generatePytestSkeleton(tests, dateStamp) {
+    const lines = [
+      '"""Auto-generated pytest skeleton from issue-agent report.',
+      `Generated: ${dateStamp}`,
+      '"""',
+      "",
+      "import pytest",
+      "",
+    ];
+    tests.forEach(function (item, idx) {
+      // 函数名：提取字母数字下划线，截断到 50 字符，前置 test_ 前缀
+      const rawName = String(item).replace(/[^\w\s]/g, " ").trim().split(/\s+/).slice(0, 6).join("_").toLowerCase();
+      const fnName = "test_" + (rawName || "case_" + (idx + 1)).substring(0, 50);
+      lines.push(`def ${fnName}():`);
+      lines.push(`    """${String(item).replace(/"/g, "'")}"""`);
+      lines.push("    # TODO: implement the test body according to the description above");
+      if (/fail|raise|error|exception/i.test(item)) {
+        lines.push("    with pytest.raises(Exception):");
+        lines.push("        pass  # replace with the actual call");
+      } else {
+        lines.push("    assert True  # replace with the actual assertion");
+      }
+      lines.push("");
+    });
+    return lines.join("\n");
   }
 
   function flashToast(message) {
@@ -2703,6 +2999,20 @@
       const btn = event.target.closest("[data-action]");
       if (!btn) return;
       handleReportAction(btn.dataset.action, report);
+    });
+
+    // #6 双栏 diff 视图切换：unified / split
+    document.getElementById("report").addEventListener("click", function (event) {
+      const toggleBtn = event.target.closest(".patch-view-btn");
+      if (!toggleBtn) return;
+      const wrap = toggleBtn.closest(".patch-wrap");
+      if (!wrap) return;
+      const view = toggleBtn.dataset.view;
+      wrap.querySelectorAll(".patch-view-btn").forEach(function (b) { b.classList.toggle("active", b === toggleBtn); });
+      const unified = wrap.querySelector(".patch-view-unified");
+      const split = wrap.querySelector(".patch-view-split");
+      if (unified) unified.style.display = view === "unified" ? "" : "none";
+      if (split) split.style.display = view === "split" ? "" : "none";
     });
 
     // ESC 关闭报告（H7 修复：对话框打开时让原生 ESC 优先关闭对话框，不叠加关闭报告）
