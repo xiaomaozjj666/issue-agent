@@ -1491,6 +1491,21 @@
         document.getElementById("report-toggle").style.display = "inline-flex";
         document.getElementById("progress").textContent = "";
         addReportPreview(report);
+        // E13: 用户开启"默认全屏"偏好时，报告生成后自动进入全屏模式
+        if (localStorage.getItem("reportDefaultFullscreen") === "1") {
+          const panel = document.getElementById("report-panel");
+          panel.classList.add("fullscreen");
+          const fsBtn = document.getElementById("report-fullscreen-btn");
+          if (fsBtn) {
+            fsBtn.setAttribute("aria-pressed", "true");
+            fsBtn.title = t("report_exit_fullscreen");
+          }
+          setTimeout(function () {
+            reportChartInstances.forEach(function (c) {
+              try { c.resize(); } catch (e) { /* ignore */ }
+            });
+          }, 120);
+        }
         document.getElementById("chatInput").focus();
         loadSessions();
         break;
@@ -1648,6 +1663,42 @@
   // 回答"这个分析的可信度到底如何"：每条证据在 4 个维度上的通过/未通过状态。
   // 绿色 = 通过，红色 = 未通过。用户一眼看出哪些证据扎实、哪些是凑数。
   // ECharts 公共配置：toolbox（保存图片）+ 移动端触摸优化
+  // ── E30 移动端 ECharts 触摸优化 ────────────────────────
+  // 检测移动端视口（<=640px 或触摸设备）
+  function isMobileViewport() {
+    return window.matchMedia("(max-width: 640px)").matches
+      || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0
+          && window.matchMedia("(pointer: coarse)").matches);
+  }
+
+  // ECharts init 的移动端设备像素比与渲染器配置
+  function mobileChartInitOpts() {
+    if (!isMobileViewport()) return undefined;
+    return { renderer: "canvas", devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2) };
+  }
+
+  // 合并移动端 tooltip 优化：confine + appendToBody 避免被触摸遮挡，padding 缩小
+  function applyMobileTooltip(tooltip) {
+    if (!isMobileViewport()) return tooltip;
+    return Object.assign({}, tooltip, {
+      confine: true,
+      appendToBody: true,
+      enterable: false,
+      padding: [8, 10],
+      hideDelay: 100,
+      textStyle: Object.assign({}, tooltip && tooltip.textStyle, { fontSize: 12 }),
+    });
+  }
+
+  // E24: Sankey 窄容器自适应 — 根据容器宽度动态调整 left/right 和 label 字号
+  function sankeyLayoutFor(container) {
+    const w = (container && container.clientWidth) || 600;
+    if (w < 320) return { left: 8, right: 56, fontSize: 9, nodeGap: 6, nodeWidth: 10 };
+    if (w < 480) return { left: 10, right: 64, fontSize: 10, nodeGap: 8, nodeWidth: 12 };
+    if (w < 640) return { left: 14, right: 72, fontSize: 10, nodeGap: 10, nodeWidth: 14 };
+    return { left: 16, right: 80, fontSize: 11, nodeGap: 10, nodeWidth: 14 };
+  }
+
   function chartToolbox(palette) {
     return {
       right: 8,
@@ -1747,9 +1798,9 @@
     });
 
     const tooltipBg = palette.tooltipBg;
-    const chart = echarts.init(container);
+    const chart = echarts.init(container, null, mobileChartInitOpts());
     chart.setOption({
-      tooltip: {
+      tooltip: applyMobileTooltip({
         confine: true,
         backgroundColor: tooltipBg,
         borderWidth: 0,
@@ -1769,7 +1820,7 @@
             `<div style="color:${statusColor};font-weight:600;">${IA.escapeHtml(status)}</div>` +
             (e.lines ? `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">${IA.escapeHtml(e.lines)}</div>` : "");
         },
-      },
+      }),
       grid: { left: 8, right: 16, top: 32, bottom: 60, containLabel: true },
       toolbox: chartToolbox(palette),
       xAxis: {
@@ -1894,9 +1945,11 @@
     });
 
     const tooltipBg = palette.tooltipBg;
-    const chart = echarts.init(container);
+    // E24: Sankey 窄容器自适应 — 根据容器宽度动态调整 left/right/label 字号/nodeGap
+    const layout = sankeyLayoutFor(container);
+    const chart = echarts.init(container, null, mobileChartInitOpts());
     chart.setOption({
-      tooltip: {
+      tooltip: applyMobileTooltip({
         confine: true,
         backgroundColor: tooltipBg,
         borderWidth: 0,
@@ -1921,7 +1974,7 @@
           }
           return `<div style="font-weight:600;">${IA.escapeHtml(params.name)}</div>`;
         },
-      },
+      }),
       toolbox: chartToolbox(palette),
       series: [
         {
@@ -1929,18 +1982,24 @@
           data: nodes,
           links: links,
           orient: "horizontal",
-          left: 16,
-          right: 80,
+          left: layout.left,
+          right: layout.right,
           top: 16,
           bottom: 16,
-          nodeWidth: 14,
-          nodeGap: 10,
+          nodeWidth: layout.nodeWidth,
+          nodeGap: layout.nodeGap,
           nodeAlign: "justify",
           layoutIterations: 32,
           label: {
             color: palette.text,
-            fontSize: 11,
+            fontSize: layout.fontSize,
             fontWeight: 500,
+            // E24: 长节点名截断，完整文本在 tooltip 中显示
+            formatter: function (name) {
+              const max = layout.fontSize <= 10 ? 14 : 20;
+              if (typeof name !== "string") return name;
+              return name.length > max ? name.slice(0, max) + "…" : name;
+            },
           },
           lineStyle: {
             color: "gradient",
@@ -1997,9 +2056,9 @@
       .map(function (d) { return { name: d.name, value: d.raw, raw: d.raw, color: d.color }; });
 
     const tooltipBg = palette.tooltipBg;
-    const chart = echarts.init(container);
+    const chart = echarts.init(container, null, mobileChartInitOpts());
     chart.setOption({
-      tooltip: {
+      tooltip: applyMobileTooltip({
         confine: true,
         backgroundColor: tooltipBg,
         borderWidth: 0,
@@ -2020,7 +2079,7 @@
             (hasPrev ? `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_conversion"))}: ${conversionRate}%</div>` : "") +
             `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_overall"))}: ${overallRate}%</div>`;
         },
-      },
+      }),
       toolbox: chartToolbox(palette),
       series: [
         {
@@ -3393,6 +3452,69 @@
         }, 120);
       });
     }
+    // E13: 默认全屏切换按钮 — 开启后报告生成完成自动全屏
+    if (reportActions && !document.getElementById("report-default-fs-btn")) {
+      const dfsBtn = document.createElement("button");
+      dfsBtn.className = "report-action-btn";
+      dfsBtn.id = "report-default-fs-btn";
+      dfsBtn.type = "button";
+      const dfsEnabled = localStorage.getItem("reportDefaultFullscreen") === "1";
+      dfsBtn.setAttribute("aria-pressed", String(dfsEnabled));
+      dfsBtn.setAttribute("aria-label", t("report_default_fullscreen"));
+      dfsBtn.title = dfsEnabled ? t("report_default_fullscreen_on") : t("report_default_fullscreen");
+      dfsBtn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2.75 2.5a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75ZM4 7a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7Zm-1.25 6a.75.75 0 0 0 0 1.5h10.5a.75.75 0 0 0 0-1.5H2.75Z"/></svg>';
+      // 插入到 split 按钮之后
+      const sBtn = document.getElementById("report-split-btn");
+      if (sBtn && sBtn.nextSibling) {
+        reportActions.insertBefore(dfsBtn, sBtn.nextSibling);
+      } else {
+        reportActions.appendChild(dfsBtn);
+      }
+      dfsBtn.addEventListener("click", function () {
+        const enabled = localStorage.getItem("reportDefaultFullscreen") === "1";
+        if (enabled) {
+          localStorage.removeItem("reportDefaultFullscreen");
+          this.setAttribute("aria-pressed", "false");
+          this.title = t("report_default_fullscreen");
+          this.classList.remove("active");
+        } else {
+          localStorage.setItem("reportDefaultFullscreen", "1");
+          this.setAttribute("aria-pressed", "true");
+          this.title = t("report_default_fullscreen_on");
+          this.classList.add("active");
+        }
+      });
+      if (dfsEnabled) dfsBtn.classList.add("active");
+    }
+    // E31: 移动端手势返回 — 在报告面板左缘右滑关闭报告（仅 <=640px）
+    (function setupSwipeBack() {
+      const panel = document.getElementById("report-panel");
+      if (!panel || panel.dataset.swipeBackBound === "1") return;
+      panel.dataset.swipeBackBound = "1";
+      let startX = 0, startY = 0, startT = 0, tracking = false;
+      panel.addEventListener("touchstart", function (e) {
+        if (!window.matchMedia("(max-width: 640px)").matches) return;
+        if (!e.touches || e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+        startT = Date.now();
+        tracking = startX < 28;
+      }, { passive: true });
+      panel.addEventListener("touchend", function (e) {
+        if (!tracking) return;
+        tracking = false;
+        const touch = (e.changedTouches && e.changedTouches[0]) || null;
+        if (!touch) return;
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        const dt = Date.now() - startT;
+        // 右滑超过 60px，且横向位移大于纵向位移 1.5 倍，时长 < 600ms
+        if (dx > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 600) {
+          toggleReport(false);
+        }
+      }, { passive: true });
+    })();
     document.getElementById("report-print-btn").addEventListener("click", function () {
       window.print();
     });

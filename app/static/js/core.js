@@ -140,6 +140,8 @@
     chart_restore: "Restore",
     report_fullscreen: "Fullscreen",
     report_exit_fullscreen: "Exit fullscreen",
+    report_default_fullscreen: "Default fullscreen (auto-fullscreen on report done)",
+    report_default_fullscreen_on: "Enabled: auto-fullscreen on report done",
     report_print: "Print / Export PDF",
     cdn_offline_notice: "Some resources failed to load; charts or code highlighting may be unavailable",
     batch_select_all: "Select all",

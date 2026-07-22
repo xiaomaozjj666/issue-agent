@@ -4416,6 +4416,61 @@ body.modal-open {
   }
 }
 
+/* ── 窄屏文字压缩收尾（E7/E8/E19） ───────────────────────── */
+/* E7: 修复方案 change-head — 窄屏减小 priority 宽度，change-meta 取消缩进避免二次压缩 */
+@media (max-width: 560px) {
+  .change-head {
+    gap: var(--space-1);
+  }
+  .change-priority {
+    min-width: 24px;
+    padding: 2px 4px;
+    font-size: 10px;
+  }
+  .change-text {
+    font-size: var(--text-sm);
+  }
+  .change-meta {
+    padding-left: 0;
+    margin-top: var(--space-2);
+  }
+}
+
+/* E8: 风险项 risk-item — 窄屏 risk-badge 固定宽度避免文本宽度抖动，risk-text 允许收缩 */
+@media (max-width: 560px) {
+  .risk-item {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+  .risk-badge {
+    min-width: 36px;
+    justify-content: center;
+    font-size: 9px;
+    padding: 2px 6px;
+  }
+  .risk-text {
+    font-size: var(--text-xs);
+    min-width: 0;
+  }
+}
+
+/* E19: 补丁视图切换按钮 — 窄屏 view-toggle 独占第一行，copy/download 占第二行 */
+@media (max-width: 560px) {
+  .patch-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .patch-actions .patch-view-toggle {
+    flex: 1 1 100%;
+    margin-right: 0;
+    margin-bottom: var(--space-1);
+  }
+  .patch-actions .patch-copy,
+  .patch-actions .patch-download {
+    flex: 0 0 auto;
+  }
+}
+
 .review-audit-item {
   display: flex;
   flex-direction: column;
