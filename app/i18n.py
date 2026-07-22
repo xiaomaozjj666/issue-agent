@@ -109,8 +109,8 @@ STRINGS = {
         ),
         "report_retry_prompt": (
             "你上次的响应未通过校验，需要重试。\n\n"
-            "失败原因：\n{validation_error}\n\n"
-            "上次响应（截断）：\n{previous_output}\n\n"
+            "失败原因：\n__VALIDATION_ERROR__\n\n"
+            "上次响应（截断）：\n__PREVIOUS_OUTPUT__\n\n"
             "请仅输出一个符合 AnalysisReport schema 的顶层 JSON 对象。"
             '禁止输出工具调用参数（如 {"action": "read_file", ...}），禁止输出空内容，禁止输出文本说明。'
             '若证据不足，可将 confidence 设为 "low"，evidence 设为空数组，但仍需输出完整的 AnalysisReport 结构。'
@@ -215,8 +215,8 @@ STRINGS = {
         ),
         "report_retry_prompt": (
             "Your previous response failed validation and must be retried.\n\n"
-            "Failure reason:\n{validation_error}\n\n"
-            "Previous response (truncated):\n{previous_output}\n\n"
+            "Failure reason:\n__VALIDATION_ERROR__\n\n"
+            "Previous response (truncated):\n__PREVIOUS_OUTPUT__\n\n"
             "Output ONLY a top-level JSON object matching the AnalysisReport schema. "
             'Do NOT output tool call arguments (e.g., {"action": "read_file", ...}). '
             "Do NOT return empty content. Do NOT output prose. "
@@ -270,9 +270,10 @@ def get_report_phase_instruction() -> str:
 
 
 def get_report_retry_prompt(*, previous_output: str, validation_error: str) -> str:
-    # 不走 t() 的 format 路径，因为模板含大量字面花括号（JSON 示例）会与 str.format 冲突
+    # 不走 t() 的 format 路径，因为模板含大量字面花括号（JSON 示例）会与 str.format 冲突。
+    # 用 sentinel 标记做替换，避免 str.replace 被替换内容中恰好出现的相同文本干扰。
     template = t("report_retry_prompt")
-    return template.replace("{validation_error}", validation_error).replace("{previous_output}", previous_output)
+    return template.replace("__VALIDATION_ERROR__", validation_error).replace("__PREVIOUS_OUTPUT__", previous_output)
 
 
 def get_review_system_prompt(language: str | None = None) -> str:
@@ -512,6 +513,30 @@ _FRONTEND_STRINGS = {
         "report_composition_risks": "风险项",
         "report_composition_empty": "报告暂无产出内容",
         "report_composition_total": "合计",
+        "matrix_chart_title": "证据可信度矩阵",
+        "matrix_chart_caption": "每条证据在四个维度的验证状态：绿色=通过，红色=未通过。一眼识别扎实证据与凑数证据",
+        "matrix_dim_file_read": "文件已读取",
+        "matrix_dim_lines_valid": "行号有效",
+        "matrix_dim_has_reason": "有理由说明",
+        "matrix_dim_review_verified": "审查已验证",
+        "matrix_pass": "通过",
+        "matrix_fail": "未通过",
+        "sankey_chart_title": "证据-根因支撑关系",
+        "sankey_chart_caption": "结论推导链路：Issue → 根因论点 → 证据。连线粗细表示支撑强度，绿色=强支撑，灰色=弱支撑",
+        "sankey_issue_node": "Issue",
+        "sankey_default_cause": "根因分析",
+        "sankey_strong_support": "强支撑（已读+有效行号）",
+        "sankey_weak_support": "弱支撑（仅理由）",
+        "funnel_chart_title": "调查过程效率",
+        "funnel_chart_caption": "模型调用 → 工具调用 → 文件读取 → 有效证据。每层收缩展示转化率，定位效率瓶颈",
+        "funnel_model_calls": "模型调用",
+        "funnel_tool_calls": "工具调用",
+        "funnel_files_read": "文件读取",
+        "funnel_valid_evidence": "有效证据",
+        "funnel_count": "数量",
+        "funnel_conversion": "环比转化率",
+        "funnel_overall": "总转化率",
+        "funnel_empty": "暂无调查过程数据",
     },
     "en": {
         "doc_title": "GitHub Issue Agent",
@@ -693,6 +718,36 @@ _FRONTEND_STRINGS = {
         "report_composition_risks": "Risks",
         "report_composition_empty": "Report has no content yet",
         "report_composition_total": "Total",
+        "matrix_chart_title": "Evidence credibility matrix",
+        "matrix_chart_caption": (
+            "Each evidence validated across 4 dimensions: green=pass, red=fail. Spot solid vs filler evidence"
+        ),
+        "matrix_dim_file_read": "File read",
+        "matrix_dim_lines_valid": "Lines valid",
+        "matrix_dim_has_reason": "Has reason",
+        "matrix_dim_review_verified": "Review verified",
+        "matrix_pass": "Pass",
+        "matrix_fail": "Fail",
+        "sankey_chart_title": "Evidence-to-root-cause support",
+        "sankey_chart_caption": (
+            "Reasoning chain: Issue → root cause → evidence. Link width = support strength; green=strong, gray=weak"
+        ),
+        "sankey_issue_node": "Issue",
+        "sankey_default_cause": "Root cause",
+        "sankey_strong_support": "Strong support (read + valid lines)",
+        "sankey_weak_support": "Weak support (reason only)",
+        "funnel_chart_title": "Investigation efficiency",
+        "funnel_chart_caption": (
+            "Model calls → tool calls → files read → valid evidence. Each layer narrows to show conversion rates"
+        ),
+        "funnel_model_calls": "Model calls",
+        "funnel_tool_calls": "Tool calls",
+        "funnel_files_read": "Files read",
+        "funnel_valid_evidence": "Valid evidence",
+        "funnel_count": "Count",
+        "funnel_conversion": "Step conversion",
+        "funnel_overall": "Overall conversion",
+        "funnel_empty": "No investigation data available",
     },
 }
 

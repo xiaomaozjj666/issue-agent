@@ -8,7 +8,9 @@ HTTP concerns: routing, status codes, SSE streaming, and dependency injection.
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+import time
+from collections import defaultdict
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +22,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openai import APIError
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
@@ -86,6 +90,59 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="GitHub Issue Agent", version="0.6.0", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
+
+# ── Rate limiting ───────────────────────────────────────────────
+# Simple sliding-window rate limiter per API key to prevent credit exhaustion.
+# Default: 30 requests per 60 seconds. Controlled via RATE_LIMIT_REQUESTS and
+# RATE_LIMIT_WINDOW_SECONDS env vars (read from Settings).
+
+_rate_window_buckets: dict[str, list[float]] = defaultdict(list)
+_rate_window_lock = asyncio.Lock()
+
+
+async def _check_rate_limit(api_key: str) -> None:
+    settings = get_settings()
+    max_requests = int(getattr(settings, "rate_limit_requests", 30) or 30)
+    window_s = int(getattr(settings, "rate_limit_window_seconds", 60) or 60)
+    now = time.monotonic()
+    async with _rate_window_lock:
+        bucket = _rate_window_buckets[api_key]
+        # Evict timestamps outside the window
+        cutoff = now - window_s
+        while bucket and bucket[0] < cutoff:
+            bucket.pop(0)
+        if len(bucket) >= max_requests:
+            retry_after = int(bucket[0] + window_s - now + 1)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Retry after {retry_after}s",
+                headers={"Retry-After": str(retry_after)},
+            )
+        bucket.append(now)
+        # Prune old keys to prevent unbounded memory growth
+        if len(_rate_window_buckets) > 500:
+            stale = [k for k, v in _rate_window_buckets.items() if not v or v[-1] < cutoff]
+            for k in stale:
+                del _rate_window_buckets[k]
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-API-key sliding-window rate limiter."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Health check is unauthenticated and low-cost — skip
+        if request.url.path == "/health":
+            return await call_next(request)
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key:
+            await _check_rate_limit(api_key)
+        return await call_next(request)
+
+
+app.add_middleware(RateLimitMiddleware)
 
 
 def get_session_manager(request: Request) -> SessionManager:
@@ -353,6 +410,7 @@ async def list_sessions(
     archived: bool = False,
     q: str = Query(default="", max_length=160),
     limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> list[SessionSummary]:
     cutoff = datetime.now(UTC) - timedelta(seconds=get_settings().session_stale_after_seconds)
     recovered = await manager.recover_stale(cutoff.isoformat(timespec="seconds"))
@@ -362,6 +420,7 @@ async def list_sessions(
         archived=archived,
         query=q,
         limit=limit,
+        offset=offset,
     )
     return [session_summary(session) for session in sessions]
 

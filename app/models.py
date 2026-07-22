@@ -103,14 +103,6 @@ class ChatResponse(BaseModel):
     report: AnalysisReport | None = None
 
 
-class CreatePRRequest(BaseModel):
-    session_id: str
-    branch: str
-    title: str
-    body: str
-    changes: list[dict] = Field(default_factory=list)
-
-
 class CreatePRResponse(BaseModel):
     pr_url: str
     branch: str

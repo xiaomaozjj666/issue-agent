@@ -123,7 +123,7 @@ class MemoryStore:
         if session := self._sessions.get(session_id):
             session.pending_pr = None
 
-    async def list(self, *, archived: bool, query: str, limit: int) -> list[Session]:
+    async def list(self, *, archived: bool, query: str, limit: int, offset: int = 0) -> list[Session]:
         normalized_query = query.casefold().strip()
         sessions = [
             session
@@ -131,7 +131,8 @@ class MemoryStore:
             if (session.archived_at is not None) == archived
             and (not normalized_query or normalized_query in _session_search_text(session))
         ]
-        return sorted(sessions, key=lambda session: session.updated_at, reverse=True)[:limit]
+        sorted_sessions = sorted(sessions, key=lambda session: session.updated_at, reverse=True)
+        return sorted_sessions[offset : offset + limit]
 
     async def delete(self, session_id: str) -> bool:
         self._events.pop(session_id, None)
@@ -318,7 +319,7 @@ class SqliteStore:
         await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
         await db.commit()
 
-    async def list(self, *, archived: bool, query: str, limit: int) -> list[Session]:
+    async def list(self, *, archived: bool, query: str, limit: int, offset: int = 0) -> list[Session]:
         db = await self._get_conn()
         clauses: list[str] = []
         params: list[object] = []
@@ -328,10 +329,10 @@ class SqliteStore:
             clauses.append("(issue_url LIKE ? OR display_title LIKE ? OR issue_json LIKE ?)")
             params.extend([pattern, pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(limit)
+        params.extend([limit, offset])
         rows = await (
             await db.execute(
-                f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ?",
+                f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
                 params,
             )
         ).fetchall()
@@ -438,11 +439,12 @@ class SessionManager:
     async def delete_pr_proposal(self, session_id: str) -> None:
         await self._store.delete_pr_proposal(session_id)
 
-    async def list(self, *, archived: bool = False, query: str = "", limit: int = 50) -> list[Session]:
+    async def list(self, *, archived: bool = False, query: str = "", limit: int = 50, offset: int = 0) -> list[Session]:
         return await self._store.list(
             archived=archived,
             query=query,
             limit=max(1, min(limit, 100)),
+            offset=max(0, offset),
         )
 
     async def delete(self, session_id: str) -> bool:
