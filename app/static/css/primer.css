@@ -3528,3 +3528,687 @@ dialog::backdrop {
     display: none;
   }
 }
+
+/* ============================================================
+   报告体验增强（28 条痛点修复配套样式）
+   - 置信度 badge / 指标卡片下钻 / 返回顶部
+   - 证据懒加载 / 风险分级 / 测试操作 / 补丁双栏 diff
+   - 图表骨架屏 / 放大模态框 / 视图切换
+   ============================================================ */
+
+/* ── #12 结论卡置信度 badge ──────────────────────────────── */
+.report-conclusion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.report-conclusion-header .report-conclusion-label {
+  margin-bottom: 0;
+}
+
+.confidence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.confidence-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.confidence-high {
+  background: var(--green-subtle);
+  color: var(--green-emphasis);
+  border-color: var(--green-muted);
+}
+
+.confidence-medium {
+  background: var(--yellow-subtle);
+  color: var(--yellow-emphasis);
+  border-color: var(--yellow-muted);
+}
+
+.confidence-low {
+  background: var(--red-subtle);
+  color: var(--red-emphasis);
+  border-color: var(--red-muted);
+}
+
+[data-theme="light"] .confidence-high { color: var(--green); }
+[data-theme="light"] .confidence-medium { color: var(--yellow); }
+[data-theme="light"] .confidence-low { color: var(--red); }
+
+/* ── #11 指标网格点击下钻 ───────────────────────────────── */
+.report-metric-card.clickable {
+  cursor: pointer;
+  outline: none;
+}
+
+.report-metric-card.clickable:hover,
+.report-metric-card.clickable:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  box-shadow: var(--shadow-medium);
+  transform: translateY(-2px);
+}
+
+.report-metric-card.clickable:focus-visible {
+  box-shadow: 0 0 0 3px var(--ring), var(--shadow-medium);
+}
+
+.report-metric-card.clickable::after {
+  content: "›";
+  display: inline-block;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+}
+
+.report-metric-card.clickable:hover::after,
+.report-metric-card.clickable:focus-visible::after {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.report-metric-card.clickable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* 章节临时高亮：点击指标卡片后 1.5s 淡出 */
+.section-highlight {
+  animation: section-flash 1.5s var(--ease-standard);
+}
+
+@keyframes section-flash {
+  0%, 100% { box-shadow: none; }
+  20%, 60% {
+    box-shadow: 0 0 0 3px var(--accent-muted);
+    border-radius: var(--radius);
+  }
+}
+
+/* ── #13 返回顶部按钮 ───────────────────────────────────── */
+.report-back-top {
+  position: sticky;
+  bottom: 16px;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin: var(--space-4) 0 0 auto;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px) rotate(180deg);
+  transition: opacity var(--dur-base) var(--ease-out),
+              visibility var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out),
+              background var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard);
+  box-shadow: var(--shadow-medium);
+  z-index: 5;
+}
+
+.report-back-top.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) rotate(180deg);
+}
+
+.report-back-top:hover {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.report-back-top:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring), var(--shadow-medium);
+}
+
+.report-back-top svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── #4 证据列表懒加载按钮 ──────────────────────────────── */
+.evidence-load-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: var(--space-3);
+  padding: 8px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+  width: 100%;
+}
+
+.evidence-load-more:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-subtle);
+  transform: translateY(-1px);
+}
+
+.evidence-load-more svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── #28 图表骨架屏 ─────────────────────────────────────── */
+.chart-skeleton {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 160px;
+  padding: var(--space-4);
+}
+
+.chart-skeleton .skeleton-bar {
+  height: 12px;
+  border-radius: var(--radius-pill);
+}
+
+/* ── #17 图表放大按钮 ───────────────────────────────────── */
+.chart-zoom-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  z-index: 2;
+  transition: opacity var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard),
+              background var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard);
+}
+
+.report-chart-canvas:hover .chart-zoom-btn,
+.report-chart-canvas-tall:hover .chart-zoom-btn,
+.chart-zoom-btn:focus-visible {
+  opacity: 1;
+}
+
+.chart-zoom-btn:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent-muted);
+}
+
+.chart-zoom-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 确保图表容器是定位上下文 */
+#report-evidence-chart,
+#report-confidence-chart,
+#report-funnel-chart {
+  position: relative;
+}
+
+/* ── #17 图表放大模态框 ─────────────────────────────────── */
+.chart-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+}
+
+.chart-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(4px);
+  animation: chart-modal-fade-in var(--dur-base) var(--ease-out);
+}
+
+[data-theme="light"] .chart-modal-backdrop {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.chart-modal-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  max-height: calc(100vh - 64px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  animation: chart-modal-pop var(--dur-base) var(--ease-out);
+}
+
+.chart-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.chart-modal-header h3 {
+  margin: 0;
+  color: var(--fg-strong);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.chart-modal-close {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.chart-modal-close:hover {
+  background: var(--red-subtle);
+  color: var(--red);
+  border-color: var(--red-muted);
+}
+
+.chart-modal-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chart-modal-canvas {
+  width: 100%;
+  height: min(70vh, 600px);
+  min-height: 360px;
+}
+
+@keyframes chart-modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes chart-modal-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 模态框打开时锁定 body 滚动 */
+body.modal-open {
+  overflow: hidden;
+}
+
+@media (max-width: 640px) {
+  .chart-modal-content {
+    max-height: calc(100vh - 32px);
+  }
+  .chart-modal-canvas {
+    height: 60vh;
+    min-height: 280px;
+  }
+}
+
+/* ── #6 补丁视图切换 + 双栏 diff ────────────────────────── */
+.patch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.patch-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--canvas-subtle);
+  margin-right: auto;
+}
+
+.patch-view-btn {
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.patch-view-btn:hover {
+  color: var(--fg);
+  background: var(--neutral-subtle);
+}
+
+.patch-view-btn.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.patch-view-btn + .patch-view-btn {
+  border-left: 1px solid var(--border);
+}
+
+.patch-view {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+  background: var(--canvas-inset);
+}
+
+.patch-view-unified {
+  padding: var(--space-2) 0;
+}
+
+/* 双栏 diff 容器 */
+.diff-split-wrap {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  background: var(--canvas-inset);
+}
+
+.diff-split-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+  background: var(--canvas-subtle);
+}
+
+.diff-split-header span {
+  padding: 6px 10px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.diff-split-header span:first-child {
+  border-right: 1px solid var(--border);
+  color: var(--red);
+}
+
+.diff-split-header span:last-child {
+  color: var(--green);
+}
+
+.diff-split-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: 0;
+}
+
+.diff-split-col {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.diff-split-left {
+  border-right: 1px solid var(--border);
+}
+
+.diff-split-col > span {
+  display: block;
+  padding: 0 8px;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* 复用单栏 diff 的状态色，但去掉左侧 border 让双栏对齐更紧凑 */
+.diff-split-col .diff-add {
+  background: var(--green-subtle);
+  color: var(--fg);
+  border-left: 0;
+  padding-left: 8px;
+}
+
+.diff-split-col .diff-del {
+  background: var(--red-subtle);
+  color: var(--fg);
+  border-left: 0;
+  padding-left: 8px;
+}
+
+.diff-split-col .diff-ctx {
+  color: var(--muted);
+  border-left: 0;
+  padding-left: 8px;
+}
+
+.diff-split-col .diff-hunk {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 600;
+  border-left: 0;
+  padding: 4px 8px;
+}
+
+.diff-split-col .diff-add-file,
+.diff-split-col .diff-del-file {
+  background: var(--canvas-subtle);
+  color: var(--fg-strong);
+  font-weight: 700;
+  border-left: 0;
+  padding: 6px 8px;
+}
+
+.diff-split-col .diff-empty {
+  background: var(--canvas-inset);
+  color: var(--faint);
+  min-height: 1.7em;
+}
+
+/* 窄屏：双栏 diff 回退为单栏堆叠 */
+@media (max-width: 720px) {
+  .diff-split-header {
+    grid-template-columns: 1fr;
+  }
+  .diff-split-header span:first-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .diff-split-body {
+    grid-template-columns: 1fr;
+  }
+  .diff-split-left {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* ── #15 下载补丁按钮 ───────────────────────────────────── */
+.patch-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.patch-download:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-muted);
+  transform: translateY(-1px);
+}
+
+.patch-download svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── #7 测试操作按钮 ────────────────────────────────────── */
+.tests-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+
+/* ── #8 风险严重程度分级 ────────────────────────────────── */
+.risk-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.risk-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--card);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+}
+
+.risk-item:hover {
+  transform: translateX(2px);
+}
+
+.risk-item.risk-high {
+  border-left-color: var(--red);
+  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 40%);
+}
+
+.risk-item.risk-medium {
+  border-left-color: var(--yellow);
+  background: linear-gradient(90deg, var(--yellow-subtle) 0%, var(--card) 40%);
+}
+
+.risk-item.risk-low {
+  border-left-color: var(--green);
+  background: linear-gradient(90deg, var(--green-subtle) 0%, var(--card) 40%);
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.risk-badge-high {
+  background: var(--red);
+}
+
+.risk-badge-medium {
+  background: var(--yellow-emphasis);
+}
+
+.risk-badge-low {
+  background: var(--green);
+}
+
+.risk-text {
+  flex: 1 1 auto;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* ── #25 图表响应式高度（移动端更高） ───────────────────── */
+@media (max-width: 640px) {
+  .report-chart-canvas-tall {
+    height: 340px;
+    min-height: 340px;
+  }
+  .report-chart-canvas {
+    height: 280px;
+    min-height: 280px;
+  }
+}
+
+/* 高分屏桌面端略微降低图表高度，腾出阅读空间 */
+@media (min-width: 1600px) {
+  .report-chart-canvas-tall {
+    height: 280px;
+    min-height: 280px;
+  }
+}
