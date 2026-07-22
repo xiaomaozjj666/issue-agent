@@ -24,8 +24,8 @@
     if (metrics && metrics.review_calls !== undefined) metricItems.push(countLabel(metrics.review_calls, "timeline_reviews"));
     if (metrics && metrics.files_read !== undefined) metricItems.push(countLabel(metrics.files_read, "timeline_files_read"));
 
-    // 默认折叠：只显示最后 10 条，超出部分隐藏，点击"展开全部"显示完整轨迹
-    const VISIBLE_LIMIT = 10;
+    // 默认折叠：只显示最后 20 条，超出部分隐藏，点击"展开全部"显示完整轨迹
+    const VISIBLE_LIMIT = 20;
     const total = meaningful.length;
     const buildStepHtml = function (event) {
       let label = event.message || event.type;

@@ -295,14 +295,14 @@ class GitHubClient:
             # 获取 SHA 失败不阻断分析，降级为 HEAD
             pass
         # 分页拉取全部评论：热门 issue 常有上百条评论，首屏 30 条会丢失关键上下文。
-        # 上限 100 条避免极端仓库（如 cpython 有数千条评论）拖垮分析。
+        # per_page=100（GitHub API 最大值）减少请求次数，上限 200 条避免极端仓库拖垮分析。
         comments: list[str] = []
         page = 1
-        max_comment_pages = 4  # 4 页 × 30 条 = 120 条上限
+        max_comment_pages = 2  # 2 页 × 100 条 = 200 条上限
         while page <= max_comment_pages:
             comments_response = await self._get(
                 f"/repos/{repo_segment}/issues/{number}/comments",
-                params={"per_page": 30, "page": page},
+                params={"per_page": 100, "page": page},
             )
             comments_payload = comments_response.json()
             # 防御：GitHub API 文档保证此端点返回 list，但若上游代理/缓存返回
@@ -320,8 +320,8 @@ class GitHubClient:
             if 'rel="next"' not in link_header:
                 break
             page += 1
-        if len(comments) >= 120:
-            logger.info("Issue %s/%s#%d has >=120 comments; truncated to first 120", owner, repo, number)
+        if len(comments) >= 200:
+            logger.info("Issue %s/%s#%d has >=200 comments; truncated to first 200", owner, repo, number)
         return IssueData(
             owner=owner,
             repo=repo,
