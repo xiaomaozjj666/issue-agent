@@ -23,25 +23,59 @@
     if (metrics && metrics.tool_calls !== undefined) metricItems.push(countLabel(metrics.tool_calls, "timeline_tool_calls"));
     if (metrics && metrics.review_calls !== undefined) metricItems.push(countLabel(metrics.review_calls, "timeline_reviews"));
     if (metrics && metrics.files_read !== undefined) metricItems.push(countLabel(metrics.files_read, "timeline_files_read"));
-    const steps = meaningful
-      .slice(-10)
-      .map(function (event) {
-        let label = event.message || event.type;
-        if (event.type === "phase" && event.data) label = event.data.label || event.data.phase;
-        if (event.type === "tool_call" && event.data) label = `${t("tool_call_label")}: ${event.data.name}`;
-        if (event.type === "review" && event.data) label = t("review_progress", { status: event.data.status });
-        return `<div class="timeline-step"><span>${IA.escapeHtml(label)}</span></div>`;
-      })
-      .join("");
+
+    // 默认折叠：只显示最后 10 条，超出部分隐藏，点击"展开全部"显示完整轨迹
+    const VISIBLE_LIMIT = 10;
+    const total = meaningful.length;
+    const buildStepHtml = function (event) {
+      let label = event.message || event.type;
+      if (event.type === "phase" && event.data) label = event.data.label || event.data.phase;
+      if (event.type === "tool_call" && event.data) label = `${t("tool_call_label")}: ${event.data.name}`;
+      if (event.type === "review" && event.data) label = t("review_progress", { status: event.data.status });
+      return `<div class="timeline-step"><span>${IA.escapeHtml(label)}</span></div>`;
+    };
+    const allStepsHtml = meaningful.map(buildStepHtml).join("");
     const metricHtml = metricItems
       .map(function (item) {
         return `<span class="timeline-metric">${IA.escapeHtml(item)}</span>`;
       })
       .join("");
+    const hasMore = total > VISIBLE_LIMIT;
+    const collapsedCount = hasMore ? total - VISIBLE_LIMIT : 0;
     card.innerHTML =
       `<div class="timeline-header"><span class="timeline-title">${IA.escapeHtml(t("investigation_trail"))}</span>` +
-      `<div class="timeline-metrics">${metricHtml}</div></div><div class="timeline-steps">${steps}</div>`;
+      `<div class="timeline-metrics">${metricHtml}</div></div>` +
+      `<div class="timeline-steps" data-collapsed="${hasMore ? "1" : "0"}">${allStepsHtml}</div>` +
+      (hasMore ? `<button type="button" class="timeline-expand-btn" aria-expanded="false">${IA.escapeHtml(t("timeline_expand"))} (${collapsedCount})</button>` : "");
     container.appendChild(card);
+    // 展开/折叠交互
+    if (hasMore) {
+      const stepsEl = card.querySelector(".timeline-steps");
+      const btn = card.querySelector(".timeline-expand-btn");
+      if (btn && stepsEl) {
+        // 初始折叠：隐藏前 collapsedCount 个 step
+        const stepEls = stepsEl.querySelectorAll(".timeline-step");
+        for (let i = 0; i < collapsedCount; i++) {
+          stepEls[i].style.display = "none";
+        }
+        btn.addEventListener("click", function () {
+          const expanded = btn.getAttribute("aria-expanded") === "true";
+          if (expanded) {
+            // 折叠
+            for (let i = 0; i < collapsedCount; i++) stepEls[i].style.display = "none";
+            btn.setAttribute("aria-expanded", "false");
+            btn.textContent = `${t("timeline_expand")} (${collapsedCount})`;
+            stepsEl.dataset.collapsed = "1";
+          } else {
+            // 展开
+            stepEls.forEach(function (el) { el.style.display = ""; });
+            btn.setAttribute("aria-expanded", "true");
+            btn.textContent = t("timeline_collapse");
+            stepsEl.dataset.collapsed = "0";
+          }
+        });
+      }
+    }
     return card;
   }
 

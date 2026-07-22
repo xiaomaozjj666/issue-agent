@@ -106,6 +106,8 @@
     timeline_tool_calls: "{count} tool call(s)",
     timeline_reviews: "{count} review(s)",
     timeline_files_read: "{count} file(s) read",
+    timeline_expand: "Show all",
+    timeline_collapse: "Collapse",
     view_source: "View source",
     toc_title: "Contents",
     report_panel_label: "Analysis report",
@@ -121,6 +123,7 @@
     sankey_chart_caption: "Reasoning chain: Issue → root cause → evidence",
     sankey_issue_node: "Issue",
     sankey_default_cause: "Root cause",
+    sankey_cause_node_label: "Cause {n}",
     sankey_strong_support: "Strong support (read + valid lines)",
     sankey_weak_support: "Weak support (reason only)",
     funnel_chart_title: "Investigation efficiency",
@@ -327,6 +330,9 @@
     const repo = encodeURIComponent(String(session.repo));
     const base = `https://github.com/${owner}/${repo}`;
     if (!path) return base;
+    // 优先使用分析时刻的 commit SHA，确保链接指向当时的代码快照；
+    // 无 SHA 时降级为 HEAD（最新分支头）
+    const ref = session.head_sha || "HEAD";
     const encodedPath = String(path)
       .split("/")
       .filter(Boolean)
@@ -335,9 +341,9 @@
       })
       .join("/");
     const numbers = lines ? String(lines).match(/\d+/g) : null;
-    if (!numbers || !numbers.length) return `${base}/blob/HEAD/${encodedPath}`;
+    if (!numbers || !numbers.length) return `${base}/blob/${ref}/${encodedPath}`;
     const linePart = numbers.length > 1 ? `#L${numbers[0]}-L${numbers[1]}` : `#L${numbers[0]}`;
-    return `${base}/blob/HEAD/${encodedPath}${linePart}`;
+    return `${base}/blob/${ref}/${encodedPath}${linePart}`;
   }
 
   const ns = {

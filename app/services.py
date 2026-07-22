@@ -73,6 +73,7 @@ def session_summary(session: Session) -> SessionSummary:
     owner = session.issue.owner if session.issue else ""
     repo = session.issue.repo if session.issue else ""
     issue_number = session.issue.number if session.issue else None
+    head_sha = session.issue.head_sha if session.issue else ""
     fallback_title = session.issue.title if session.issue else session.issue_url
     return SessionSummary(
         session_id=session.session_id,
@@ -80,6 +81,7 @@ def session_summary(session: Session) -> SessionSummary:
         owner=owner,
         repo=repo,
         issue_number=issue_number,
+        head_sha=head_sha,
         title=session.display_title or fallback_title,
         status=session.status,
         phase=session.phase,
