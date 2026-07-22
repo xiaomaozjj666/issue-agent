@@ -169,6 +169,25 @@
     chart_data_view: "View data",
     chart_data_view_refresh: "Refresh",
     report_evidence_chart_empty: "No code evidence yet",
+    // #5 修复方案优先级 + 影响范围
+    change_scope: "Affected",
+    change_priority_p0_desc: "P0 — must fix (security/crash/data loss)",
+    change_priority_p1_desc: "P1 — should fix (recommended)",
+    change_priority_p2_desc: "P2 — optional (nice to have)",
+    // #9 HTML 导出
+    download_html: "Download HTML",
+    // #10 独立审查增强
+    review_reviewer_model: "Reviewer model",
+    review_reviewer_calls: "{count} review call(s)",
+    review_valid_evidence: "Valid evidence",
+    review_root_cause_supported: "Root cause supported",
+    review_supported_yes: "Yes",
+    review_supported_no: "No",
+    // #14 分屏模式
+    report_split: "Split view",
+    report_exit_split: "Exit split view",
+    // #22 Heatmap 部分通过
+    matrix_partial: "Partial",
   };
 
   function loadI18n() {

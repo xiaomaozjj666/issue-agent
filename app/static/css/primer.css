@@ -4212,3 +4212,208 @@ body.modal-open {
     min-height: 280px;
   }
 }
+
+/* ============================================================
+   #5 修复方案优先级 + 影响范围
+   #10 独立审查展示增强
+   #14 报告与对话分屏模式
+   ============================================================ */
+
+/* ── #5 修复方案列表 ────────────────────────────────────── */
+.change-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.change-item {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--card);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+}
+
+.change-item:hover {
+  transform: translateX(2px);
+}
+
+.change-item.change-p0 {
+  border-left-color: var(--red);
+  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 40%);
+}
+
+.change-item.change-p1 {
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, var(--accent-subtle) 0%, var(--card) 40%);
+}
+
+.change-item.change-p2 {
+  border-left-color: var(--neutral-emphasis);
+  background: linear-gradient(90deg, var(--neutral-subtle) 0%, var(--card) 40%);
+}
+
+.change-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.change-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 32px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.change-priority-p0 { background: var(--red); }
+.change-priority-p1 { background: var(--accent); }
+.change-priority-p2 { background: var(--neutral-emphasis); }
+
+.change-text {
+  flex: 1 1 auto;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.change-meta {
+  margin-top: var(--space-2);
+  padding-left: 40px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.change-scope code {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--canvas-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* ── #10 独立审查增强 ───────────────────────────────────── */
+.review-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.review-meta-item {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.review-meta-item code {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--canvas-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.review-audit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+}
+
+.review-audit-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.review-audit-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.review-audit-value {
+  color: var(--fg-strong);
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.review-audit-value.audit-pass { color: var(--green); }
+.review-audit-value.audit-fail { color: var(--red); }
+
+.review-findings {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+}
+
+.review-findings li {
+  margin-bottom: var(--space-2);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/* ── #14 报告与对话分屏模式 ─────────────────────────────── */
+/* 分屏模式：#main 变为 grid，左对话 + 右报告并排，不互相覆盖 */
+#main.split-view {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+#main.split-view #conversation {
+  border-right: 1px solid var(--border-muted);
+}
+
+#main.split-view #report-panel {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  border-left: 0;
+  box-shadow: none;
+}
+
+/* 分屏模式下，对话区不被压缩隐藏，报告也不覆盖对话 */
+#main.split-view #conversation {
+  display: flex;
+}
+
+/* 窄屏：分屏回退为堆叠（报告在下） */
+@media (max-width: 960px) {
+  #main.split-view {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  #main.split-view #conversation {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-muted);
+  }
+}
+
+/* 分屏按钮高亮（active 状态） */
+#report-split-btn[aria-pressed="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent-muted);
+}
