@@ -572,6 +572,25 @@ _FRONTEND_STRINGS = {
         "sankey_medium_support": "中等支撑（已读但行号不规范）",
         "chart_data_view": "查看数据",
         "chart_data_view_refresh": "刷新",
+        # #5 修复方案优先级 + 影响范围
+        "change_scope": "影响范围",
+        "change_priority_p0_desc": "P0 — 必须修复（安全/崩溃/数据丢失）",
+        "change_priority_p1_desc": "P1 — 建议修复（推荐）",
+        "change_priority_p2_desc": "P2 — 可选优化（nice to have）",
+        # #9 HTML 导出
+        "download_html": "下载 HTML",
+        # #10 独立审查增强
+        "review_reviewer_model": "审查模型",
+        "review_reviewer_calls": "{count} 次审查调用",
+        "review_valid_evidence": "有效证据",
+        "review_root_cause_supported": "根因被支撑",
+        "review_supported_yes": "是",
+        "review_supported_no": "否",
+        # #14 分屏模式
+        "report_split": "分屏查看",
+        "report_exit_split": "退出分屏",
+        # #22 Heatmap 部分通过
+        "matrix_partial": "部分通过",
     },
     "en": {
         "doc_title": "GitHub Issue Agent",
@@ -818,6 +837,25 @@ _FRONTEND_STRINGS = {
         "sankey_medium_support": "Medium support (read, lines invalid)",
         "chart_data_view": "View data",
         "chart_data_view_refresh": "Refresh",
+        # #5 修复方案优先级 + 影响范围
+        "change_scope": "Affected",
+        "change_priority_p0_desc": "P0 — must fix (security/crash/data loss)",
+        "change_priority_p1_desc": "P1 — should fix (recommended)",
+        "change_priority_p2_desc": "P2 — optional (nice to have)",
+        # #9 HTML 导出
+        "download_html": "Download HTML",
+        # #10 独立审查增强
+        "review_reviewer_model": "Reviewer model",
+        "review_reviewer_calls": "{count} review call(s)",
+        "review_valid_evidence": "Valid evidence",
+        "review_root_cause_supported": "Root cause supported",
+        "review_supported_yes": "Yes",
+        "review_supported_no": "No",
+        # #14 分屏模式
+        "report_split": "Split view",
+        "report_exit_split": "Exit split view",
+        # #22 Heatmap 部分通过
+        "matrix_partial": "Partial",
     },
 }
 

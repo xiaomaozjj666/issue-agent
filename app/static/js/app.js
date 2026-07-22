@@ -1607,6 +1607,43 @@
     return "medium";
   }
 
+  // #5 修复方案优先级推断：根据关键词判断 P0（必须修）/P1（建议修）/P2（可选优化）
+  // 覆盖中英文关键词；idx 仅作为兜底（首条建议倾向 P1，避免全是 P2）
+  function classifyChangePriority(text, idx) {
+    const s = String(text || "").toLowerCase();
+    // P0：涉及安全/数据丢失/崩溃/竞态/死锁/认证/授权/注入
+    if (/(必须|紧急|立即|critical|security|vulnerability|crash|data loss|race|deadlock|auth|inject|remote code|cve|严重|致命|关键)/i.test(s)) {
+      return { cls: "p0", label: "P0", desc: t("change_priority_p0_desc") };
+    }
+    // P2：明确为可选/优化/建议/考虑
+    if (/(可选|建议考虑|可选优化|nice to have|optional|polish|refactor|cleanup|nitpick|考虑|后续|未来)/i.test(s)) {
+      return { cls: "p2", label: "P2", desc: t("change_priority_p2_desc") };
+    }
+    // P1：建议修复（默认）— 但首条建议若无明显信号也归 P1
+    if (/(应该|建议|需要|应当|should|recommend|need|must|fix|update|add|remove|replace)/i.test(s) || idx === 0) {
+      return { cls: "p1", label: "P1", desc: t("change_priority_p1_desc") };
+    }
+    return { cls: "p2", label: "P2", desc: t("change_priority_p2_desc") };
+  }
+
+  // #5 从修复方案文本中提取受影响的文件路径
+  // 策略：1) 文本中显式提到的路径（含 / 或 .py/.js 等后缀）；2) 与 evidence.path 匹配的文件名
+  function extractAffectedFiles(text, evidence) {
+    const s = String(text || "");
+    // 匹配常见代码路径：word/word.ext 或 word.ext（py/js/ts/tsx/go/rs/java/cpp/c/h/json/yaml/yml/toml）
+    const pathRegex = /[\w.-]+\/[\w./-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|cpp|c|h|hpp|json|yaml|yml|toml|md|sh|bat|sql|html|css|scss|vue|svelte)/g;
+    const direct = s.match(pathRegex) || [];
+    // 从 evidence 路径中匹配文本提到的文件名（basename）
+    const evidenceMatches = (evidence || []).map(function (e) { return e.path; }).filter(function (p) {
+      if (!p) return false;
+      const base = p.split("/").pop();
+      return base && s.indexOf(base) !== -1;
+    });
+    // 去重 + 限制最多 3 个，避免列表过长
+    const all = Array.from(new Set([].concat(direct, evidenceMatches)));
+    return all.slice(0, 3);
+  }
+
   // ── 图表 1：证据可信度矩阵（Heatmap） ──────────────────────
   // 回答"这个分析的可信度到底如何"：每条证据在 4 个维度上的通过/未通过状态。
   // 绿色 = 通过，红色 = 未通过。用户一眼看出哪些证据扎实、哪些是凑数。
@@ -1687,12 +1724,23 @@
       heatData.push([i, 0, fileRead]);
 
       // 维度 1：行号是否有效（非空且格式正确）
-      const linesValid = e.lines && /^L\d+(-L?\d+)?$/.test(e.lines) ? 1 : 0;
-      heatData.push([i, 1, linesValid]);
+      // #22 引入三档：1=完全有效（格式正确）；0.5=部分有效（格式对但缺行号或仅 L 数字）；0=无效
+      let linesValue = 0;
+      if (e.lines && /^L\d+(-L?\d+)?$/.test(e.lines)) {
+        linesValue = 1;
+      } else if (e.lines && /^L/i.test(e.lines)) {
+        // 格式以 L 开头但不完全规范（如 "L约120" 或 "L?"）— 视为部分通过
+        linesValue = 0.5;
+      }
+      heatData.push([i, 1, linesValue]);
 
       // 维度 2：是否有 reason 说明
-      const hasReason = e.reason && e.reason.trim() ? 1 : 0;
-      heatData.push([i, 2, hasReason]);
+      // #22 reason 三档：1=完整说明（>=20 字符）；0.5=简短说明（<20 字符）；0=缺失
+      let reasonValue = 0;
+      const reasonText = (e.reason || "").trim();
+      if (reasonText.length >= 20) reasonValue = 1;
+      else if (reasonText.length > 0) reasonValue = 0.5;
+      heatData.push([i, 2, reasonValue]);
 
       // 维度 3：是否被独立审查验证
       heatData.push([i, 3, reviewPassed ? 1 : 0]);
@@ -1710,9 +1758,12 @@
         formatter: function (params) {
           const e = evidence[params.data[0]];
           const dim = dimensions[params.data[1]];
-          const passed = params.data[2] === 1;
-          const status = passed ? t("matrix_pass") : t("matrix_fail");
-          const statusColor = passed ? palette.success : palette.danger;
+          // #22 三档状态：1=通过 / 0.5=部分通过 / 0=未通过
+          const v = params.data[2];
+          let status, statusColor;
+          if (v >= 1) { status = t("matrix_pass"); statusColor = palette.success; }
+          else if (v >= 0.5) { status = t("matrix_partial"); statusColor = palette.warning; }
+          else { status = t("matrix_fail"); statusColor = palette.danger; }
           return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(e.path)}</div>` +
             `<div style="color:${palette.textDim};font-size:11px;margin-bottom:4px;">${IA.escapeHtml(dim)}</div>` +
             `<div style="color:${statusColor};font-weight:600;">${IA.escapeHtml(status)}</div>` +
@@ -1748,11 +1799,12 @@
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { show: false },
       },
+      // #22 三色 visualMap：红→黄→绿，支持中间状态
       visualMap: {
         min: 0,
         max: 1,
         show: false,
-        inRange: { color: [palette.danger, palette.success] },
+        inRange: { color: [palette.danger, palette.warning, palette.success] },
       },
       series: [
         {
@@ -2094,22 +2146,46 @@
         `<button class="report-action" type="button" data-action="copy-json">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-json">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_json"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-md">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_markdown"))}</span></button>` +
+        `<button class="report-action" type="button" data-action="download-html">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_html"))}</span></button>` +
         `</div>`,
     );
 
     // 6. 独立审查（如果执行过）
+    // #10 增强：展示 reviewer_model、findings 编号、证据验证前后对比、根因支撑状态
     if (review.status !== "not_run") {
       const reviewClass = IA.safeClass(review.status);
-      let body = `<span class="review-chip ${reviewClass}">${IA.escapeHtml(
-        t("report_independent_review", { status: enumLabel("review_status", review.status) }),
-      )}</span>`;
+      let body = `<div class="review-head">` +
+        `<span class="review-chip ${reviewClass}">${IA.escapeHtml(
+          t("report_independent_review", { status: enumLabel("review_status", review.status) }),
+        )}</span>`;
+      // #10 审查者模型
+      if (review.reviewer_model) {
+        body += `<span class="review-meta-item">${IA.escapeHtml(t("review_reviewer_model"))}: <code>${IA.escapeHtml(review.reviewer_model)}</code></span>`;
+      }
+      // #10 审查调用次数（从 session.metrics 读取）
+      const reviewCalls = sessionData && sessionData.metrics ? (sessionData.metrics.review_calls || 0) : 0;
+      if (reviewCalls > 0) {
+        body += `<span class="review-meta-item">${IA.escapeHtml(t("review_reviewer_calls", { count: reviewCalls }))}</span>`;
+      }
+      body += `</div>`;
+
+      // #10 证据验证对比：valid_references / 总证据数 / 根因是否被支撑
+      const audit = r.evidence_audit || { valid_references: 0, root_cause_supported: false };
+      const totalEvidence = (r.evidence || []).length;
+      body += `<div class="review-audit">` +
+        `<div class="review-audit-item"><span class="review-audit-label">${IA.escapeHtml(t("review_valid_evidence"))}</span><span class="review-audit-value">${audit.valid_references} / ${totalEvidence}</span></div>` +
+        `<div class="review-audit-item"><span class="review-audit-label">${IA.escapeHtml(t("review_root_cause_supported"))}</span>` +
+          `<span class="review-audit-value ${audit.root_cause_supported ? "audit-pass" : "audit-fail"}">${IA.escapeHtml(audit.root_cause_supported ? t("review_supported_yes") : t("review_supported_no"))}</span>` +
+        `</div>` +
+        `</div>`;
+
       if (review.summary) body += `<p class="review-summary">${IA.escapeHtml(review.summary)}</p>`;
       if (review.findings && review.findings.length) {
-        body += `<ul class="review-findings">${review.findings
-          .map(function (f) {
-            return `<li>${IA.escapeHtml(f)}</li>`;
+        body += `<ol class="review-findings">${review.findings
+          .map(function (f, idx) {
+            return `<li value="${idx + 1}">${IA.escapeHtml(f)}</li>`;
           })
-          .join("")}</ul>`;
+          .join("")}</ol>`;
       }
       parts.push(`<section class="report-section review-section ${reviewClass}">${body}</section>`);
     }
@@ -2132,13 +2208,27 @@
     }
 
     // 9. 修复方案
+    // #5 优先级（P0/P1/P2）+ 影响范围（从文本提取文件路径）标注
     if (r.proposed_changes && r.proposed_changes.length) {
       const list = r.proposed_changes
-        .map(function (c) {
-          return `<li>${IA.escapeHtml(c)}</li>`;
+        .map(function (c, idx) {
+          const priority = classifyChangePriority(c, idx);
+          const scope = extractAffectedFiles(c, r.evidence || []);
+          const scopeHtml = scope.length
+            ? `<span class="change-scope">${IA.escapeHtml(t("change_scope"))}: <code>${scope.map(IA.escapeHtml).join("</code>, <code>")}</code></span>`
+            : "";
+          return (
+            `<li class="change-item change-${priority.cls}">` +
+              `<div class="change-head">` +
+                `<span class="change-priority change-priority-${priority.cls}" title="${IA.escapeAttr(priority.desc)}">${IA.escapeHtml(priority.label)}</span>` +
+                `<span class="change-text">${IA.escapeHtml(c)}</span>` +
+              `</div>` +
+              (scopeHtml ? `<div class="change-meta">${scopeHtml}</div>` : "") +
+            `</li>`
+          );
         })
         .join("");
-      parts.push(pushSection("report-changes", t("report_proposed_changes"), `<ul>${list}</ul>`));
+      parts.push(pushSection("report-changes", t("report_proposed_changes"), `<ul class="change-list">${list}</ul>`));
     }
 
     // 10. 修复补丁
@@ -2826,6 +2916,13 @@
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       IA.downloadFile(`report-${stamp}.md`, reportAsMarkdown(reportData), "text/markdown;charset=utf-8");
       flashToast(t("download_started"));
+    } else if (action === "download-html") {
+      // #9 导出自包含 HTML：嵌入报告 JSON + ECharts CDN，离线打开即可渲染图表
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const sessionInfo = activeSession || {};
+      const html = generateSelfContainedHtml(reportData, sessionInfo);
+      IA.downloadFile(`report-${stamp}.html`, html, "text/html;charset=utf-8");
+      flashToast(t("download_started"));
     } else if (action === "copy-patch") {
       if (!reportData.patch) return;
       const ok = await IA.copyToClipboard(reportData.patch);
@@ -2873,6 +2970,304 @@
       lines.push("");
     });
     return lines.join("\n");
+  }
+
+  // #9 生成自包含 HTML 报告：嵌入报告 JSON + ECharts CDN，离线打开即可渲染图表
+  // 内联 CSS（精简版）+ ECharts CDN（带 SRI）+ 报告渲染脚本
+  function generateSelfContainedHtml(r, sessionData) {
+    const jsonStr = JSON.stringify(r, null, 2);
+    const sessionJson = JSON.stringify(sessionData || {});
+    const generatedAt = new Date().toISOString();
+    const title = (sessionData && sessionData.issue_url) ? sessionData.issue_url : "Issue Agent Report";
+    // 内联精简 CSS：仅保留报告阅读必需样式，避免依赖外部文件
+    const inlineCss = `
+      *{box-sizing:border-box}
+      body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:24px;background:#0f172a;color:#f1f5f9;line-height:1.7;max-width:920px;margin:0 auto}
+      h1{font-size:24px;border-bottom:2px solid #3b82f6;padding-bottom:8px;color:#3b82f6}
+      h2{font-size:18px;margin-top:32px;border-bottom:1px solid #334155;padding-bottom:6px}
+      h3{font-size:15px;margin-top:20px;color:#94a3b8}
+      .meta{color:#94a3b8;font-size:13px;margin-bottom:24px}
+      .conclusion{padding:16px 20px;background:linear-gradient(135deg,rgba(59,130,246,0.16) 0%,#1e293b 100%);border:1px solid rgba(59,130,246,0.4);border-radius:12px;margin-bottom:20px}
+      .conclusion-label{color:#3b82f6;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em}
+      .conclusion-text{color:#fff;font-size:16px;font-weight:600;margin:8px 0 0 0}
+      .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:20px}
+      .metric{padding:12px 16px;border:1px solid #334155;border-radius:8px;background:#1e293b}
+      .metric-label{color:#94a3b8;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em}
+      .metric-value{color:#fff;font-size:20px;font-weight:700;display:block;margin-top:4px}
+      .chart{margin:16px 0;padding:16px;border:1px solid #334155;border-radius:12px;background:#1e293b}
+      .chart-title{font-weight:600;margin-bottom:8px}
+      .chart-canvas{width:100%;height:300px}
+      .chart-canvas.funnel{height:240px}
+      .chart-caption{color:#94a3b8;font-size:12px;margin-top:8px}
+      .section{margin-top:24px;padding-top:16px;border-top:1px solid #1e293b}
+      .section h2{margin-top:0}
+      .evidence-item{border:1px solid #334155;border-radius:8px;padding:12px 16px;background:#1e293b;margin-bottom:8px}
+      .evidence-path{color:#3b82f6;font-family:ui-monospace,monospace;font-size:12px;margin-bottom:4px}
+      .evidence-reason{color:#f1f5f9;font-size:14px}
+      .risk-item{padding:10px 14px;border:1px solid #334155;border-left-width:3px;border-radius:8px;background:#1e293b;margin-bottom:6px}
+      .risk-high{border-left-color:#ef4444}.risk-medium{border-left-color:#f59e0b}.risk-low{border-left-color:#10b981}
+      .risk-badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:700;color:#fff;margin-right:8px;text-transform:uppercase}
+      .risk-badge-high{background:#ef4444}.risk-badge-medium{background:#d97706}.risk-badge-low{background:#10b981}
+      .change-item{padding:10px 14px;border:1px solid #334155;border-radius:8px;background:#1e293b;margin-bottom:6px}
+      .change-priority{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;color:#fff;margin-right:8px}
+      .change-priority-p0{background:#ef4444}.change-priority-p1{background:#3b82f6}.change-priority-p2{background:#64748b}
+      .change-scope{color:#94a3b8;font-size:12px;margin-top:4px}
+      .change-scope code{background:#0f172a;padding:2px 6px;border-radius:4px;font-family:ui-monospace,monospace;color:#3b82f6}
+      pre{background:#0f172a;padding:12px;border-radius:8px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:12px;border:1px solid #1e293b}
+      .diff-add{background:rgba(16,185,129,0.16);display:block;padding-left:8px;border-left:3px solid #10b981}
+      .diff-del{background:rgba(239,68,68,0.16);display:block;padding-left:8px;border-left:3px solid #ef4444}
+      .diff-ctx{display:block;padding-left:8px;color:#94a3b8}
+      .diff-hunk{background:rgba(59,130,246,0.16);display:block;padding:4px 8px;color:#3b82f6;font-weight:600}
+      ul,ol{line-height:1.8}
+      li{margin-bottom:6px}
+      .review-chip{display:inline-block;padding:3px 10px;border-radius:9999px;font-size:12px;font-weight:600;color:#fff}
+      .review-chip.approved{background:#10b981}.review-chip.revised{background:#3b82f6}.review-chip.unavailable{background:#64748b}
+      .review-audit{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+      .review-audit-item{padding:8px 12px;border:1px solid #334155;border-radius:6px;background:#0f172a}
+      .review-audit-label{color:#94a3b8;font-size:11px;display:block}
+      .review-audit-value{font-weight:700;display:block;margin-top:2px}
+      .audit-pass{color:#10b981}.audit-fail{color:#ef4444}
+      @media print{body{background:#fff;color:#000}.chart{page-break-inside:avoid}}
+    `;
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${IA.escapeHtml(title)} — Issue Agent Report</title>
+<style>${inlineCss}</style>
+</head>
+<body>
+<h1>${IA.escapeHtml(title)}</h1>
+<div class="meta">Generated by Issue Agent · ${IA.escapeHtml(generatedAt)}</div>
+<div id="report-root"></div>
+
+<!-- ECharts CDN with SRI integrity -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"
+        integrity="sha384-o5uz97et3bErHvpKfD4Jz4n0JfhJDWABFuF4NP+iEEDxE1VwMWJ19QGR0lqFZnr6"
+        onerror="this.remove();window.__echartsFailed=true;"></script>
+
+<script id="report-data" type="application/json">${IA.escapeHtml(jsonStr)}</script>
+<script id="session-data" type="application/json">${IA.escapeHtml(sessionJson)}</script>
+
+<script>
+(function(){
+  "use strict";
+  var report;
+  var session;
+  try {
+    report = JSON.parse(document.getElementById('report-data').textContent);
+    session = JSON.parse(document.getElementById('session-data').textContent);
+  } catch(e){ console.error('Failed to parse embedded data', e); return; }
+
+  var root = document.getElementById('report-root');
+  var parts = [];
+  var metrics = report.metrics || {};
+
+  // 结论卡
+  parts.push('<div class="conclusion">' +
+    '<div class="conclusion-label">ANALYSIS CONCLUSION</div>' +
+    '<p class="conclusion-text">' + escape(report.summary || '') + '</p>' +
+    '<div style="margin-top:8px;color:#94a3b8;font-size:13px;">Confidence: <b>' + escape(report.confidence || '') + '</b></div>' +
+    '</div>');
+
+  // 指标网格
+  var evCount = (report.evidence || []).length;
+  var fileCount = (report.files_examined || []).length;
+  var changeCount = (report.proposed_changes || []).length;
+  var riskCount = (report.risks || []).length;
+  var reviewStatus = report.review_audit && report.review_audit.status !== 'not_run' ? report.review_audit.status : '—';
+  parts.push('<div class="metrics">' +
+    metricCard('Evidence', evCount) +
+    metricCard('Files examined', fileCount) +
+    metricCard('Confidence', report.confidence || '—') +
+    metricCard('Review', reviewStatus) +
+    metricCard('Proposed changes', changeCount) +
+    metricCard('Risks', riskCount) +
+    '</div>');
+
+  // 图表占位（仅当 evidence 存在且有 ECharts）
+  if (evCount && typeof echarts !== 'undefined' && !window.__echartsFailed) {
+    var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
+    var filesReadSet = {};
+    filesRead.forEach(function(p){ filesReadSet[p] = true; });
+    var modelCalls = metrics.model_calls || 0;
+    var toolCalls = metrics.tool_calls || 0;
+    var validEv = report.evidence_audit ? report.evidence_audit.valid_references : evCount;
+
+    // 图表 1: 证据矩阵 Heatmap
+    parts.push('<div class="chart"><div class="chart-title">Evidence credibility matrix</div><div id="chart-matrix" class="chart-canvas"></div><div class="chart-caption">4 dimensions: file read / lines valid / has reason / review verified</div></div>');
+    // 图表 2: Sankey
+    parts.push('<div class="chart"><div class="chart-title">Evidence-to-root-cause support</div><div id="chart-sankey" class="chart-canvas"></div><div class="chart-caption">Issue → root cause → evidence flow</div></div>');
+    // 图表 3: Funnel
+    parts.push('<div class="chart"><div class="chart-title">Investigation efficiency</div><div id="chart-funnel" class="chart-canvas funnel"></div><div class="chart-caption">Model calls → tool calls → files read → valid evidence</div></div>');
+  }
+
+  // 独立审查
+  if (report.review_audit && report.review_audit.status !== 'not_run') {
+    var ra = report.review_audit;
+    parts.push('<div class="section"><h2>Independent Review</h2>');
+    parts.push('<span class="review-chip ' + ra.status + '">' + ra.status + '</span>');
+    if (ra.reviewer_model) parts.push(' <span style="color:#94a3b8;font-size:13px;">Reviewer model: <code>' + escape(ra.reviewer_model) + '</code></span>');
+    if (report.evidence_audit) {
+      parts.push('<div class="review-audit">' +
+        '<div class="review-audit-item"><span class="review-audit-label">Valid evidence</span><span class="review-audit-value">' + report.evidence_audit.valid_references + ' / ' + evCount + '</span></div>' +
+        '<div class="review-audit-item"><span class="review-audit-label">Root cause supported</span><span class="review-audit-value ' + (report.evidence_audit.root_cause_supported ? 'audit-pass' : 'audit-fail') + '">' + (report.evidence_audit.root_cause_supported ? 'Yes' : 'No') + '</span></div>' +
+        '</div>');
+    }
+    if (ra.summary) parts.push('<p>' + escape(ra.summary) + '</p>');
+    if (ra.findings && ra.findings.length) {
+      parts.push('<ol>');
+      ra.findings.forEach(function(f, i){ parts.push('<li value="' + (i+1) + '">' + escape(f) + '</li>'); });
+      parts.push('</ol>');
+    }
+    parts.push('</div>');
+  }
+
+  // 根因
+  parts.push('<div class="section"><h2>Root cause</h2><p>' + escape(report.root_cause || '') + '</p></div>');
+
+  // 证据
+  if (evCount) {
+    parts.push('<div class="section"><h2>Code evidence</h2>');
+    report.evidence.forEach(function(e){
+      parts.push('<div class="evidence-item"><div class="evidence-path">' + escape(e.path || '') + ' · ' + escape(e.lines || '') + '</div><div class="evidence-reason">' + escape(e.reason || '') + '</div></div>');
+    });
+    parts.push('</div>');
+  }
+
+  // 修复方案
+  if (changeCount) {
+    parts.push('<div class="section"><h2>Proposed changes</h2><ul>');
+    report.proposed_changes.forEach(function(c){
+      parts.push('<li>' + escape(c) + '</li>');
+    });
+    parts.push('</ul></div>');
+  }
+
+  // 补丁
+  if (report.patch) {
+    parts.push('<div class="section"><h2>Patch</h2><pre>');
+    report.patch.split('\\n').forEach(function(line){
+      var cls = 'diff-ctx';
+      if (line.startsWith('+++') || line.startsWith('---')) cls = '';
+      else if (line.startsWith('+')) cls = 'diff-add';
+      else if (line.startsWith('-')) cls = 'diff-del';
+      else if (line.startsWith('@@')) cls = 'diff-hunk';
+      parts.push('<span class="' + cls + '">' + escape(line) + '</span>');
+    });
+    parts.push('</pre></div>');
+  }
+
+  // 测试
+  if (report.tests && report.tests.length) {
+    parts.push('<div class="section"><h2>Suggested tests</h2><ul>');
+    report.tests.forEach(function(tt){ parts.push('<li>' + escape(tt) + '</li>'); });
+    parts.push('</ul></div>');
+  }
+
+  // 风险
+  if (riskCount) {
+    parts.push('<div class="section"><h2>Risks</h2>');
+    report.risks.forEach(function(rk){
+      var sev = /critical|severe|fatal|crash|严重|致命/i.test(rk) ? 'high' : /medium|moderate|中等|可能/i.test(rk) ? 'medium' : 'low';
+      parts.push('<div class="risk-item risk-' + sev + '"><span class="risk-badge risk-badge-' + sev + '">' + sev + '</span>' + escape(rk) + '</div>');
+    });
+    parts.push('</div>');
+  }
+
+  root.innerHTML = parts.join('');
+
+  // 渲染图表
+  if (typeof echarts === 'undefined' || window.__echartsFailed) return;
+  var palette = { primary:'#3b82f6', success:'#10b981', warning:'#f59e0b', danger:'#ef4444', text:'#f1f5f9', textDim:'#94a3b8', line:'#334155' };
+
+  // Heatmap
+  var matrixEl = document.getElementById('chart-matrix');
+  if (matrixEl) {
+    var dims = ['File read','Lines valid','Has reason','Review verified'];
+    var fileLabels = report.evidence.map(function(e){
+      var parts = (e.path||'').split('/'); return parts.length>2 ? '…/'+parts.slice(-2).join('/') : e.path;
+    });
+    var heatData = [];
+    var reviewPass = report.review_audit && report.review_audit.status === 'approved';
+    report.evidence.forEach(function(e, i){
+      heatData.push([i, 0, filesReadSet[e.path] ? 1 : 0]);
+      heatData.push([i, 1, e.lines && /^L\\d+/.test(e.lines) ? 1 : 0]);
+      heatData.push([i, 2, e.reason && e.reason.trim().length >= 20 ? 1 : (e.reason && e.reason.trim() ? 0.5 : 0)]);
+      heatData.push([i, 3, reviewPass ? 1 : 0]);
+    });
+    echarts.init(matrixEl).setOption({
+      tooltip:{confine:true,backgroundColor:'#0f172a',textStyle:{color:'#f1f5f9'}},
+      grid:{left:8,right:16,top:32,bottom:60,containLabel:true},
+      xAxis:{type:'category',data:fileLabels,axisLabel:{rotate:30,width:80,overflow:'truncate',color:'#94a3b8'}},
+      yAxis:{type:'category',data:dims,axisLabel:{color:'#94a3b8'}},
+      visualMap:{min:0,max:1,show:false,inRange:{color:[palette.danger,palette.warning,palette.success]}},
+      series:[{type:'heatmap',data:heatData,itemStyle:{borderRadius:3,borderColor:'#1e293b',borderWidth:2}}]
+    });
+  }
+
+  // Sankey
+  var sankeyEl = document.getElementById('chart-sankey');
+  if (sankeyEl) {
+    var causeParts = (report.root_cause||'').split(/[。.；;]/).filter(function(s){return s.trim();}).slice(0,2);
+    if (!causeParts.length) causeParts = ['Root cause'];
+    var causeNodes = causeParts.map(function(_,i){ return 'Cause '+(i+1); });
+    var nodes = [{name:'Issue',itemStyle:{color:palette.primary}}];
+    causeNodes.forEach(function(c){ nodes.push({name:c,itemStyle:{color:palette.warning}}); });
+    var fileNames = report.evidence.map(function(e){
+      var p=(e.path||'').split('/'); var sp=p.length>2?'…/'+p.slice(-2).join('/'):e.path;
+      return e.lines?sp+' '+e.lines:sp;
+    });
+    fileNames.forEach(function(f,i){
+      var e=report.evidence[i];
+      var strong = filesReadSet[e.path] && e.lines && /^L\\d+/.test(e.lines);
+      nodes.push({name:f,itemStyle:{color:strong?palette.success:palette.textDim}});
+    });
+    var links = [];
+    causeNodes.forEach(function(c){ links.push({source:'Issue',target:c,value:1}); });
+    report.evidence.forEach(function(e,i){
+      var v = filesReadSet[e.path] && e.lines && /^L\\d+/.test(e.lines) ? 3 : (filesReadSet[e.path] ? 2 : 1);
+      links.push({source:causeNodes[i%causeNodes.length],target:fileNames[i],value:v});
+    });
+    echarts.init(sankeyEl).setOption({
+      tooltip:{confine:true,backgroundColor:'#0f172a',textStyle:{color:'#f1f5f9'}},
+      series:[{type:'sankey',data:nodes,links:links,lineStyle:{color:'gradient',opacity:0.4},label:{color:'#f1f5f9',fontSize:10},itemStyle:{borderWidth:0}}]
+    });
+  }
+
+  // Funnel
+  var funnelEl = document.getElementById('chart-funnel');
+  if (funnelEl) {
+    var layers = [
+      {name:'Model calls',raw:metrics.model_calls||0,color:palette.primary},
+      {name:'Tool calls',raw:metrics.tool_calls||0,color:palette.warning},
+      {name:'Files read',raw:(session.files_read||[]).length,color:palette.success},
+      {name:'Valid evidence',raw:validEv,color:palette.danger},
+    ].filter(function(d){return d.raw>0;});
+    if (layers.length) {
+      echarts.init(funnelEl).setOption({
+        tooltip:{confine:true,backgroundColor:'#0f172a',textStyle:{color:'#f1f5f9'}},
+        series:[{type:'funnel',data:layers.map(function(d){return{name:d.name,value:d.raw,itemStyle:{color:d.color}};}),sort:'descending',label:{show:true,color:'#f1f5f9'},left:'10%',right:'10%',top:16,bottom:16}]
+      });
+    }
+  }
+
+  // 窗口 resize 同步
+  window.addEventListener('resize', function(){
+    ['chart-matrix','chart-sankey','chart-funnel'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) { var inst = echarts.getInstanceByDom(el); if (inst) inst.resize(); }
+    });
+  });
+
+  function escape(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function metricCard(label, value){ return '<div class="metric"><span class="metric-label">'+escape(label)+'</span><span class="metric-value">'+escape(value)+'</span></div>'; }
+})();
+</script>
+</body>
+</html>`;
   }
 
   function flashToast(message) {
@@ -2938,6 +3333,45 @@
       // 全屏切换后图表需要 resize
       setTimeout(function () { reportChartInstances.forEach(function (c) { c.resize(); }); }, 100);
     });
+    // #14 分屏模式：报告与对话并排显示，不互相覆盖
+    // 动态注入 split 按钮（避免修改 index.html 模板）
+    const reportActions = document.querySelector(".report-header-actions");
+    if (reportActions && !document.getElementById("report-split-btn")) {
+      const splitBtn = document.createElement("button");
+      splitBtn.className = "report-action-btn";
+      splitBtn.id = "report-split-btn";
+      splitBtn.type = "button";
+      splitBtn.setAttribute("aria-label", t("report_split"));
+      splitBtn.setAttribute("aria-pressed", "false");
+      splitBtn.title = t("report_split");
+      splitBtn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M0 2.75A.75.75 0 0 1 .75 2h6.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1-.75-.75V2.75Zm8 0A.75.75 0 0 1 8.75 2h6.5a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-6.5a.75.75 0 0 1-.75-.75V2.75ZM1.5 3.5v9h5v-9h-5Zm8 0v9h5v-9h-5Z"/></svg>';
+      // 插入到 fullscreen 按钮之后
+      const fsBtn = document.getElementById("report-fullscreen-btn");
+      if (fsBtn && fsBtn.nextSibling) {
+        reportActions.insertBefore(splitBtn, fsBtn.nextSibling);
+      } else {
+        reportActions.appendChild(splitBtn);
+      }
+      splitBtn.addEventListener("click", function () {
+        const main = document.getElementById("main");
+        const panel = document.getElementById("report-panel");
+        const isSplit = main.classList.toggle("split-view");
+        // 分屏时必须打开报告，且退出全屏
+        if (isSplit) {
+          panel.classList.remove("fullscreen");
+          main.classList.add("report-open");
+          document.getElementById("report-toggle").setAttribute("aria-expanded", "true");
+        }
+        this.setAttribute("aria-pressed", String(isSplit));
+        this.title = isSplit ? t("report_exit_split") : t("report_split");
+        // 分屏切换后图表需要 resize
+        setTimeout(function () {
+          reportChartInstances.forEach(function (c) {
+            try { c.resize(); } catch (e) { /* ignore */ }
+          });
+        }, 120);
+      });
+    }
     document.getElementById("report-print-btn").addEventListener("click", function () {
       window.print();
     });
