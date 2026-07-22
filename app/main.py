@@ -351,7 +351,8 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> Streamin
 
     SSE event shapes (``data: <json>\\n\\n``):
         {"type": "delta", "content": "..."}        # incremental content chunk
-        {"type": "tool_call", "name": "..."}       # tool invocation notification
+        {"type": "tool_call", "name": "...", "args": {...}}  # tool invocation notification
+        {"type": "tool_result", "name": "...", "preview": "..."}  # tool result summary
         {"type": "done", "reply": "...", "tools_used": [...]}
         {"type": "error", "message": "..."}
 

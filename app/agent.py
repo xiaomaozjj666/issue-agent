@@ -412,12 +412,14 @@ class IssueAgent:
                         args = json.loads(entry["arguments"]) if entry["arguments"] else {}
                     except json.JSONDecodeError:
                         args = {}
-                    yield {"type": "tool_call", "name": name}
+                    yield {"type": "tool_call", "name": name, "args": args}
                     result = await executor.execute(name, args)
                     session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     session.metrics["files_read"] = len(executor.files_read)
                     if executor.pr_proposal is not None:
                         session.pending_pr = executor.pr_proposal
+                    # 工具结果事件：让前端展示调用参数与结果摘要
+                    yield {"type": "tool_result", "name": name, "preview": result[:1200]}
                     tool_msg = {"role": "tool", "tool_call_id": entry["id"], "content": result}
                     messages.append(tool_msg)
                     session.messages.append(tool_msg)

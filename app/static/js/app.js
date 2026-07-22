@@ -162,6 +162,8 @@
 
   function toggleArchiveView() {
     showArchived = !showArchived;
+    // #45 切换视图时清空批量选择，避免跨视图操作
+    clearSelection();
     const button = document.getElementById("archive-toggle");
     button.classList.toggle("active", showArchived);
     button.textContent = showArchived ? t("archive_toggle_active") : t("archive_toggle_show");
@@ -172,6 +174,8 @@
   // 历史列表：增量更新，避免每事件后整片闪烁
   let sessionsCache = [];
   const SESSION_ROW_KEY = "session-row-";
+  // #45 批量选择：跟踪选中的 session_id，切换视图/搜索时清空
+  const selectedSessions = new Set();
 
   async function loadSessions() {
     const requestId = ++sessionsRequestId;
@@ -190,6 +194,18 @@
       const sessions = await IA.apiJson("/sessions?archived=" + showArchived + "&q=" + encodeURIComponent(query));
       if (requestId !== sessionsRequestId) return;
       sessionsCache = sessions || [];
+      // #45 清理已不存在于当前视图的失效选择，避免批量操作指向幽灵会话
+      if (selectedSessions.size) {
+        const validIds = new Set(sessionsCache.map(function (s) { return s.session_id; }));
+        let pruned = false;
+        for (const id of Array.from(selectedSessions)) {
+          if (!validIds.has(id)) {
+            selectedSessions.delete(id);
+            pruned = true;
+          }
+        }
+        if (pruned) updateBatchToolbar();
+      }
       renderSessions(sessionsCache);
     } catch (error) {
       if (requestId !== sessionsRequestId) return;
@@ -339,6 +355,9 @@
     if (timeEl) timeEl.textContent = IA.formatRelativeTime(session.updated_at);
     const dotEl = card.querySelector(".status-dot");
     if (dotEl) dotEl.className = "status-dot " + IA.safeClass(session.status);
+    // #45 同步复选框选中状态（复用 row 时保持选择一致性）
+    const checkbox = row.querySelector(".session-checkbox");
+    if (checkbox) checkbox.checked = selectedSessions.has(session.session_id);
   }
 
   function createSessionRow(session) {
@@ -346,6 +365,27 @@
     row.className = "session-row" + (session.session_id === sessionId ? " active" : "");
     row.dataset.sessionId = session.session_id;
     row.id = SESSION_ROW_KEY + session.session_id;
+
+    // #45 批量选择复选框：label 包裹以便点击区域更大，stopPropagation 不触发卡片
+    const selectLabel = document.createElement("label");
+    selectLabel.className = "session-select";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "session-checkbox";
+    checkbox.dataset.sessionId = session.session_id;
+    checkbox.checked = selectedSessions.has(session.session_id);
+    checkbox.setAttribute("aria-label", t("batch_selected_count", { count: 1 }));
+    checkbox.addEventListener("click", function (e) { e.stopPropagation(); });
+    checkbox.addEventListener("change", function () {
+      if (checkbox.checked) {
+        selectedSessions.add(session.session_id);
+      } else {
+        selectedSessions.delete(session.session_id);
+      }
+      updateBatchToolbar();
+    });
+    selectLabel.appendChild(checkbox);
+    row.appendChild(selectLabel);
 
     const card = document.createElement("button");
     card.type = "button";
@@ -650,6 +690,110 @@
     } catch (error) {
       addMsg("error", error.message);
     }
+  }
+
+  // #45 批量操作：工具栏渲染 + 批量归档/恢复/删除
+  function updateBatchToolbar() {
+    const list = document.getElementById("history-list");
+    if (!list) return;
+    const count = selectedSessions.size;
+    let bar = document.getElementById("batch-toolbar");
+    if (count === 0) {
+      if (bar) bar.remove();
+      return;
+    }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "batch-toolbar";
+      bar.className = "batch-toolbar";
+      list.parentNode.insertBefore(bar, list);
+    }
+    const archiveLabel = showArchived ? t("batch_restore_selected") : t("batch_archive_selected");
+    const archiveIcon = showArchived ? "restore" : "archive";
+    bar.innerHTML =
+      `<span class="batch-count">${IA.escapeHtml(t("batch_selected_count", { count: count }))}</span>` +
+      `<button type="button" class="batch-btn batch-toggle-all">${IA.escapeHtml(t("batch_select_all"))}</button>` +
+      `<button type="button" class="batch-btn batch-archive">${IA.svgIcon(archiveIcon)}<span>${IA.escapeHtml(archiveLabel)}</span></button>` +
+      (showArchived ? `<button type="button" class="batch-btn batch-delete danger">${IA.svgIcon("delete")}<span>${IA.escapeHtml(t("batch_delete_selected"))}</span></button>` : "") +
+      `<button type="button" class="batch-btn batch-clear">${IA.escapeHtml(t("batch_select_none"))}</button>`;
+    bar.querySelector(".batch-toggle-all").addEventListener("click", function () {
+      const allRows = list.querySelectorAll(".session-checkbox");
+      const allChecked = Array.from(allRows).every(function (cb) { return cb.checked; });
+      allRows.forEach(function (cb) {
+        cb.checked = !allChecked;
+        const id = cb.dataset.sessionId;
+        if (cb.checked) selectedSessions.add(id);
+        else selectedSessions.delete(id);
+      });
+      updateBatchToolbar();
+    });
+    bar.querySelector(".batch-archive").addEventListener("click", function () {
+      batchArchiveSelected();
+    });
+    const delBtn = bar.querySelector(".batch-delete");
+    if (delBtn) delBtn.addEventListener("click", function () { batchDeleteSelected(); });
+    bar.querySelector(".batch-clear").addEventListener("click", function () {
+      clearSelection();
+    });
+  }
+
+  function clearSelection() {
+    selectedSessions.clear();
+    document.querySelectorAll(".session-checkbox").forEach(function (cb) { cb.checked = false; });
+    updateBatchToolbar();
+  }
+
+  async function batchArchiveSelected() {
+    const ids = Array.from(selectedSessions);
+    if (!ids.length) return;
+    const archived = !showArchived;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await IA.apiJson("/session/" + encodeURIComponent(id), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived: archived }),
+        });
+      } catch (e) {
+        failed += 1;
+      }
+    }
+    clearSelection();
+    if (archived && ids.indexOf(sessionId) !== -1) {
+      sessionId = null;
+      IA.sessionId = null;
+      report = null;
+      activeSession = null;
+      resetWorkspace(true);
+    }
+    await loadSessions();
+    const successKey = archived ? "batch_archive_done" : "batch_restore_done";
+    addMsg("system", t(successKey, { count: ids.length - failed }) + (failed ? " · " + t("batch_partial_error", { failed: failed }) : ""));
+  }
+
+  async function batchDeleteSelected() {
+    const ids = Array.from(selectedSessions);
+    if (!ids.length) return;
+    if (!window.confirm(t("batch_confirm_delete", { count: ids.length }))) return;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await IA.apiJson("/session/" + encodeURIComponent(id), { method: "DELETE" });
+      } catch (e) {
+        failed += 1;
+      }
+    }
+    if (ids.indexOf(sessionId) !== -1) {
+      sessionId = null;
+      IA.sessionId = null;
+      report = null;
+      activeSession = null;
+      resetWorkspace(true);
+    }
+    clearSelection();
+    await loadSessions();
+    addMsg("system", t("batch_delete_done", { count: ids.length - failed }) + (failed ? " · " + t("batch_partial_error", { failed: failed }) : ""));
   }
 
   function resetWorkspace(showWelcome) {
@@ -1017,6 +1161,18 @@
   }
 
   const ISSUE_URL_PATTERN = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#].*)?$/i;
+  // 简写支持：owner/repo#123 → https://github.com/owner/repo/issues/123
+  const ISSUE_SHORTHAND_PATTERN = /^([\w.-]+)\/([\w.-]+)#(\d+)$/;
+
+  function normalizeIssueUrl(raw) {
+    // 从可能粘贴的多行文本中提取第一个 GitHub issue URL
+    const match = raw.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#][^\s]*)?/i);
+    if (match) return match[0];
+    // 简写：owner/repo#123
+    const shorthand = raw.trim().match(ISSUE_SHORTHAND_PATTERN);
+    if (shorthand) return `https://github.com/${shorthand[1]}/${shorthand[2]}/issues/${shorthand[3]}`;
+    return raw.split(/\s+/)[0];
+  }
 
   function formatErrorDetail(detail) {
     if (detail == null) return "";
@@ -1054,13 +1210,40 @@
     return m + ":" + (s < 10 ? "0" + s : s);
   }
 
+  // 各阶段估算百分比（基于真实调查流程：fetch→explore→iterate→review→report）
+  const PHASE_PROGRESS = {
+    fetching: 5,
+    exploring_files: 15,
+    thinking: 35,
+    planning: 40,
+    tool_call: 50,
+    review: 80,
+    report: 95,
+    done: 100,
+  };
+
+  function phaseProgress(phaseText) {
+    if (!phaseText) return 0;
+    for (const key of Object.keys(PHASE_PROGRESS)) {
+      if (phaseText.toLowerCase().includes(key) || phaseText === t(key)) return PHASE_PROGRESS[key];
+    }
+    return 0;
+  }
+
   function startAnalysisTimer() {
     stopAnalysisTimer();
     analysisStartTime = Date.now();
     analysisTimerId = window.setInterval(function () {
       const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
       const phase = currentPhaseText || t("fetching");
-      document.getElementById("progress").textContent = phase + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+      const pct = phaseProgress(phase);
+      const progressEl = document.getElementById("progress");
+      if (pct > 0) {
+        progressEl.innerHTML = `<span class="progress-text">${IA.escapeHtml(phase)} · ${IA.escapeHtml(t("elapsed_time", { seconds: formatElapsed(elapsed) }))}</span>` +
+          `<span class="progress-bar-track"><span class="progress-bar-fill" style="width:${pct}%"></span></span>`;
+      } else {
+        progressEl.textContent = phase + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+      }
     }, 1000);
   }
 
@@ -1100,9 +1283,7 @@
     }
     const raw = document.getElementById("issueUrl").value.trim();
     if (!raw) return;
-    // 从可能粘贴的多行文本中提取第一个 GitHub issue URL，避免把终端日志整体当 URL 发送
-    const match = raw.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#][^\s]*)?/i);
-    const url = match ? match[0] : raw.split(/\s+/)[0];
+    const url = normalizeIssueUrl(raw);
     if (!ISSUE_URL_PATTERN.test(url)) {
       addMsg("error", t("error_prefix") + t("invalid_issue_url"));
       // M11 修复：URL 错误时输入框加视觉提示
@@ -1183,18 +1364,11 @@
           // 收到数据即重置看门狗
           lastEventTime = Date.now();
           buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6);
-            // 后端从不发送 [DONE]；done 状态通过 done 事件类型处理，无需此分支
-            try {
-              const evt = JSON.parse(data);
-              await handleStreamEvent(evt, { getToolCard: () => toolCard, setToolCard: (c) => (toolCard = c) });
-            } catch (e) {
-              console.warn("Ignored malformed stream event", e);
-            }
+          // 复用公共 SSE 解析器（与 chat() 一致，按 \n\n 分隔事件）
+          const parsed = IA.parseSseEvents(buf);
+          buf = parsed.remaining;
+          for (const evt of parsed.events) {
+            await handleStreamEvent(evt, { getToolCard: () => toolCard, setToolCard: (c) => (toolCard = c) });
           }
         }
       } finally {
@@ -1405,6 +1579,20 @@
   // ── 图表 1：证据可信度矩阵（Heatmap） ──────────────────────
   // 回答"这个分析的可信度到底如何"：每条证据在 4 个维度上的通过/未通过状态。
   // 绿色 = 通过，红色 = 未通过。用户一眼看出哪些证据扎实、哪些是凑数。
+  // ECharts 公共配置：toolbox（保存图片）+ 移动端触摸优化
+  function chartToolbox(palette) {
+    return {
+      right: 8,
+      top: 0,
+      feature: {
+        saveAsImage: { title: t("chart_save_image"), pixelRatio: 2, backgroundColor: "transparent" },
+        restore: { title: t("chart_restore") },
+      },
+      iconStyle: { borderColor: palette.textDim },
+      emphasis: { iconStyle: { borderColor: palette.text } },
+    };
+  }
+
   function renderEvidenceMatrix(container, report, sessionData) {
     if (!container) return null;
     if (!echartsAvailable()) {
@@ -1483,7 +1671,8 @@
             (e.lines ? `<div style="color:${palette.textDim};font-size:11px;margin-top:2px;">${IA.escapeHtml(e.lines)}</div>` : "");
         },
       },
-      grid: { left: 8, right: 16, top: 8, bottom: 60, containLabel: true },
+      grid: { left: 8, right: 16, top: 32, bottom: 60, containLabel: true },
+      toolbox: chartToolbox(palette),
       xAxis: {
         type: "category",
         data: fileLabels,
@@ -1623,6 +1812,7 @@
           return `<div style="font-weight:600;">${IA.escapeHtml(params.name)}</div>`;
         },
       },
+      toolbox: chartToolbox(palette),
       series: [
         {
           type: "sankey",
@@ -1721,6 +1911,7 @@
             `<div style="color:${palette.textDim};font-size:11px;">${IA.escapeHtml(t("funnel_overall"))}: ${overallRate}%</div>`;
         },
       },
+      toolbox: chartToolbox(palette),
       series: [
         {
           type: "funnel",
@@ -1949,6 +2140,31 @@
       tocEl.addEventListener("toggle", function () {
         localStorage.setItem("report-toc-open", String(tocEl.hasAttribute("open")));
       });
+      // scrollspy：高亮当前可见章节对应的 TOC 项
+      const tocLinks = tocEl.querySelectorAll("ol a[href^='#']");
+      if (tocLinks.length && "IntersectionObserver" in window) {
+        const linkMap = {};
+        tocLinks.forEach(function (a) {
+          const id = a.getAttribute("href").slice(1);
+          linkMap[id] = a;
+        });
+        const sections = d.querySelectorAll(".report-section[id], details[id]");
+        let scrollSpyObserver = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              const id = entry.target.id;
+              const link = linkMap[id];
+              if (!link) return;
+              if (entry.isIntersecting) {
+                tocLinks.forEach(function (l) { l.classList.remove("toc-active"); });
+                link.classList.add("toc-active");
+              }
+            });
+          },
+          { rootMargin: "-80px 0px -70% 0px", threshold: 0 },
+        );
+        sections.forEach(function (s) { scrollSpyObserver.observe(s); });
+      }
     }
   }
 
@@ -2130,6 +2346,8 @@
         throw new Error(detail || t("error_unable_to_continue"));
       }
       // SSE 事件处理：解析单个 data: 事件并分发到 delta/tool_call/done/error
+      // 复用 analyze() 的工具卡片渲染，显示工具名+参数+结果摘要
+      const pendingToolCards = [];
       function processSseEvent(event) {
         resetWatchdog();
         if (!firstEventReceived) {
@@ -2140,10 +2358,19 @@
           appendDelta(event.content || "");
         } else if (event.type === "tool_call") {
           if (toolsUsed.indexOf(event.name) === -1) toolsUsed.push(event.name);
-          const toolHint = document.createElement("div");
-          toolHint.className = "msg system tool-hint";
-          toolHint.textContent = t("tool_call_label") + ": " + event.name;
-          messagesEl.appendChild(toolHint);
+          // 创建可折叠工具卡片：显示名称+参数，等待 tool_result 填充结果
+          const card = addToolCard(event.name, event.args || {});
+          pendingToolCards.push({ name: event.name, card: card });
+          scrollToBottomIfNear(messagesEl, 80);
+        } else if (event.type === "tool_result") {
+          // 匹配最近的同名 pending 卡片，填充结果摘要
+          for (let i = pendingToolCards.length - 1; i >= 0; i -= 1) {
+            if (pendingToolCards[i].name === event.name) {
+              fillToolCard(pendingToolCards[i].card, event.preview || "");
+              pendingToolCards.splice(i, 1);
+              break;
+            }
+          }
           scrollToBottomIfNear(messagesEl, 80);
         } else if (event.type === "done") {
           if (event.tools_used && event.tools_used.length) {
@@ -2162,28 +2389,11 @@
         }
       }
 
-      // 从 buffer 中解析所有完整 SSE 事件（以 \n\n 分隔）
+      // 从 buffer 中解析所有完整 SSE 事件（复用 core.js 的公共解析器）
       function drainBuffer(buf) {
-        let remaining = buf;
-        let sepIdx;
-        while ((sepIdx = remaining.indexOf("\n\n")) !== -1) {
-          const rawEvent = remaining.slice(0, sepIdx);
-          remaining = remaining.slice(sepIdx + 2);
-          const dataLines = rawEvent
-            .split("\n")
-            .filter(function (line) { return line.startsWith("data:"); })
-            .map(function (line) { return line.slice(5).replace(/^ /, ""); });
-          if (!dataLines.length) continue;
-          const dataStr = dataLines.join("\n");
-          let event;
-          try {
-            event = JSON.parse(dataStr);
-          } catch (e) {
-            continue;
-          }
-          processSseEvent(event);
-        }
-        return remaining;
+        const result = IA.parseSseEvents(buf);
+        result.events.forEach(processSseEvent);
+        return result.remaining;
       }
 
       // SSE 流式解析：fetch + ReadableStream + TextDecoder
@@ -2393,6 +2603,25 @@
     document.getElementById("toggle-history-btn").addEventListener("click", toggleMobileHistory);
     document.getElementById("analyze-btn").addEventListener("click", analyze);
     document.getElementById("archive-toggle").addEventListener("click", toggleArchiveView);
+    // 拖拽 GitHub issue URL 到输入框
+    const issueUrlInput = document.getElementById("issueUrl");
+    issueUrlInput.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      issueUrlInput.classList.add("drag-active");
+    });
+    issueUrlInput.addEventListener("dragleave", function () {
+      issueUrlInput.classList.remove("drag-active");
+    });
+    issueUrlInput.addEventListener("drop", function (e) {
+      e.preventDefault();
+      issueUrlInput.classList.remove("drag-active");
+      const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/uri-list") || "";
+      if (text) {
+        issueUrlInput.value = text.trim().split(/\s+/)[0];
+        issueUrlInput.focus();
+      }
+    });
     document.getElementById("history-search").addEventListener("input", scheduleHistorySearch);
     document.getElementById("back-button").addEventListener("click", goBack);
     document.getElementById("cancel-analysis").addEventListener("click", function () {
@@ -2403,6 +2632,18 @@
     });
     document.getElementById("report-close-btn").addEventListener("click", function () {
       toggleReport(false);
+    });
+    document.getElementById("report-fullscreen-btn").addEventListener("click", function () {
+      const panel = document.getElementById("report-panel");
+      panel.classList.toggle("fullscreen");
+      const isFs = panel.classList.contains("fullscreen");
+      this.setAttribute("aria-pressed", String(isFs));
+      this.title = isFs ? t("report_exit_fullscreen") : t("report_fullscreen");
+      // 全屏切换后图表需要 resize
+      setTimeout(function () { reportChartInstances.forEach(function (c) { c.resize(); }); }, 100);
+    });
+    document.getElementById("report-print-btn").addEventListener("click", function () {
+      window.print();
     });
     document.getElementById("chat-send-btn").addEventListener("click", function () {
       chat();
@@ -2495,11 +2736,46 @@
   window.loadSessions = loadSessions;
   window.addMsg = addMsg;
 
+  // #33 CDN 降级统一提示：检测 CDN 脚本加载失败标志，展示统一可关闭的横幅
+  function checkCdnFailures() {
+    const failures = [];
+    if (window.__echartsFailed) failures.push("ECharts");
+    if (window.__markedFailed) failures.push("marked");
+    if (window.__domPurifyFailed) failures.push("DOMPurify");
+    if (window.__hljsFailed) failures.push("highlight.js");
+    if (!failures.length) return;
+    // 避免重复插入
+    if (document.getElementById("cdn-notice")) return;
+    const notice = document.createElement("div");
+    notice.id = "cdn-notice";
+    notice.className = "cdn-notice";
+    notice.setAttribute("role", "alert");
+    notice.innerHTML =
+      `<div class="cdn-notice-icon" aria-hidden="true">${IA.svgIcon("alert")}</div>` +
+      `<div class="cdn-notice-body">` +
+        `<div class="cdn-notice-title">${IA.escapeHtml(t("cdn_offline_notice"))}</div>` +
+        `<div class="cdn-notice-detail">${IA.escapeHtml(failures.join(", "))}</div>` +
+      `</div>` +
+      `<button type="button" class="cdn-notice-close" aria-label="${IA.escapeHtml(t("report_close"))}">×</button>`;
+    notice.querySelector(".cdn-notice-close").addEventListener("click", function () {
+      notice.remove();
+    });
+    // 插入到主区域顶部
+    const main = document.getElementById("main");
+    if (main && main.firstChild) {
+      main.insertBefore(notice, main.firstChild);
+    } else if (main) {
+      main.appendChild(notice);
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     applyStoredTheme();
     IA.applyI18n(document);
     bindEvents();
     loadSessions();
+    // CDN 脚本在 <head> 中先于本脚本加载，DOMContentLoaded 时 onerror 标志已就绪
+    checkCdnFailures();
   });
 
   // DOM 已就绪时立即加载；否则由 DOMContentLoaded 处理（保留向后兼容入口）

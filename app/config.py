@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     github_max_file_bytes: int = Field(default=512_000, ge=4_096, le=2_000_000)
 
     # ── Agent behaviour ──────────────────────────────────────────────
-    max_candidate_files: int = Field(default=12, ge=1, le=30)
+    max_candidate_files: int = Field(default=20, ge=1, le=30)
     max_planning_paths: int = Field(default=80, ge=10, le=200)
-    max_file_chars: int = Field(default=16_000, ge=1_000, le=50_000)
-    max_total_context_chars: int = Field(default=80_000, ge=5_000, le=200_000)
+    max_file_chars: int = Field(default=20_000, ge=1_000, le=50_000)
+    max_total_context_chars: int = Field(default=100_000, ge=5_000, le=200_000)
     max_output_tokens: int = Field(default=8_000, ge=500, le=16_000)
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
     max_investigation_ledger_chars: int = Field(default=12_000, ge=1_000, le=50_000)

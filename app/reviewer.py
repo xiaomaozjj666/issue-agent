@@ -1,10 +1,7 @@
 """Independent reviewer agent for evidence-grounded investigation reports.
 
-重试策略与主报告生成一致：第 1 次沿用 thinking 配置，中间几次保留 thinking
-并带错误反馈，最后一次降级 thinking disabled 保底。但 reviewer 在重试时
-会额外附加一条 assistant 消息承认上次输出，再附加 user 反馈，让模型在
-保留推理深度的前提下纠正格式。这是 reviewer 特有的策略，所以没有直接复用
-retry.build_attempt_plan，而是保留本地实现。
+重试策略通过 retry.build_attempt_plan 构造 options（thinking 降级逻辑集中管理），
+messages 由 reviewer 自行构造（需额外附加 assistant 消息承认上次输出 + user 反馈）。
 """
 
 import json
@@ -23,7 +20,7 @@ from app.i18n import (
 )
 from app.json_utils import extract_json
 from app.models import AnalysisReport, IssueData, ReviewAudit, ReviewOutcome
-from app.provider import ThinkingMode, chat_request_options
+from app.retry import build_attempt_plan
 
 logger = logging.getLogger(__name__)
 
@@ -63,20 +60,34 @@ class ReviewerAgent:
         last_raw_content = ""
         last_failure_reason = ""
         total_attempts = max(self.settings.max_report_retries, 1)
+
+        def _review_feedback_builder(raw: str, reason: str) -> str:
+            """构造 reviewer 特有的重试反馈：assistant 承认 + user 指正。
+
+            build_attempt_plan 只追加单条 user 消息，reviewer 需要先放 assistant
+            承认上次输出。这里把两条消息合并为一条 user 消息（带上下文标记），
+            避免 build_attempt_plan 的 messages 构造逻辑被污染。
+            """
+            return get_review_retry_prompt(raw, reason)
+
         for attempt in range(total_attempts):
             is_last = attempt == total_attempts - 1
-            # 最后一次降级：thinking disabled，全部 token 预算给 content
-            thinking_override: ThinkingMode | None = "disabled" if is_last else None
-            attempt_options = chat_request_options(
+            # 用 build_attempt_plan 统一构造 options（thinking 降级逻辑集中管理）
+            plan = build_attempt_plan(
                 self.settings,
-                model=review_model,
+                base_messages=base_messages,
+                last_raw_content=last_raw_content,
+                last_failure_reason=last_failure_reason,
+                attempt=attempt,
+                total_attempts=total_attempts,
                 temperature=0,
-                thinking=thinking_override,
+                model=review_model,
+                retry_feedback_builder=_review_feedback_builder if attempt > 0 else None,
             )
 
-            # 重试时附加 assistant 消息承认上次输出 + user 反馈，让模型知道上次错在哪里
+            # reviewer 特有：重试时在 base_messages + user 反馈之间插入 assistant 消息
             if attempt == 0:
-                attempt_messages = base_messages
+                attempt_messages = plan.messages
             else:
                 attempt_messages = [
                     *base_messages,
@@ -85,7 +96,7 @@ class ReviewerAgent:
                 ]
 
             response = await self._client.chat.completions.create(  # type: ignore[call-overload]
-                **attempt_options,
+                **plan.options,
                 messages=attempt_messages,
                 response_format={"type": "json_object"},
                 max_tokens=self.settings.review_max_tokens,
