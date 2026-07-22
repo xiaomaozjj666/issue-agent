@@ -534,6 +534,104 @@ async def get_pr_proposal(session_id: str, manager: SessionMgr) -> dict:
     }
 
 
+# ── E32 会话导出/导入 ──────────────────────────────────────
+# 导出完整会话数据（含对话历史、工具调用事件、报告、指标），支持跨实例备份与迁移。
+@app.get("/session/{session_id}/export")
+async def export_session(session_id: str, manager: SessionMgr) -> JSONResponse:
+    session = await manager.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    events = await manager.list_events(session_id)
+    payload = {
+        "format": "issue-agent-session",
+        "version": 1,
+        "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "session": {
+            "session_id": session.session_id,
+            "issue_url": session.issue_url,
+            "issue": session.issue.model_dump() if session.issue else None,
+            "tree": session.tree,
+            "messages": session.messages,
+            "files_read": session.files_read,
+            "report": session.report.model_dump() if session.report else None,
+            "display_title": session.display_title,
+            "status": session.status,
+            "phase": session.phase,
+            "metrics": session.metrics,
+            "error_message": session.error_message,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        },
+        "events": events,
+    }
+    filename = f"session-{session_id}.json"
+    return JSONResponse(
+        content=payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/session/import", response_model=SessionSummary)
+async def import_session(request: Request, manager: SessionMgr) -> SessionSummary:
+    """导入会话 JSON，创建新会话（生成新 session_id，保留原始数据）。"""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
+
+    if not isinstance(body, dict) or body.get("format") != "issue-agent-session":
+        raise HTTPException(status_code=400, detail="Not a valid issue-agent session export")
+    sess_data = body.get("session")
+    if not isinstance(sess_data, dict) or not sess_data.get("issue_url"):
+        raise HTTPException(status_code=400, detail="Missing session.issue_url in import payload")
+
+    # 创建新会话（生成新 session_id）
+    new_session = await manager.create(sess_data["issue_url"])
+    # 填充原始数据
+    new_session.tree = sess_data.get("tree", []) or []
+    new_session.messages = sess_data.get("messages", []) or []
+    new_session.files_read = sess_data.get("files_read", []) or []
+    new_session.display_title = sess_data.get("display_title")
+    new_session.metrics = sess_data.get("metrics", {}) or {}
+    new_session.error_message = sess_data.get("error_message")
+    # 状态：导入的会话标记为 completed（避免被 stale 恢复逻辑误判为 running）
+    new_session.status = "completed"
+    new_session.phase = sess_data.get("phase", "done") or "done"
+
+    # 恢复 issue 对象
+    issue_data = sess_data.get("issue")
+    if isinstance(issue_data, dict):
+        from app.models import IssueData
+
+        try:
+            new_session.issue = IssueData.model_validate(issue_data)
+        except Exception:
+            new_session.issue = None
+
+    # 恢复 report 对象
+    report_data = sess_data.get("report")
+    if isinstance(report_data, dict):
+        try:
+            new_session.report = AnalysisReport.model_validate(report_data)
+        except Exception:
+            new_session.report = None
+
+    async with new_session.lock:
+        await manager.save(new_session)
+
+    # 导入事件历史
+    events = body.get("events")
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, dict):
+                await manager.append_event(new_session.session_id, event)
+
+    refreshed = await manager.get(new_session.session_id)
+    if refreshed is None:
+        raise HTTPException(status_code=500, detail="Imported session could not be loaded")
+    return session_summary(refreshed)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     if templates is None:
