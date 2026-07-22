@@ -1512,6 +1512,23 @@ a:hover {
   gap: var(--space-2);
 }
 
+.timeline-expand-btn {
+  margin-top: var(--space-2);
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--neutral-subtle);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+
+.timeline-expand-btn:hover {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
 .timeline-step {
   display: grid;
   grid-template-columns: 12px minmax(0, 1fr);

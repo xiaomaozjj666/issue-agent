@@ -29,10 +29,33 @@
   // 主题切换
   function applyStoredTheme() {
     const stored = localStorage.getItem("ds-theme");
-    if (stored) document.documentElement.dataset.theme = stored;
+    if (stored) {
+      document.documentElement.dataset.theme = stored;
+    } else {
+      // 首次访问：跟随系统偏好
+      const prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+      document.documentElement.dataset.theme = prefersLight ? "light" : "dark";
+    }
     const themeBtn = document.getElementById("theme-toggle-btn");
     if (themeBtn) {
-      themeBtn.setAttribute("aria-pressed", String(stored === "light"));
+      themeBtn.setAttribute("aria-pressed", String(document.documentElement.dataset.theme === "light"));
+    }
+    // 监听系统主题变化：仅当用户未手动设置时自动跟随
+    if (window.matchMedia) {
+      const mql = window.matchMedia("(prefers-color-scheme: light)");
+      const handler = function (e) {
+        if (!localStorage.getItem("ds-theme")) {
+          const next = e.matches ? "light" : "dark";
+          document.documentElement.dataset.theme = next;
+          const btn = document.getElementById("theme-toggle-btn");
+          if (btn) btn.setAttribute("aria-pressed", String(next === "light"));
+          if (report && document.getElementById("main").classList.contains("report-open")) {
+            refreshReportCharts();
+          }
+        }
+      };
+      if (mql.addEventListener) mql.addEventListener("change", handler);
+      else if (mql.addListener) mql.addListener(handler);
     }
   }
 
@@ -1528,15 +1551,16 @@
       : (report.files_examined || []);
     const filesReadSet = new Set(filesRead);
 
-    // 从 root_cause 提取关键短语作为中间节点（按句号/分号拆分，取前 2 段）
+    // 从 root_cause 提取关键短语作为中间节点
+    // 按句号/分号拆分取前 2 段作为论点；节点名用"根因论点 N"避免截断导致语义丢失，
+    // 完整文本存入 causeFullTexts 供 tooltip 展示
     const causeText = report.root_cause || t("sankey_default_cause");
     const causeParts = causeText.split(/[。.；;]/).filter(function (s) { return s.trim(); });
-    const causeNodes = causeParts.slice(0, 2).map(function (s, i) {
-      const trimmed = s.trim();
-      // 缩短为 40 字符
-      return trimmed.length > 40 ? trimmed.substring(0, 40) + "…" : trimmed;
+    const causeFullTexts = causeParts.slice(0, 2).map(function (s) { return s.trim(); });
+    if (!causeFullTexts.length) causeFullTexts.push(t("sankey_default_cause"));
+    const causeNodes = causeFullTexts.map(function (_text, i) {
+      return t("sankey_cause_node_label", { n: i + 1 });
     });
-    if (!causeNodes.length) causeNodes.push(t("sankey_default_cause"));
 
     // 构造 Sankey 节点
     const nodes = [];
@@ -1589,6 +1613,12 @@
             const color = strong ? palette.success : palette.textDim;
             return `<div style="font-weight:600;">${IA.escapeHtml(params.data.source)} → ${IA.escapeHtml(params.data.target)}</div>` +
               `<div style="color:${color};font-size:11px;margin-top:2px;">${IA.escapeHtml(label)}</div>`;
+          }
+          // 节点：根因论点节点显示完整根因文本
+          const causeIdx = causeNodes.indexOf(params.name);
+          if (causeIdx >= 0 && causeFullTexts[causeIdx]) {
+            return `<div style="font-weight:600;margin-bottom:4px;">${IA.escapeHtml(params.name)}</div>` +
+              `<div style="color:${palette.textDim};font-size:11px;max-width:280px;white-space:normal;">${IA.escapeHtml(causeFullTexts[causeIdx])}</div>`;
           }
           return `<div style="font-weight:600;">${IA.escapeHtml(params.name)}</div>`;
         },
@@ -1654,12 +1684,17 @@
       return null;
     }
 
-    const data = [
-      { name: t("funnel_model_calls"), value: Math.max(modelCalls, 1), raw: modelCalls, color: palette.primary },
-      { name: t("funnel_tool_calls"), value: Math.max(toolCalls, 1), raw: toolCalls, color: palette.warning },
-      { name: t("funnel_files_read"), value: Math.max(filesRead, 1), raw: filesRead, color: palette.success },
-      { name: t("funnel_valid_evidence"), value: Math.max(validEvidence, 1), raw: validEvidence, color: palette.danger },
+    // 漏斗图：过滤掉 raw=0 的层（避免 Math.max(0,1) 产生视觉误导），
+    // 至少保留 1 层（已在上面检查全部为 0 的空状态）
+    const allLayers = [
+      { name: t("funnel_model_calls"), raw: modelCalls, color: palette.primary },
+      { name: t("funnel_tool_calls"), raw: toolCalls, color: palette.warning },
+      { name: t("funnel_files_read"), raw: filesRead, color: palette.success },
+      { name: t("funnel_valid_evidence"), raw: validEvidence, color: palette.danger },
     ];
+    const data = allLayers
+      .filter(function (d) { return d.raw > 0; })
+      .map(function (d) { return { name: d.name, value: d.raw, raw: d.raw, color: d.color }; });
 
     const tooltipBg = palette.text === "#f1f5f9" ? "#0f172a" : "#ffffff";
     const chart = echarts.init(container);
@@ -1881,9 +1916,11 @@
     }
 
     // 目录前置（金字塔结构下，TOC 作为快速跳转入口）
+    // 折叠状态从 localStorage 恢复，默认展开
     if (toc.length) {
+      const tocOpen = localStorage.getItem("report-toc-open") !== "false";
       parts.unshift(
-        `<details class="report-toc" open><summary>${IA.escapeHtml(t("toc_title"))}</summary><ol>${toc.join("")}</ol></details>`,
+        `<details class="report-toc"${tocOpen ? " open" : ""}><summary>${IA.escapeHtml(t("toc_title"))}</summary><ol>${toc.join("")}</ol></details>`,
       );
     }
 
@@ -1904,6 +1941,14 @@
     if (funnelEl) {
       const chart = renderInvestigationFunnel(funnelEl, r, sessionData);
       if (chart) reportChartInstances.push(chart);
+    }
+
+    // TOC 折叠/展开状态持久化到 localStorage
+    const tocEl = d.querySelector(".report-toc");
+    if (tocEl) {
+      tocEl.addEventListener("toggle", function () {
+        localStorage.setItem("report-toc-open", String(tocEl.hasAttribute("open")));
+      });
     }
   }
 

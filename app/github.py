@@ -283,20 +283,45 @@ class GitHubClient:
                 f"or pick an issue from https://github.com/{owner}/{repo}/issues."
             )
         repository = (await self._get(f"/repos/{repo_segment}")).json()
-        comments_response = await self._get(f"/repos/{repo_segment}/issues/{number}/comments", params={"per_page": 30})
-        comments_payload = comments_response.json()
-        # 防御：GitHub API 文档保证此端点返回 list，但若上游代理/缓存返回
-        # 非预期结构（例如 dict 错误对象），迭代 dict 会得到字符串 key
-        # 并在后续 .get() 调用上崩溃。显式校验以给出可读错误。
-        if not isinstance(comments_payload, list):
-            raise GitHubError(
-                f"Unexpected comments payload type {type(comments_payload).__name__} for "
-                f"{owner}/{repo}#{number}; expected list"
+        # 获取默认分支 HEAD commit SHA，用于生成稳定的 GitHub blob 链接
+        # （避免仓库后续提交导致 blob/HEAD/ 链接指向已变化的代码）
+        head_sha = ""
+        try:
+            default_branch = quote(str(repository.get("default_branch", "main")), safe="")
+            branch_resp = await self._get(f"/repos/{repo_segment}/branches/{default_branch}")
+            branch_data = branch_resp.json()
+            head_sha = branch_data.get("commit", {}).get("sha", "") if isinstance(branch_data, dict) else ""
+        except GitHubError:
+            # 获取 SHA 失败不阻断分析，降级为 HEAD
+            pass
+        # 分页拉取全部评论：热门 issue 常有上百条评论，首屏 30 条会丢失关键上下文。
+        # 上限 100 条避免极端仓库（如 cpython 有数千条评论）拖垮分析。
+        comments: list[str] = []
+        page = 1
+        max_comment_pages = 4  # 4 页 × 30 条 = 120 条上限
+        while page <= max_comment_pages:
+            comments_response = await self._get(
+                f"/repos/{repo_segment}/issues/{number}/comments",
+                params={"per_page": 30, "page": page},
             )
-        comments = [item.get("body") or "" for item in comments_payload if isinstance(item, dict)]
-        link_header = comments_response.headers.get("Link", "")
-        if 'rel="next"' in link_header:
-            logger.info("Issue %s/%s#%d has more than 30 comments; only first page fetched", owner, repo, number)
+            comments_payload = comments_response.json()
+            # 防御：GitHub API 文档保证此端点返回 list，但若上游代理/缓存返回
+            # 非预期结构（例如 dict 错误对象），迭代 dict 会得到字符串 key
+            # 并在后续 .get() 调用上崩溃。显式校验以给出可读错误。
+            if not isinstance(comments_payload, list):
+                raise GitHubError(
+                    f"Unexpected comments payload type {type(comments_payload).__name__} for "
+                    f"{owner}/{repo}#{number}; expected list"
+                )
+            if not comments_payload:
+                break
+            comments.extend(item.get("body") or "" for item in comments_payload if isinstance(item, dict))
+            link_header = comments_response.headers.get("Link", "")
+            if 'rel="next"' not in link_header:
+                break
+            page += 1
+        if len(comments) >= 120:
+            logger.info("Issue %s/%s#%d has >=120 comments; truncated to first 120", owner, repo, number)
         return IssueData(
             owner=owner,
             repo=repo,
@@ -306,6 +331,7 @@ class GitHubClient:
             labels=[label["name"] for label in issue.get("labels", [])],
             comments=comments,
             default_branch=repository["default_branch"],
+            head_sha=head_sha,
         )
 
     async def get_tree(self, issue: IssueData) -> list[str]:
