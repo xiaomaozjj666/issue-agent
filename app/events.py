@@ -39,11 +39,11 @@ def tool_call_event(name: str, args: dict, iteration: int) -> AgentEvent:
 
 
 def tool_result_event(name: str, result_preview: str) -> AgentEvent:
-    return AgentEvent(type="tool_result", data={"name": name, "preview": result_preview[:300]})
+    return AgentEvent(type="tool_result", data={"name": name, "preview": result_preview[:1200]})
 
 
 def thinking_event(content: str) -> AgentEvent:
-    return AgentEvent(type="thinking", data={"content": content[:500]})
+    return AgentEvent(type="thinking", data={"content": content[:2000]})
 
 
 def reasoning_event(delta: str) -> AgentEvent:
@@ -58,7 +58,7 @@ def report_event(report: dict) -> AgentEvent:
 def review_event(status: str, summary: str, findings: list[str]) -> AgentEvent:
     return AgentEvent(
         type="review",
-        data={"status": status, "summary": summary, "findings": findings[:10]},
+        data={"status": status, "summary": summary, "findings": findings[:30]},
     )
 
 

@@ -109,12 +109,12 @@ async def test_rate_limit_response_raises_dedicated_error() -> None:
 
 
 def _issue_endpoint_handler(success_response: dict | None = None, failure: str | None = None, fail_count: int = 0):
-    """Build a MockTransport handler that serves the three endpoints used by get_issue.
+    """Build a MockTransport handler that serves the endpoints used by get_issue.
 
     The first ``fail_count`` calls to the issue endpoint trigger ``failure``
     (either a 5xx response or a raised transport error); subsequent calls
-    succeed. Repo and comments endpoints always succeed. The returned handler
-    carries a ``state`` dict with ``issue_calls`` for assertion.
+    succeed. Repo, branches, and comments endpoints always succeed. The returned
+    handler carries a ``state`` dict with ``issue_calls`` for assertion.
     """
     success_response = success_response or {"title": "ok", "body": "", "labels": [], "state": "open"}
     state = {"issue_calls": 0}
@@ -123,6 +123,8 @@ def _issue_endpoint_handler(success_response: dict | None = None, failure: str |
         url = str(request.url)
         if "/comments" in url:
             return httpx.Response(200, json=[])
+        if "/branches/" in url:
+            return httpx.Response(200, json={"commit": {"sha": "abc123def456"}})
         if url.endswith("/repos/acme/widget") or url.endswith("/repos/acme/widget/"):
             return httpx.Response(200, json={"default_branch": "main"})
         # Issue endpoint

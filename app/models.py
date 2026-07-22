@@ -83,6 +83,7 @@ class IssueData(BaseModel):
     labels: list[str]
     comments: list[str]
     default_branch: str
+    head_sha: str = ""
 
 
 class SourceFile(BaseModel):
@@ -127,6 +128,7 @@ class SessionSummary(BaseModel):
     metrics: dict[str, int | float] = Field(default_factory=dict)
     created_at: str
     updated_at: str
+    head_sha: str = ""
 
 
 class SessionEventRecord(BaseModel):
