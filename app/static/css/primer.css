@@ -2642,7 +2642,7 @@ dialog::backdrop {
   position: fixed;
   bottom: var(--space-8);
   left: 50%;
-  z-index: 100;
+  z-index: 10000;
   transform: translateX(-50%) translateY(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -3863,7 +3863,7 @@ dialog::backdrop {
 .chart-modal {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 10001;
   display: grid;
   place-items: center;
   padding: var(--space-6);

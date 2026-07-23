@@ -89,7 +89,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="GitHub Issue Agent", version="0.6.0", lifespan=lifespan)
-app.add_middleware(AuthMiddleware)
 
 # ── Rate limiting ───────────────────────────────────────────────
 # Simple sliding-window rate limiter per API key to prevent credit exhaustion.
@@ -142,7 +141,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# 中间件执行顺序：后添加的先执行（洋葱模型外层）。
+# AuthMiddleware 后添加 → 先执行，确保未认证请求在限流前被 401 拒绝，
+# 避免攻击者通过大量未认证请求耗尽合法用户的限流配额。
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(AuthMiddleware)
 
 
 def get_session_manager(request: Request) -> SessionManager:
@@ -298,14 +301,16 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr) -> ChatResponse:
                 raise HTTPException(status_code=404, detail="Session not found")
             if session.archived_at is not None:
                 raise HTTPException(status_code=409, detail="Restore the archived session before continuing")
-            session.status = "running"
-            session.phase = "chatting"
-            session.error_message = None
-            await session_mgr.save(session)
+            async with session.lock:
+                session.status = "running"
+                session.phase = "chatting"
+                session.error_message = None
+                await session_mgr.save(session)
             result = await agent.chat(session, request.message)
-            session.status = "completed"
-            session.phase = "completed"
-            await session_mgr.save(session)
+            async with session.lock:
+                session.status = "completed"
+                session.phase = "completed"
+                await session_mgr.save(session)
             return result
 
         if request.issue_url is None:
@@ -368,10 +373,11 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> Streamin
         raise HTTPException(status_code=409, detail="Restore the archived session before continuing")
 
     agent = IssueAgent(get_settings())
-    session.status = "running"
-    session.phase = "chatting"
-    session.error_message = None
-    await session_mgr.save(session)
+    async with session.lock:
+        session.status = "running"
+        session.phase = "chatting"
+        session.error_message = None
+        await session_mgr.save(session)
 
     async def event_generator() -> AsyncIterator[str]:
         started_at = monotonic()
@@ -380,10 +386,11 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> Streamin
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
             # Persist final state once the stream completes successfully
-            session.status = "completed"
-            session.phase = "completed"
-            session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
-            await session_mgr.save(session)
+            async with session.lock:
+                session.status = "completed"
+                session.phase = "completed"
+                session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
+                await session_mgr.save(session)
         except asyncio.CancelledError:
             # 客户端断开连接（浏览器关闭/网络中断）：标记会话为中断，
             # 避免 session.status 永远卡在 "running" 且锁被持有

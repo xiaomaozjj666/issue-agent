@@ -429,30 +429,32 @@
     const leftLines = [];
     const rightLines = [];
     lines.forEach(function (rawLine) {
+      // 数据收集阶段统一转义，防止 patch 内容中的 HTML 被注入
+      const safe = escapeHtml(rawLine);
       if (rawLine.startsWith("+++") || rawLine.startsWith("---")) {
         // 文件头：只显示在左侧
-        leftLines.push({ cls: rawLine.startsWith("+++") ? "diff-add-file" : "diff-del-file", text: rawLine });
+        leftLines.push({ cls: rawLine.startsWith("+++") ? "diff-add-file" : "diff-del-file", text: safe });
         rightLines.push({ cls: "diff-empty", text: "" });
         return;
       }
       if (rawLine.startsWith("@@")) {
-        leftLines.push({ cls: "diff-hunk", text: rawLine });
-        rightLines.push({ cls: "diff-hunk", text: rawLine });
+        leftLines.push({ cls: "diff-hunk", text: safe });
+        rightLines.push({ cls: "diff-hunk", text: safe });
         return;
       }
       if (rawLine.startsWith("+")) {
         // 新增：只进右栏
-        rightLines.push({ cls: "diff-add", text: rawLine });
+        rightLines.push({ cls: "diff-add", text: safe });
         return;
       }
       if (rawLine.startsWith("-")) {
         // 删除：只进左栏
-        leftLines.push({ cls: "diff-del", text: rawLine });
+        leftLines.push({ cls: "diff-del", text: safe });
         return;
       }
       // 上下文行：两边都显示
-      leftLines.push({ cls: "diff-ctx", text: rawLine });
-      rightLines.push({ cls: "diff-ctx", text: rawLine });
+      leftLines.push({ cls: "diff-ctx", text: safe });
+      rightLines.push({ cls: "diff-ctx", text: safe });
     });
     // 补齐：让左右两栏行数相同，便于对齐
     while (leftLines.length < rightLines.length) {

@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     github_max_retries: int = Field(default=3, ge=0, le=5, description="App-level retries for transient GitHub errors")
     github_max_file_bytes: int = Field(default=512_000, ge=4_096, le=2_000_000)
 
+    # ── Tool execution ───────────────────────────────────────────────
+    # 单个工具调用（如 search_code/grep_content 调用 GitHub API）的超时上限。
+    # 防止网络抖动或 GitHub 慢响应导致整个 stream 卡住，前端 SSE 无事件输出。
+    tool_timeout: float = Field(default=60.0, gt=0, le=180, description="Per-tool execution timeout")
+
     # ── Agent behaviour ──────────────────────────────────────────────
     max_candidate_files: int = Field(default=20, ge=1, le=30)
     max_planning_paths: int = Field(default=80, ge=10, le=200)
