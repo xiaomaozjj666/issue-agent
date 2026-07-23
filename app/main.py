@@ -118,8 +118,9 @@ async def _check_rate_limit(api_key: str) -> None:
                 headers={"Retry-After": str(retry_after)},
             )
         bucket.append(now)
-        # Prune old keys to prevent unbounded memory growth
-        if len(_rate_window_buckets) > 500:
+        # 主动清理过期 key，防止字典随 inactive 用户无限膨胀。
+        # 阈值 100：日常单实例活跃 API key 通常 < 20，100 足够宽松。
+        if len(_rate_window_buckets) > 100:
             stale = [k for k, v in _rate_window_buckets.items() if not v or v[-1] < cutoff]
             for k in stale:
                 del _rate_window_buckets[k]

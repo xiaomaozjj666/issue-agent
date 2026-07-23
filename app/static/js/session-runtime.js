@@ -119,6 +119,11 @@
       await new Promise(function (resolve) {
         window.setTimeout(resolve, 500);
       });
+      // L7：会话已切换或用户已发起新分析时，停止对旧会话的轮询，
+      // 避免旧轮询的 restoreSession 覆盖新视图
+      if (window.IssueAgent.sessionId !== sessionId) {
+        return;
+      }
       try {
         const session = await IA.apiJson(`/session/${encodeURIComponent(sessionId)}`);
         consecutiveErrors = 0;
