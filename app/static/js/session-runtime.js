@@ -151,13 +151,8 @@
     document.getElementById("progress").textContent = t("cancellation_requested");
   }
 
-  // 向后兼容：保留 window.cancelAnalysis
-  window.cancelAnalysis = cancelAnalysis;
-  window.setCancelVisible = setCancelVisible;
-  window.addEventTimeline = addEventTimeline;
-  window.formatDuration = IA.formatDuration;
-
-  // 暴露运行时辅助接口给主应用
+  // 暴露运行时辅助接口给主应用（统一通过 IA.Runtime 命名空间访问，
+  // 不再向 window 暴露裸全局，避免命名污染）
   IA.Runtime = {
     addEventTimeline,
     setCancelVisible,

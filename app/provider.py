@@ -1,5 +1,6 @@
-"""Provider-specific request options for OpenAI-compatible chat APIs."""
+"""Provider-specific request options and streaming helpers for OpenAI-compatible chat APIs."""
 
+from collections.abc import AsyncIterator
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -39,3 +40,18 @@ def chat_request_options(
     elif temperature is not None:
         options["temperature"] = temperature
     return options
+
+
+async def iter_deltas(stream) -> AsyncIterator:
+    """统一流式 chunk 解析：跳过空 choices，逐个 yield delta。
+
+    消除 ``ReportGenerator.generate_stream`` 和 ``IssueAgent._chat_stream`` 中
+    重复的 ``async for chunk in stream: if not chunk.choices: continue`` boilerplate。
+    调用方各自处理关心的字段（reasoning_content / content / tool_calls）。
+
+    若迭代产出过至少一个 delta，即等价于旧逻辑中的 ``has_choices=True``。
+    """
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+        yield chunk.choices[0].delta
