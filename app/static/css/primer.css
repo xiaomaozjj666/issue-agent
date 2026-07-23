@@ -647,14 +647,19 @@ a:hover {
   display: block;
   width: 100%;
   min-height: 68px;
-  /* right padding 必须 > actions 区实际占位（2×28 + 8 gap + 8 right = 72px）+ 8px 安全间距 */
-  padding: 10px 80px 10px 36px;
+  /* right padding 容纳 actions 区：3 按钮 = 3×28 + 2×2 gap + 8 right = 96px */
+  padding: 10px 96px 10px 36px;
   border: 0;
   background: transparent;
   color: var(--fg);
   text-align: left;
   cursor: pointer;
   border-radius: var(--radius);
+}
+
+/* 归档视图 4 按钮（rename/download/restore/delete）：4×28 + 3×2 gap + 8 right = 126px */
+#history-list[data-archived="true"] .session-card {
+  padding-right: 128px;
 }
 
 .session-repo {
@@ -745,8 +750,12 @@ a:hover {
   .session-actions {
     opacity: 1;
   }
+  /* 触屏端 actions 始终可见，padding-right 与桌面端一致即可 */
   .session-card {
     padding-right: 96px;
+  }
+  #history-list[data-archived="true"] .session-card {
+    padding-right: 128px;
   }
 }
 
@@ -2909,6 +2918,10 @@ dialog::backdrop {
 
   .session-card {
     padding-right: 96px;
+  }
+
+  #history-list[data-archived="true"] .session-card {
+    padding-right: 128px;
   }
 
   #main {

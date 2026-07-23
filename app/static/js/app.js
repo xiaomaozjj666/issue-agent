@@ -230,6 +230,9 @@
   // 保留用户当前 hover 状态和滚动位置。新增/消失的节点按最小变更原则插入/移除。
   function renderSessions(sessions) {
     const list = document.getElementById("history-list");
+    // 标记归档视图：归档行有 4 个 action 按钮（rename/download/restore/delete），
+    // 需要更大的 padding-right 防止按钮遮挡标题文字
+    list.dataset.archived = showArchived ? "true" : "false";
     const wasScrolling = list.scrollTop;
     const hadFocus = document.activeElement && list.contains(document.activeElement)
       ? document.activeElement.dataset.sessionId
