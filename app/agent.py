@@ -16,6 +16,7 @@ import logging
 from collections.abc import AsyncGenerator
 from time import monotonic
 
+import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessage
 
@@ -188,7 +189,14 @@ class IssueAgent:
                     yield tool_call_event(name, args, iteration + 1)
                     if session is not None:
                         session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
-                    result = await executor.execute(name, args)
+                    try:
+                        result = await asyncio.wait_for(
+                            executor.execute(name, args),
+                            timeout=self.settings.tool_timeout,
+                        )
+                    except TimeoutError:
+                        result = f"Error: Tool '{name}' timed out after {self.settings.tool_timeout:.0f}s"
+                        logger.warning("Tool %s timed out after %ss", name, self.settings.tool_timeout)
                     if session is not None:
                         # 同步 files_read 快照，让前端实时显示已读文件数（而非等到报告阶段）
                         session.metrics["files_read"] = len(executor.files_read)
@@ -293,17 +301,18 @@ class IssueAgent:
             {"type": "done", "reply": str, "tools_used": list[str]}
             {"type": "error", "message": str}
 
-        Lock is held only across state mutations, not across the LLM stream itself,
-        matching the chat() semantics. Errors are surfaced as ``error`` events so
-        the SSE consumer can render them inline without aborting the connection.
+        Lock is NOT held across the LLM stream — only across state mutations
+        (message append / metrics update) inside ``_chat_stream``. This prevents
+        a slow SSE consumer from blocking concurrent operations on the same
+        session (e.g. cancellation requests). Errors are surfaced as ``error``
+        events so the SSE consumer can render them inline without aborting.
         """
-        async with session.lock:
-            try:
-                async for event in self._chat_stream(session, message):
-                    yield event
-            except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
-                logger.exception("chat_stream failed for session %s", session.session_id)
-                yield {"type": "error", "message": _friendly_chat_error(exc)}
+        try:
+            async for event in self._chat_stream(session, message):
+                yield event
+        except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
+            logger.exception("chat_stream failed for session %s", session.session_id)
+            yield {"type": "error", "message": _friendly_chat_error(exc)}
 
     async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
         if session.issue is None:
@@ -410,7 +419,14 @@ class IssueAgent:
                     except json.JSONDecodeError:
                         args = {}
                     yield {"type": "tool_call", "name": name, "args": args}
-                    result = await executor.execute(name, args)
+                    try:
+                        result = await asyncio.wait_for(
+                            executor.execute(name, args),
+                            timeout=self.settings.tool_timeout,
+                        )
+                    except TimeoutError:
+                        result = f"Error: Tool '{name}' timed out after {self.settings.tool_timeout:.0f}s"
+                        logger.warning("Chat tool %s timed out after %ss", name, self.settings.tool_timeout)
                     session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     session.metrics["files_read"] = len(executor.files_read)
                     if executor.pr_proposal is not None:
@@ -644,6 +660,13 @@ def _friendly_chat_error(exc: Exception) -> str:
         return "Model rate limit reached. Please wait a moment and retry."
     if status is not None and 500 <= status < 600:
         return f"Model service error (HTTP {status}). Please retry shortly."
+    # 优先用异常类型匹配，避免依赖类名字符串（SDK 版本升级后类名可能变化）
+    if isinstance(exc, asyncio.TimeoutError):
+        return "Model response timed out. Please try again."
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return "Unable to connect to the model service. Check your network."
+    # openai SDK 的 APIConnectionError 是 httpx 网络异常的子类，上面已覆盖；
+    # 但若 openai 抛出非 httpx 的连接异常，用类名兜底匹配
     name = type(exc).__name__
     if "Timeout" in name:
         return "Model response timed out. Please try again."

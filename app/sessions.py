@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import uuid
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -206,6 +206,19 @@ class SqliteStore:
     async def save(self, session: Session) -> None:
         session.updated_at = _now()
         async with self._conn() as db:
+            # 合并 DB 中最新的 metrics（可能被 update_metrics 实时更新过），
+            # 避免内存中的旧 metrics 覆盖工具调用期间写入的实时指标。
+            row = await (
+                await db.execute("SELECT metrics_json FROM sessions WHERE session_id=?", (session.session_id,))
+            ).fetchone()
+            if row and row["metrics_json"]:
+                try:
+                    db_metrics = json.loads(row["metrics_json"])
+                    # DB 值优先（它是工具调用期间实时写入的），内存值补充缺失的 key
+                    merged = {**session.metrics, **db_metrics}
+                    session.metrics = merged
+                except (json.JSONDecodeError, TypeError):
+                    pass  # DB metrics 损坏时保留内存值
             cursor = await db.execute(
                 """UPDATE sessions SET issue_json=?, tree_json=?, messages_json=?, file_cache_json=?,
                    files_read_json=?, report_json=?, display_title=?, status=?, phase=?, metrics_json=?,
@@ -524,27 +537,25 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         created_at=row["created_at"] or now,
         updated_at=row["updated_at"] or now,
     )
-    if row["metrics_json"]:
-        with suppress(Exception):
-            s.metrics = json.loads(row["metrics_json"])
-    if row["issue_json"]:
-        with suppress(Exception):
-            s.issue = IssueData.model_validate_json(row["issue_json"])
-    if row["tree_json"]:
-        with suppress(Exception):
-            s.tree = json.loads(row["tree_json"])
-    if row["messages_json"]:
-        with suppress(Exception):
-            s.messages = json.loads(row["messages_json"])
-    if row["file_cache_json"]:
-        with suppress(Exception):
-            s.file_cache = json.loads(row["file_cache_json"])
-    if row["files_read_json"]:
-        with suppress(Exception):
-            s.files_read = json.loads(row["files_read_json"])
-    if row["report_json"]:
-        with suppress(Exception):
-            s.report = AnalysisReport.model_validate_json(row["report_json"])
+    sid = s.session_id
+
+    def _safe_parse(label: str, raw: str | None, parser):
+        """解析 JSON 字段，失败时记录日志而非静默吞掉。"""
+        if not raw:
+            return
+        try:
+            return parser(raw)
+        except Exception as e:  # noqa: BLE001 — 降级保留默认值，但记录日志便于排查
+            logger.warning("Failed to parse %s for session %s: %s", label, sid, e)
+            return None
+
+    s.metrics = _safe_parse("metrics", row["metrics_json"], lambda v: json.loads(v)) or {}
+    s.issue = _safe_parse("issue", row["issue_json"], IssueData.model_validate_json)
+    s.tree = _safe_parse("tree", row["tree_json"], json.loads) or []
+    s.messages = _safe_parse("messages", row["messages_json"], json.loads) or []
+    s.file_cache = _safe_parse("file_cache", row["file_cache_json"], json.loads) or {}
+    s.files_read = _safe_parse("files_read", row["files_read_json"], json.loads) or []
+    s.report = _safe_parse("report", row["report_json"], AnalysisReport.model_validate_json)
     return s
 
 

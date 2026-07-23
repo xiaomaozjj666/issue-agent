@@ -1095,6 +1095,8 @@
             copyBtn.classList.add("copied");
             copyBtn.innerHTML = IA.svgIcon("check");
             setTimeout(function () {
+              // 切换会话或重渲染报告后，copyBtn 可能已脱离文档，操作前检查
+              if (!document.body.contains(copyBtn)) return;
               copyBtn.classList.remove("copied");
               copyBtn.innerHTML = IA.svgIcon("copy");
             }, 1500);
@@ -1172,6 +1174,7 @@
           copyBtn.classList.add("copied");
           copyBtn.innerHTML = IA.svgIcon("check");
           setTimeout(function () {
+            if (!document.body.contains(copyBtn)) return;
             copyBtn.classList.remove("copied");
             copyBtn.innerHTML = IA.svgIcon("copy");
           }, 1500);
@@ -1812,6 +1815,13 @@
 
   // 报告图表实例缓存：页面切换或重渲染时统一销毁，避免内存泄漏
   let reportChartInstances = [];
+  // IntersectionObserver 引用缓存：disposeReportCharts 时统一 disconnect，
+  // 防止切换会话后旧观察器仍回调操作已被替换的 DOM 节点
+  let chartLazyObservers = [];
+  let evidenceLazyObserver = null;
+  let scrollSpyObserver = null;
+  // #report scroll 监听器引用：renderReport 重渲染前移除旧监听器，防止累积
+  let reportScrollHandler = null;
 
   function disposeReportCharts() {
     reportChartInstances.forEach(function (chart) {
@@ -1822,6 +1832,18 @@
       }
     });
     reportChartInstances = [];
+    chartLazyObservers.forEach(function (obs) {
+      try { obs.disconnect(); } catch (e) { /* ignore */ }
+    });
+    chartLazyObservers = [];
+    if (evidenceLazyObserver) {
+      try { evidenceLazyObserver.disconnect(); } catch (e) { /* ignore */ }
+      evidenceLazyObserver = null;
+    }
+    if (scrollSpyObserver) {
+      try { scrollSpyObserver.disconnect(); } catch (e) { /* ignore */ }
+      scrollSpyObserver = null;
+    }
   }
 
   // 窗口尺寸变化时同步调整图表，避免溢出和留白
@@ -2607,7 +2629,8 @@
           linkMap[id] = a;
         });
         const sections = d.querySelectorAll(".report-section[id], details[id]");
-        let scrollSpyObserver = new IntersectionObserver(
+        if (scrollSpyObserver) { try { scrollSpyObserver.disconnect(); } catch (e) { /* ignore */ } }
+        scrollSpyObserver = new IntersectionObserver(
           function (entries) {
             entries.forEach(function (entry) {
               const id = entry.target.id;
@@ -2672,13 +2695,18 @@
       });
       reportEl.appendChild(backTopBtn);
     }
-    d.addEventListener("scroll", function () {
+    // 移除旧 scroll 监听器，防止 renderReport 重渲染时累积
+    if (reportScrollHandler) {
+      d.removeEventListener("scroll", reportScrollHandler);
+    }
+    reportScrollHandler = function () {
       if (d.scrollTop > 400) {
         backTopBtn.classList.add("visible");
       } else {
         backTopBtn.classList.remove("visible");
       }
-    });
+    };
+    d.addEventListener("scroll", reportScrollHandler);
 
     // E14 证据列表分页加载：IntersectionObserver 无限滚动，每批 20 条
     // 避免大量证据一次性渲染导致 DOM 暴增卡顿，同时保留"显示全部"兜底按钮
@@ -2702,19 +2730,21 @@
         return shownCount >= total;
       };
       if ("IntersectionObserver" in window) {
-        const obs = new IntersectionObserver(function (entries) {
+        if (evidenceLazyObserver) { try { evidenceLazyObserver.disconnect(); } catch (e) { /* ignore */ } }
+        evidenceLazyObserver = new IntersectionObserver(function (entries) {
           entries.forEach(function (entry) {
             if (entry.isIntersecting) {
               const done = loadMore();
               if (done) {
-                obs.disconnect();
+                evidenceLazyObserver.disconnect();
+                evidenceLazyObserver = null;
                 sentinel.remove();
                 if (showAllBtn) showAllBtn.remove();
               }
             }
           });
         }, { rootMargin: "300px 0px", threshold: 0 });
-        obs.observe(sentinel);
+        evidenceLazyObserver.observe(sentinel);
       }
       // "显示全部"兜底按钮
       let showAllBtn = null;
@@ -2776,6 +2806,8 @@
         entries.forEach(function (entry) {
           if (entry.isIntersecting) {
             obs.disconnect();
+            const idx = chartLazyObservers.indexOf(obs);
+            if (idx >= 0) chartLazyObservers.splice(idx, 1);
             const skeleton = el.querySelector(".chart-skeleton");
             if (skeleton) skeleton.remove();
             const chart = spec.render(el, r, sessionData);
@@ -2783,6 +2815,7 @@
           }
         });
       }, { rootMargin: "200px 0px", threshold: 0 });
+      chartLazyObservers.push(observer);
       observer.observe(el);
     });
   }
@@ -2986,7 +3019,13 @@
     // M1 修复：chat 看门狗 — 30s 无 delta 提示"连接变慢"，90s 提示"连接可能已断开"
     let lastEventTime = Date.now();
     let watchdogTimer = setInterval(function () {
-      if (chatSessionId !== sessionId) { clearInterval(watchdogTimer); return; }
+      if (chatSessionId !== sessionId) {
+        clearInterval(watchdogTimer);
+        // 会话已切换：重置进度文本，避免残留过期提示
+        progressEl.textContent = "";
+        lastEventTime = 0;
+        return;
+      }
       const elapsed = Date.now() - lastEventTime;
       if (elapsed > 90000) {
         progressEl.textContent = t("connection_stalled");
