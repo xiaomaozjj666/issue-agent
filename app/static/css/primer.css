@@ -2026,6 +2026,90 @@ a:hover {
   text-align: center;
 }
 
+/* 证据可信度矩阵：汇总统计卡片 */
+.matrix-summary {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.matrix-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+  min-width: 80px;
+}
+
+.matrix-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--fg-strong);
+  line-height: 1.2;
+}
+
+.matrix-stat-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.matrix-stat-warn .matrix-stat-value {
+  color: #F53F3F;
+}
+
+.matrix-stat-risk {
+  flex: 1;
+  min-width: 160px;
+}
+
+.matrix-stat-risk-list {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.matrix-stat-risk-list code {
+  background: rgba(245, 63, 63, 0.12);
+  color: #F53F3F;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  margin-right: 4px;
+}
+
+/* 漏斗图下方损耗饼图容器 */
+.funnel-pie-container {
+  width: 100%;
+  height: 160px;
+  margin-top: var(--space-2);
+}
+
+/* 漏斗图层级间隙损耗原因文本块 */
+.funnel-loss-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: var(--space-2);
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--canvas-subtle);
+}
+
+.funnel-loss-item {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
 /* 报告元信息 */
 .report-meta {
   display: flex;

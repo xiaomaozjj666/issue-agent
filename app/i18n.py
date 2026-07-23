@@ -603,6 +603,32 @@ _FRONTEND_STRINGS = {
         "report_exit_split": "退出分屏",
         # #22 Heatmap 部分通过
         "matrix_partial": "部分通过",
+        # Chart refactor: matrix summary + detail
+        "matrix_summary_total": "总证据数",
+        "matrix_summary_failed": "不合格证据",
+        "matrix_summary_risks": "风险证据",
+        "matrix_summary_no_risks": "无风险",
+        "matrix_detail_review_pass": "审查已通过",
+        "matrix_detail_review_fail": "审查未通过",
+        "matrix_detail_no_reason": "无理由说明",
+        "matrix_detail_lines": "行号",
+        "matrix_detail_no_lines": "无行号",
+        "matrix_detail_file_read": "文件已读取",
+        "matrix_detail_file_not_read": "文件未读取",
+        # Sankey weight + legend
+        "sankey_weight": "支撑权重",
+        "sankey_legend_strong": "强支撑",
+        "sankey_legend_weak": "弱支撑",
+        # Funnel waste analysis
+        "funnel_loss_model_to_tool": "无效指令/未触发工具",
+        "funnel_loss_tool_to_files": "调用报错/未读取文件",
+        "funnel_loss_files_to_evidence": "文件空数据/证据校验失败",
+        "funnel_global_utilization": "全局资源利用率",
+        "funnel_waste_invalid_calls": "无效模型调用",
+        "funnel_waste_failed_tools": "失败工具调用",
+        "funnel_waste_unused_files": "未转化文件",
+        "funnel_waste_title": "无效算力损耗分布",
+        "funnel_no_waste": "无无效算力开销",
     },
     "en": {
         "doc_title": "GitHub Issue Agent",
@@ -880,6 +906,32 @@ _FRONTEND_STRINGS = {
         "report_exit_split": "Exit split view",
         # #22 Heatmap 部分通过
         "matrix_partial": "Partial",
+        # Chart refactor: matrix summary + detail
+        "matrix_summary_total": "Total evidence",
+        "matrix_summary_failed": "Failed evidence",
+        "matrix_summary_risks": "Risk evidence",
+        "matrix_summary_no_risks": "No risks",
+        "matrix_detail_review_pass": "Review verified",
+        "matrix_detail_review_fail": "Review not verified",
+        "matrix_detail_no_reason": "No reason provided",
+        "matrix_detail_lines": "Lines",
+        "matrix_detail_no_lines": "No lines",
+        "matrix_detail_file_read": "File read",
+        "matrix_detail_file_not_read": "File not read",
+        # Sankey weight + legend
+        "sankey_weight": "Support weight",
+        "sankey_legend_strong": "Strong support",
+        "sankey_legend_weak": "Weak support",
+        # Funnel waste analysis
+        "funnel_loss_model_to_tool": "Invalid instructions / no tool calls",
+        "funnel_loss_tool_to_files": "Call errors / no files read",
+        "funnel_loss_files_to_evidence": "Empty file data / evidence validation failed",
+        "funnel_global_utilization": "Global resource utilization",
+        "funnel_waste_invalid_calls": "Invalid model calls",
+        "funnel_waste_failed_tools": "Failed tool calls",
+        "funnel_waste_unused_files": "Unused files",
+        "funnel_waste_title": "Waste breakdown",
+        "funnel_no_waste": "No waste detected",
     },
 }
 
