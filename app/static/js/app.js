@@ -22,11 +22,8 @@
   // E28: 实时文件追踪 — 记录 Agent 调查过程中浏览过的文件，按目录分组展示
   let exploredFiles = null; // Map<path, {tool: string, count: number, time: number}>
 
-  function enumLabel(prefix, value) {
-    const key = `${prefix}_${IA.safeClass(value)}`;
-    const translated = t(key);
-    return translated === key ? String(value || "") : translated;
-  }
+  // enumLabel 已移至 core.js 并通过 IA.enumLabel 暴露
+  const enumLabel = IA.enumLabel;
 
   // 主题切换
   function applyStoredTheme() {
@@ -599,7 +596,7 @@
           ? session.owner + "/" + session.repo + (session.issue_number ? " #" + session.issue_number : "")
           : t("conversation_label");
       IA.Runtime.setCancelVisible(session.status === "running");
-      if (session.events && session.events.length) window.addEventTimeline(session.events, session.metrics);
+      if (session.events && session.events.length) IA.Runtime.addEventTimeline(session.events, session.metrics);
       if (report) {
         renderReport(report);
         document.getElementById("report-toggle").style.display = "inline-flex";
@@ -3302,8 +3299,149 @@
     return lines.join("\n");
   }
 
+  // C15: 导出 HTML 与 renderReport 共用同一套结构生成逻辑。
+  // 在 IIFE 作用域内调用 classifyChangePriority / extractAffectedFiles /
+  // classifyRisk / t / enumLabel / IA.escapeHtml，确保导出 HTML 与在线
+  // 展示功能对齐（P0/P1/P2 优先级、影响范围、审查增强、风险分级、i18n）。
+  // 内部 <script> 只负责 ECharts 图表渲染，不再重复 HTML 拼接逻辑。
+  function buildExportBody(r, sessionData) {
+    const parts = [];
+    const evCount = (r.evidence || []).length;
+    const review = r.review_audit || { status: "not_run" };
+    const metrics = (sessionData && sessionData.metrics) || {};
+    const esc = IA.escapeHtml;
+    const escA = IA.escapeAttr;
+
+    // 1. 结论卡
+    parts.push(
+      '<div class="conclusion">' +
+        '<div class="conclusion-label">' + esc(t("report_conclusion_label")) + '</div>' +
+        '<p class="conclusion-text">' + esc(r.summary || "") + '</p>' +
+        '<div style="margin-top:8px;color:var(--muted);font-size:13px;">' + esc(t("report_confidence")) + ': <b>' + esc(enumLabel("confidence", r.confidence)) + '</b></div>' +
+        '</div>',
+    );
+
+    // 2. 指标网格
+    const reviewLabel = review.status !== "not_run" ? enumLabel("review_status", review.status) : "—";
+    parts.push('<div class="metrics">' +
+      metricCard(t("report_metric_evidence_count"), evCount) +
+      metricCard(t("report_metric_files_examined"), (r.files_examined || []).length) +
+      metricCard(t("report_metric_confidence"), enumLabel("confidence", r.confidence)) +
+      metricCard(t("report_metric_review"), reviewLabel) +
+      metricCard(t("report_metric_proposed_changes"), (r.proposed_changes || []).length) +
+      metricCard(t("report_metric_risks"), (r.risks || []).length) +
+      '</div>');
+
+    // 3. 图表占位（内部 script 填充）
+    if (evCount) {
+      parts.push(
+        '<div class="chart"><div class="chart-title">' + esc(t("matrix_chart_title")) + '</div><div id="chart-matrix" class="chart-canvas"></div><div class="chart-caption">' + esc(t("matrix_chart_caption")) + '</div></div>' +
+        '<div class="chart"><div class="chart-title">' + esc(t("sankey_chart_title")) + '</div><div id="chart-sankey" class="chart-canvas"></div><div class="chart-caption">' + esc(t("sankey_chart_caption")) + '</div></div>' +
+        '<div class="chart"><div class="chart-title">' + esc(t("funnel_chart_title")) + '</div><div id="chart-funnel" class="chart-canvas funnel"></div><div class="chart-caption">' + esc(t("funnel_chart_caption")) + '</div></div>',
+      );
+    }
+
+    // 4. 独立审查（与 renderReport 对齐：reviewer_model + review_calls + 证据验证对比 + 根因支撑）
+    if (review.status !== "not_run") {
+      const reviewClass = IA.safeClass(review.status);
+      let body = '<div class="section"><h2>' + esc(t("report_independent_review", { status: enumLabel("review_status", review.status) })) + '</h2>';
+      body += '<div class="review-head"><span class="review-chip ' + reviewClass + '">' + esc(enumLabel("review_status", review.status)) + '</span>';
+      if (review.reviewer_model) {
+        body += ' <span class="review-meta-item">' + esc(t("review_reviewer_model")) + ': <code>' + esc(review.reviewer_model) + '</code></span>';
+      }
+      const reviewCalls = metrics.review_calls || 0;
+      if (reviewCalls > 0) {
+        body += ' <span class="review-meta-item">' + esc(t("review_reviewer_calls", { count: reviewCalls })) + '</span>';
+      }
+      body += '</div>';
+      const audit = r.evidence_audit || { valid_references: 0, root_cause_supported: false };
+      body += '<div class="review-audit">' +
+        '<div class="review-audit-item"><span class="review-audit-label">' + esc(t("review_valid_evidence")) + '</span><span class="review-audit-value">' + audit.valid_references + ' / ' + evCount + '</span></div>' +
+        '<div class="review-audit-item"><span class="review-audit-label">' + esc(t("review_root_cause_supported")) + '</span><span class="review-audit-value ' + (audit.root_cause_supported ? "audit-pass" : "audit-fail") + '">' + esc(audit.root_cause_supported ? t("review_supported_yes") : t("review_supported_no")) + '</span></div>' +
+        '</div>';
+      if (review.summary) body += '<p>' + esc(review.summary) + '</p>';
+      if (review.findings && review.findings.length) {
+        body += '<ol class="review-findings">' + review.findings.map(function (f, i) { return '<li value="' + (i + 1) + '">' + esc(f) + '</li>'; }).join("") + '</ol>';
+      }
+      body += '</div>';
+      parts.push(body);
+    }
+
+    // 5. 根因
+    parts.push('<div class="section"><h2>' + esc(t("report_root_cause")) + '</h2><p>' + esc(r.root_cause || "") + '</p></div>');
+
+    // 6. 代码证据
+    if (evCount) {
+      let body = '<div class="section"><h2>' + esc(t("report_evidence")) + '</h2>';
+      (r.evidence || []).forEach(function (e) {
+        body += '<div class="evidence-item"><div class="evidence-path"><span class="evidence-path-text">' + esc(e.path || "") + '</span>' + (e.lines ? '<span class="evidence-lines">' + esc(e.lines) + '</span>' : '') + '</div><div class="evidence-reason">' + esc(e.reason || "") + '</div></div>';
+      });
+      body += '</div>';
+      parts.push(body);
+    }
+
+    // 7. 修复方案（P0/P1/P2 优先级 + 影响范围，与 renderReport 一致）
+    if (r.proposed_changes && r.proposed_changes.length) {
+      let body = '<div class="section"><h2>' + esc(t("report_proposed_changes")) + '</h2><ul>';
+      r.proposed_changes.forEach(function (c, idx) {
+        const priority = classifyChangePriority(c, idx);
+        const scope = extractAffectedFiles(c, r.evidence || []);
+        const scopeHtml = scope.length
+          ? '<div class="change-meta"><span class="change-scope">' + esc(t("change_scope")) + ': <code>' + scope.map(esc).join('</code>, <code>') + '</code></span></div>'
+          : '';
+        body += '<li class="change-item change-' + priority.cls + '">' +
+          '<div class="change-head">' +
+          '<span class="change-priority change-priority-' + priority.cls + '" title="' + escA(priority.desc) + '">' + esc(priority.label) + '</span>' +
+          '<span class="change-text">' + esc(c) + '</span>' +
+          '</div>' + scopeHtml + '</li>';
+      });
+      body += '</ul></div>';
+      parts.push(body);
+    }
+
+    // 8. 补丁（修复原 \\n 字面量 bug：应按实际换行符分割）
+    if (r.patch) {
+      let body = '<div class="section"><h2>' + esc(t("report_patch")) + '</h2><pre>';
+      String(r.patch).split("\n").forEach(function (line) {
+        let cls = "diff-ctx";
+        if (line.startsWith("+++") || line.startsWith("---")) cls = "";
+        else if (line.startsWith("+")) cls = "diff-add";
+        else if (line.startsWith("-")) cls = "diff-del";
+        else if (line.startsWith("@@")) cls = "diff-hunk";
+        body += '<span class="' + cls + '">' + esc(line) + '</span>';
+      });
+      body += '</pre></div>';
+      parts.push(body);
+    }
+
+    // 9. 回归测试
+    if (r.tests && r.tests.length) {
+      let body = '<div class="section"><h2>' + esc(t("report_tests")) + '</h2><ul>';
+      r.tests.forEach(function (tt) { body += '<li>' + esc(tt) + '</li>'; });
+      body += '</ul></div>';
+      parts.push(body);
+    }
+
+    // 10. 风险（high/medium/low 分级，与 renderReport 一致）
+    if (r.risks && r.risks.length) {
+      let body = '<div class="section"><h2>' + esc(t("report_risks")) + '</h2>';
+      r.risks.forEach(function (rk) {
+        const sev = classifyRisk(rk);
+        body += '<div class="risk-item risk-' + sev + '"><span class="risk-badge risk-badge-' + sev + '">' + esc(t("risk_severity_" + sev)) + '</span><span class="risk-text">' + esc(rk) + '</span></div>';
+      });
+      body += '</div>';
+      parts.push(body);
+    }
+
+    function metricCard(label, value) {
+      return '<div class="metric"><span class="metric-label">' + esc(label) + '</span><span class="metric-value">' + esc(value) + '</span></div>';
+    }
+
+    return parts.join("");
+  }
+
   // #9 生成自包含 HTML 报告：嵌入报告 JSON + ECharts CDN，离线打开即可渲染图表
-  // 内联 CSS（精简版）+ ECharts CDN（带 SRI）+ 报告渲染脚本
+  // C15: HTML 结构在生成阶段渲染（复用 buildExportBody），内部 <script> 只负责图表
   function generateSelfContainedHtml(r, sessionData) {
     const jsonStr = JSON.stringify(r, null, 2);
     const sessionJson = JSON.stringify(sessionData || {});
@@ -3390,7 +3528,7 @@
 <button class="theme-toggle" type="button" onclick="var d=document.documentElement;d.setAttribute('data-theme',d.getAttribute('data-theme')==='dark'?'light':'dark');this.textContent=d.getAttribute('data-theme')==='dark'?'Light':'Dark'">Light</button>
 <h1>${IA.escapeHtml(title)}</h1>
 <div class="meta">Generated by Issue Agent · ${IA.escapeHtml(generatedAt)}</div>
-<div id="report-root"></div>
+<div id="report-root">${buildExportBody(r, sessionData)}</div>
 
 <!-- ECharts CDN with SRI integrity -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"
@@ -3411,126 +3549,15 @@
     session = JSON.parse(document.getElementById('session-data').textContent);
   } catch(e){ console.error('Failed to parse embedded data', e); return; }
 
-  var root = document.getElementById('report-root');
-  var parts = [];
-  var metrics = report.metrics || {};
-
-  // 结论卡
-  parts.push('<div class="conclusion">' +
-    '<div class="conclusion-label">ANALYSIS CONCLUSION</div>' +
-    '<p class="conclusion-text">' + escape(report.summary || '') + '</p>' +
-    '<div style="margin-top:8px;color:#94a3b8;font-size:13px;">Confidence: <b>' + escape(report.confidence || '') + '</b></div>' +
-    '</div>');
-
-  // 指标网格
-  var evCount = (report.evidence || []).length;
-  var fileCount = (report.files_examined || []).length;
-  var changeCount = (report.proposed_changes || []).length;
-  var riskCount = (report.risks || []).length;
-  var reviewStatus = report.review_audit && report.review_audit.status !== 'not_run' ? report.review_audit.status : '—';
-  parts.push('<div class="metrics">' +
-    metricCard('Evidence', evCount) +
-    metricCard('Files examined', fileCount) +
-    metricCard('Confidence', report.confidence || '—') +
-    metricCard('Review', reviewStatus) +
-    metricCard('Proposed changes', changeCount) +
-    metricCard('Risks', riskCount) +
-    '</div>');
-
-  // 图表占位（仅当 evidence 存在且有 ECharts）
-  if (evCount && typeof echarts !== 'undefined' && !window.__echartsFailed) {
-    var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
-    var filesReadSet = {};
-    filesRead.forEach(function(p){ filesReadSet[p] = true; });
-    var modelCalls = metrics.model_calls || 0;
-    var toolCalls = metrics.tool_calls || 0;
-    var validEv = report.evidence_audit ? report.evidence_audit.valid_references : evCount;
-
-    // 图表 1: 证据矩阵 Heatmap
-    parts.push('<div class="chart"><div class="chart-title">Evidence credibility matrix</div><div id="chart-matrix" class="chart-canvas"></div><div class="chart-caption">4 dimensions: file read / lines valid / has reason / review verified</div></div>');
-    // 图表 2: Sankey
-    parts.push('<div class="chart"><div class="chart-title">Evidence-to-root-cause support</div><div id="chart-sankey" class="chart-canvas"></div><div class="chart-caption">Issue → root cause → evidence flow</div></div>');
-    // 图表 3: Funnel
-    parts.push('<div class="chart"><div class="chart-title">Investigation efficiency</div><div id="chart-funnel" class="chart-canvas funnel"></div><div class="chart-caption">Model calls → tool calls → files read → valid evidence</div></div>');
-  }
-
-  // 独立审查
-  if (report.review_audit && report.review_audit.status !== 'not_run') {
-    var ra = report.review_audit;
-    parts.push('<div class="section"><h2>Independent Review</h2>');
-    parts.push('<span class="review-chip ' + ra.status + '">' + ra.status + '</span>');
-    if (ra.reviewer_model) parts.push(' <span style="color:#94a3b8;font-size:13px;">Reviewer model: <code>' + escape(ra.reviewer_model) + '</code></span>');
-    if (report.evidence_audit) {
-      parts.push('<div class="review-audit">' +
-        '<div class="review-audit-item"><span class="review-audit-label">Valid evidence</span><span class="review-audit-value">' + report.evidence_audit.valid_references + ' / ' + evCount + '</span></div>' +
-        '<div class="review-audit-item"><span class="review-audit-label">Root cause supported</span><span class="review-audit-value ' + (report.evidence_audit.root_cause_supported ? 'audit-pass' : 'audit-fail') + '">' + (report.evidence_audit.root_cause_supported ? 'Yes' : 'No') + '</span></div>' +
-        '</div>');
-    }
-    if (ra.summary) parts.push('<p>' + escape(ra.summary) + '</p>');
-    if (ra.findings && ra.findings.length) {
-      parts.push('<ol>');
-      ra.findings.forEach(function(f, i){ parts.push('<li value="' + (i+1) + '">' + escape(f) + '</li>'); });
-      parts.push('</ol>');
-    }
-    parts.push('</div>');
-  }
-
-  // 根因
-  parts.push('<div class="section"><h2>Root cause</h2><p>' + escape(report.root_cause || '') + '</p></div>');
-
-  // 证据
-  if (evCount) {
-    parts.push('<div class="section"><h2>Code evidence</h2>');
-    report.evidence.forEach(function(e){
-      parts.push('<div class="evidence-item"><div class="evidence-path"><span class="evidence-path-text">' + escape(e.path || '') + '</span>' + (e.lines ? '<span class="evidence-lines">' + escape(e.lines) + '</span>' : '') + '</div><div class="evidence-reason">' + escape(e.reason || '') + '</div></div>');
-    });
-    parts.push('</div>');
-  }
-
-  // 修复方案
-  if (changeCount) {
-    parts.push('<div class="section"><h2>Proposed changes</h2><ul>');
-    report.proposed_changes.forEach(function(c){
-      parts.push('<li>' + escape(c) + '</li>');
-    });
-    parts.push('</ul></div>');
-  }
-
-  // 补丁
-  if (report.patch) {
-    parts.push('<div class="section"><h2>Patch</h2><pre>');
-    report.patch.split('\\n').forEach(function(line){
-      var cls = 'diff-ctx';
-      if (line.startsWith('+++') || line.startsWith('---')) cls = '';
-      else if (line.startsWith('+')) cls = 'diff-add';
-      else if (line.startsWith('-')) cls = 'diff-del';
-      else if (line.startsWith('@@')) cls = 'diff-hunk';
-      parts.push('<span class="' + cls + '">' + escape(line) + '</span>');
-    });
-    parts.push('</pre></div>');
-  }
-
-  // 测试
-  if (report.tests && report.tests.length) {
-    parts.push('<div class="section"><h2>Suggested tests</h2><ul>');
-    report.tests.forEach(function(tt){ parts.push('<li>' + escape(tt) + '</li>'); });
-    parts.push('</ul></div>');
-  }
-
-  // 风险
-  if (riskCount) {
-    parts.push('<div class="section"><h2>Risks</h2>');
-    report.risks.forEach(function(rk){
-      var sev = /critical|severe|fatal|crash|严重|致命/i.test(rk) ? 'high' : /medium|moderate|中等|可能/i.test(rk) ? 'medium' : 'low';
-      parts.push('<div class="risk-item risk-' + sev + '"><span class="risk-badge risk-badge-' + sev + '">' + sev + '</span>' + escape(rk) + '</div>');
-    });
-    parts.push('</div>');
-  }
-
-  root.innerHTML = parts.join('');
-
-  // 渲染图表
+  // C15: HTML 结构已在生成阶段渲染（buildExportBody），这里只负责图表
   if (typeof echarts === 'undefined' || window.__echartsFailed) return;
+  var evCount = (report.evidence || []).length;
+  if (!evCount) return;
+  var metrics = report.metrics || {};
+  var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
+  var filesReadSet = {};
+  filesRead.forEach(function(p){ filesReadSet[p] = true; });
+  var validEv = report.evidence_audit ? report.evidence_audit.valid_references : evCount;
   var palette = { primary:'#3b82f6', success:'#10b981', warning:'#f59e0b', danger:'#ef4444', text:'#f1f5f9', textDim:'#94a3b8', line:'#334155' };
 
   // Heatmap
@@ -3612,8 +3639,6 @@
     });
   });
 
-  function escape(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function metricCard(label, value){ return '<div class="metric"><span class="metric-label">'+escape(label)+'</span><span class="metric-value">'+escape(value)+'</span></div>'; }
 })();
 </script>
 </body>
@@ -3888,12 +3913,6 @@
   IA.chat = chat;
   IA.analyze = analyze;
   IA.loadSessions = loadSessions;
-  // 向后兼容：旧的 inline onclick 引用 window.chat / window.analyze
-  window.chat = chat;
-  window.analyze = analyze;
-  window.restoreSession = restoreSession;
-  window.loadSessions = loadSessions;
-  window.addMsg = addMsg;
 
   // #33 CDN 降级统一提示：检测 CDN 脚本加载失败标志，展示统一可关闭的横幅
   function checkCdnFailures() {

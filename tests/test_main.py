@@ -61,9 +61,9 @@ def test_static_frontend_modules_are_served() -> None:
     stylesheet = client.get("/static/css/primer.css")
 
     assert script.status_code == 200
-    assert "window.apiJson" in script.text
+    assert "window.IssueAgent" in script.text
+    assert "IA.Runtime" in runtime.text
     assert runtime.status_code == 200
-    assert "window.cancelAnalysis" in runtime.text
     assert app_script.status_code == 200
     assert 'case "review"' in app_script.text
     assert "loadSessions();" in app_script.text

@@ -41,7 +41,7 @@ from app.i18n import (
     t,
 )
 from app.models import AnalysisReport, ChatResponse, IssueData, ReviewAudit
-from app.provider import chat_request_options
+from app.provider import chat_request_options, iter_deltas
 from app.report_generator import ReportGenerator
 from app.reviewer import ReviewerAgent
 from app.sessions import Session
@@ -343,10 +343,7 @@ class IssueAgent:
                     tools=tools,
                     max_tokens=self.settings.max_chat_tokens,
                 )
-                async for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
+                async for delta in iter_deltas(stream):
                     # 只透传最终回复内容，不展示 reasoning_content（思考过程）
                     if delta.content:
                         collected_content_parts.append(delta.content)
