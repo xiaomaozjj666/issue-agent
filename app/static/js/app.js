@@ -1035,7 +1035,23 @@
 
   // Markdown 渲染：assistant 消息走 marked + DOMPurify + highlight.js，
   // 任意一个库加载失败则降级为 escapeHtml 纯文本，保证可用性
+  var domPurifyHooked = false;
+  function ensureDomPurifyHook() {
+    if (domPurifyHooked || !window.DOMPurify || typeof window.DOMPurify.addHook !== "function") return;
+    domPurifyHooked = true;
+    window.DOMPurify.addHook("afterSanitizeAttributes", function (node) {
+      if (node.tagName === "A" && node.hasAttribute("href")) {
+        var href = node.getAttribute("href") || "";
+        if (/^https?:/i.test(href)) {
+          node.setAttribute("target", "_blank");
+          node.setAttribute("rel", "noopener noreferrer nofollow");
+        }
+      }
+    });
+  }
+
   function renderMarkdown(text) {
+    ensureDomPurifyHook();
     if (typeof text !== "string") return "";
     if (!window.marked || !window.DOMPurify) {
       // 降级：保留换行，转义 HTML
