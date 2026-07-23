@@ -142,7 +142,13 @@ class ConnectionPool:
         return await self._pool.get()
 
     async def release(self, conn: aiosqlite.Connection) -> None:
-        """归还连接到池中。池已关闭或连接已关闭则直接丢弃。"""
+        """归还连接到池中。连接已关闭则直接丢弃并减少计数，避免复用坏连接。"""
+        # aiosqlite 关闭后内部 _conn 变为 None，不可复用
+        if getattr(conn, "_conn", None) is None:
+            async with self._creation_lock:
+                if self._created > 0:
+                    self._created -= 1
+            return
         await self._pool.put(conn)
 
     @asynccontextmanager
@@ -152,7 +158,7 @@ class ConnectionPool:
         try:
             yield conn
         finally:
-            await self._pool.put(conn)
+            await self.release(conn)
 
     async def close(self) -> None:
         """关闭池中所有空闲连接。正在使用的连接由调用方自行关闭。"""

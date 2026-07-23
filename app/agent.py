@@ -160,6 +160,12 @@ class IssueAgent:
             tools = get_tool_definitions(self.settings)
             client = self._get_client()
             for iteration in range(self.settings.max_agent_iterations):
+                # L3：调查总时长上限检测，在每轮迭代前检查，超时即抛出
+                # 避免模型反复调用工具陷入死循环，耗尽 API 额度
+                if monotonic() - investigation_start > self.settings.investigation_timeout:
+                    raise TimeoutError(
+                        f"Investigation exceeded {self.settings.investigation_timeout:.0f}s total timeout"
+                    )
                 if session is not None:
                     session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                 response = await client.chat.completions.create(
@@ -697,15 +703,19 @@ def _trim_session_messages(messages: list[dict], max_chars: int, max_messages: i
         if used + turn_size > max_chars or message_count + len(turn) > max_messages:
             if retained:
                 break
-            turn = [
+            # 首个保留的 turn 超预算：剔除 tool_calls/tool 结果，只保留对话内容
+            filtered = [
                 message
                 for message in turn
                 if message.get("role") == "user"
                 or (message.get("role") == "assistant" and not message.get("tool_calls"))
             ][-max_messages:]
+            if not filtered:
+                # 过滤后为空（整个 turn 全是 tool 调用）：跳过此 turn，继续看更早的 turn，
+                # 避免因最近一轮全是工具调用就丢失全部历史上下文
+                continue
+            turn = filtered
             turn_size = sum(message_size(message) for message in turn)
-        if not turn:
-            break
         retained.append(turn)
         used += turn_size
         message_count += len(turn)

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # 单个工具调用（如 search_code/grep_content 调用 GitHub API）的超时上限。
     # 防止网络抖动或 GitHub 慢响应导致整个 stream 卡住，前端 SSE 无事件输出。
     tool_timeout: float = Field(default=60.0, gt=0, le=180, description="Per-tool execution timeout")
+    # 单次调查的总时长上限：防止模型反复调用工具陷入死循环，耗尽 API 额度。
+    # 超时后在 agent 迭代间隙检测并抛出，由 stream 端点转为 error 事件。
+    investigation_timeout: float = Field(
+        default=600.0, gt=0, le=1800, description="Max wall-clock seconds for a single investigation"
+    )
 
     # ── Agent behaviour ──────────────────────────────────────────────
     max_candidate_files: int = Field(default=20, ge=1, le=30)

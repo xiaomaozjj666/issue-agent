@@ -295,13 +295,26 @@
   function parseSseEvents(buffer) {
     const events = [];
     let remaining = buffer;
-    let sepIdx;
-    while ((sepIdx = remaining.indexOf("\n\n")) !== -1) {
+    // SSE 事件分隔符可能是 \n\n（标准）、\r\n\r\n（Windows/代理）、\r\r（旧 Mac）。
+    // 部分反向代理或 CDN 会把 \n 转为 \r\n，必须统一处理否则事件无法解析。
+    while (true) {
+      // 查找最早出现的分隔符
+      let sepIdx = -1;
+      let sepLen = 0;
+      const candidates = [["\n\n", 2], ["\r\n\r\n", 4], ["\r\r", 2]];
+      for (let i = 0; i < candidates.length; i++) {
+        const idx = remaining.indexOf(candidates[i][0]);
+        if (idx !== -1 && (sepIdx === -1 || idx < sepIdx)) {
+          sepIdx = idx;
+          sepLen = candidates[i][1];
+        }
+      }
+      if (sepIdx === -1) break;
       const rawEvent = remaining.slice(0, sepIdx);
-      remaining = remaining.slice(sepIdx + 2);
-      // SSE 规范：data: 字段可能跨多行，需拼接
+      remaining = remaining.slice(sepIdx + sepLen);
+      // SSE 规范：data: 字段可能跨多行，需拼接；行尾统一处理 \r\n 和 \n
       const dataLines = rawEvent
-        .split("\n")
+        .split(/\r\n|\r|\n/)
         .filter(function (line) { return line.startsWith("data:"); })
         .map(function (line) { return line.slice(5).replace(/^ /, ""); });
       if (!dataLines.length) continue;
