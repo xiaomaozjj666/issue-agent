@@ -9,18 +9,23 @@ it selects the backend based on the configured ``db_path`` and manages
 per-session asyncio locks for in-process mutual exclusion.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import uuid
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import aiosqlite
 
 from app.models import AnalysisReport, IssueData, SessionStatus
+
+if TYPE_CHECKING:
+    from app.db import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -151,87 +156,105 @@ class MemoryStore:
 
 
 class SqliteStore:
-    """SQLite-backed session store (production)."""
+    """SQLite-backed session store (production).
+
+    使用连接池（ConnectionPool）替代单一 aiosqlite.Connection，让 WAL 模式下
+    的读操作真正并发。写操作仍受 SQLite 自身锁约束串行执行，但读不再被
+    长事务阻塞。每个方法通过 ``async with self._conn() as db`` 获取连接，
+    异常时连接也会被归还到池中，避免泄漏。
+    """
 
     def __init__(self, db_path: str) -> None:
         self._path = db_path
-        self._conn: aiosqlite.Connection | None = None
+        self._pool: ConnectionPool | None = None
 
-    async def _get_conn(self) -> aiosqlite.Connection:
-        if self._conn is None:
-            from app.db import get_db
+    def _get_pool(self) -> ConnectionPool:
+        if self._pool is None:
+            from app.db import ConnectionPool
 
-            self._conn = await get_db(self._path)
-        return self._conn
+            self._pool = ConnectionPool(self._path)
+        return self._pool
+
+    @asynccontextmanager
+    async def _conn(self):
+        """从池中借出连接，作用域结束自动归还。"""
+        pool = self._get_pool()
+        conn = await pool.acquire()
+        try:
+            yield conn
+        finally:
+            await pool.release(conn)
 
     async def create(self, issue_url: str) -> Session:
         sid = uuid.uuid4().hex[:12]
         now = _now()
-        db = await self._get_conn()
-        await db.execute(
-            "INSERT INTO sessions (session_id, issue_url, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (sid, issue_url, now, now),
-        )
-        await db.commit()
+        async with self._conn() as db:
+            await db.execute(
+                "INSERT INTO sessions (session_id, issue_url, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (sid, issue_url, now, now),
+            )
+            await db.commit()
         return Session(session_id=sid, issue_url=issue_url, created_at=now, updated_at=now)
 
     async def get(self, session_id: str) -> Session | None:
-        db = await self._get_conn()
-        row = await (await db.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))).fetchone()
+        async with self._conn() as db:
+            row = await (await db.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))).fetchone()
         if row is None:
             return None
         return _row_to_session(row)
 
     async def save(self, session: Session) -> None:
-        db = await self._get_conn()
         session.updated_at = _now()
-        cursor = await db.execute(
-            """UPDATE sessions SET issue_json=?, tree_json=?, messages_json=?, file_cache_json=?,
-               files_read_json=?, report_json=?, display_title=?, status=?, phase=?, metrics_json=?,
-               cancel_requested=?, error_message=?, archived_at=?, updated_at=?, version=version+1
-               WHERE session_id=? AND version=?""",
-            (
-                session.issue.model_dump_json() if session.issue else None,
-                json.dumps(session.tree, ensure_ascii=False),
-                json.dumps(session.messages, ensure_ascii=False, default=str),
-                json.dumps(session.file_cache, ensure_ascii=False),
-                json.dumps(session.files_read, ensure_ascii=False),
-                session.report.model_dump_json() if session.report else None,
-                session.display_title,
-                session.status,
-                session.phase,
-                json.dumps(session.metrics, ensure_ascii=False),
-                int(session.cancel_requested),
-                session.error_message,
-                session.archived_at,
-                session.updated_at,
-                session.session_id,
-                session.version,
-            ),
-        )
-        if cursor.rowcount != 1:
-            await db.rollback()
-            raise SessionConflictError(f"Session {session.session_id} was updated concurrently")
-        await db.commit()
+        async with self._conn() as db:
+            cursor = await db.execute(
+                """UPDATE sessions SET issue_json=?, tree_json=?, messages_json=?, file_cache_json=?,
+                   files_read_json=?, report_json=?, display_title=?, status=?, phase=?, metrics_json=?,
+                   cancel_requested=?, error_message=?, archived_at=?, updated_at=?, version=version+1
+                   WHERE session_id=? AND version=?""",
+                (
+                    session.issue.model_dump_json() if session.issue else None,
+                    json.dumps(session.tree, ensure_ascii=False),
+                    json.dumps(session.messages, ensure_ascii=False, default=str),
+                    json.dumps(session.file_cache, ensure_ascii=False),
+                    json.dumps(session.files_read, ensure_ascii=False),
+                    session.report.model_dump_json() if session.report else None,
+                    session.display_title,
+                    session.status,
+                    session.phase,
+                    json.dumps(session.metrics, ensure_ascii=False),
+                    int(session.cancel_requested),
+                    session.error_message,
+                    session.archived_at,
+                    session.updated_at,
+                    session.session_id,
+                    session.version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                await db.rollback()
+                raise SessionConflictError(f"Session {session.session_id} was updated concurrently")
+            await db.commit()
         session.version += 1
 
     async def append_event(self, session_id: str, event: dict) -> dict:
-        db = await self._get_conn()
-        cursor = await db.execute(
-            "INSERT INTO session_events (session_id, event_type, data_json, message, created_at) VALUES (?,?,?,?,?)",
-            (
-                session_id,
-                event["type"],
+        async with self._conn() as db:
+            cursor = await db.execute(
+                "INSERT INTO session_events"
+                " (session_id, event_type, data_json, message, created_at)"
+                " VALUES (?,?,?,?,?)",
                 (
-                    json.dumps(event.get("data"), ensure_ascii=False, default=str)
-                    if event.get("data") is not None
-                    else None
+                    session_id,
+                    event["type"],
+                    (
+                        json.dumps(event.get("data"), ensure_ascii=False, default=str)
+                        if event.get("data") is not None
+                        else None
+                    ),
+                    event.get("message", ""),
+                    _now(),
                 ),
-                event.get("message", ""),
-                _now(),
-            ),
-        )
-        await db.commit()
+            )
+            await db.commit()
         return {
             **event,
             "sequence": cursor.lastrowid,
@@ -239,14 +262,14 @@ class SqliteStore:
         }
 
     async def list_events(self, session_id: str) -> list[dict]:
-        db = await self._get_conn()
-        rows = await (
-            await db.execute(
-                "SELECT id, event_type, data_json, message, created_at FROM session_events "
-                "WHERE session_id=? ORDER BY id",
-                (session_id,),
-            )
-        ).fetchall()
+        async with self._conn() as db:
+            rows = await (
+                await db.execute(
+                    "SELECT id, event_type, data_json, message, created_at FROM session_events "
+                    "WHERE session_id=? ORDER BY id",
+                    (session_id,),
+                )
+            ).fetchall()
         return [
             {
                 "sequence": row["id"],
@@ -259,52 +282,52 @@ class SqliteStore:
         ]
 
     async def request_cancel(self, session_id: str) -> bool:
-        db = await self._get_conn()
-        cursor = await db.execute(
-            "UPDATE sessions SET cancel_requested=1, updated_at=?, version=version+1 "
-            "WHERE session_id=? AND status='running'",
-            (_now(), session_id),
-        )
-        await db.commit()
+        async with self._conn() as db:
+            cursor = await db.execute(
+                "UPDATE sessions SET cancel_requested=1, updated_at=?, version=version+1 "
+                "WHERE session_id=? AND status='running'",
+                (_now(), session_id),
+            )
+            await db.commit()
         return cursor.rowcount == 1
 
     async def is_cancel_requested(self, session_id: str) -> bool:
-        db = await self._get_conn()
-        row = await (
-            await db.execute("SELECT cancel_requested FROM sessions WHERE session_id=?", (session_id,))
-        ).fetchone()
+        async with self._conn() as db:
+            row = await (
+                await db.execute("SELECT cancel_requested FROM sessions WHERE session_id=?", (session_id,))
+            ).fetchone()
         return bool(row and row["cancel_requested"])
 
     async def recover_stale(self, cutoff: str) -> int:
-        db = await self._get_conn()
-        cursor = await db.execute(
-            """UPDATE sessions
-               SET status='failed', phase='interrupted',
-                   error_message='Investigation was interrupted before completion',
-                   updated_at=?, version=version+1
-               WHERE status='running' AND updated_at < ?""",
-            (_now(), cutoff),
-        )
-        await db.commit()
+        async with self._conn() as db:
+            cursor = await db.execute(
+                """UPDATE sessions
+                   SET status='failed', phase='interrupted',
+                       error_message='Investigation was interrupted before completion',
+                       updated_at=?, version=version+1
+                   WHERE status='running' AND updated_at < ?""",
+                (_now(), cutoff),
+            )
+            await db.commit()
         return cursor.rowcount
 
     async def save_pr_proposal(self, session_id: str, proposal: dict) -> None:
-        db = await self._get_conn()
-        await db.execute(
-            "INSERT OR REPLACE INTO pending_pr (session_id, branch, title, body, changes_json) VALUES (?,?,?,?,?)",
-            (
-                session_id,
-                proposal["branch"],
-                proposal["title"],
-                proposal["body"],
-                json.dumps(proposal.get("changes", []), ensure_ascii=False),
-            ),
-        )
-        await db.commit()
+        async with self._conn() as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO pending_pr (session_id, branch, title, body, changes_json) VALUES (?,?,?,?,?)",
+                (
+                    session_id,
+                    proposal["branch"],
+                    proposal["title"],
+                    proposal["body"],
+                    json.dumps(proposal.get("changes", []), ensure_ascii=False),
+                ),
+            )
+            await db.commit()
 
     async def get_pr_proposal(self, session_id: str) -> dict | None:
-        db = await self._get_conn()
-        row = await (await db.execute("SELECT * FROM pending_pr WHERE session_id = ?", (session_id,))).fetchone()
+        async with self._conn() as db:
+            row = await (await db.execute("SELECT * FROM pending_pr WHERE session_id = ?", (session_id,))).fetchone()
         if row is None:
             return None
         return {
@@ -315,12 +338,11 @@ class SqliteStore:
         }
 
     async def delete_pr_proposal(self, session_id: str) -> None:
-        db = await self._get_conn()
-        await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
-        await db.commit()
+        async with self._conn() as db:
+            await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
+            await db.commit()
 
     async def list(self, *, archived: bool, query: str, limit: int, offset: int = 0) -> list[Session]:
-        db = await self._get_conn()
         clauses: list[str] = []
         params: list[object] = []
         clauses.append("archived_at IS NOT NULL" if archived else "archived_at IS NULL")
@@ -330,19 +352,20 @@ class SqliteStore:
             params.extend([pattern, pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.extend([limit, offset])
-        rows = await (
-            await db.execute(
-                f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                params,
-            )
-        ).fetchall()
+        async with self._conn() as db:
+            rows = await (
+                await db.execute(
+                    f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    params,
+                )
+            ).fetchall()
         return [_row_to_session(row) for row in rows]
 
     async def delete(self, session_id: str) -> bool:
-        db = await self._get_conn()
-        await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
-        cursor = await db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-        await db.commit()
+        async with self._conn() as db:
+            await db.execute("DELETE FROM pending_pr WHERE session_id = ?", (session_id,))
+            cursor = await db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            await db.commit()
         return cursor.rowcount > 0
 
     async def update_metrics(self, session_id: str, metrics: dict) -> None:
@@ -352,41 +375,45 @@ class SqliteStore:
         并可能与 stream 端点的 save 竞争。此方法只更新 metrics_json + updated_at，
         供前端实时展示调查轨迹指标。
         """
-        db = await self._get_conn()
-        await db.execute(
-            "UPDATE sessions SET metrics_json=?, updated_at=? WHERE session_id=?",
-            (json.dumps(metrics, ensure_ascii=False), _now(), session_id),
-        )
-        await db.commit()
+        async with self._conn() as db:
+            await db.execute(
+                "UPDATE sessions SET metrics_json=?, updated_at=? WHERE session_id=?",
+                (json.dumps(metrics, ensure_ascii=False), _now(), session_id),
+            )
+            await db.commit()
 
     async def purge_old(self, retention_days: int) -> int:
         """Delete terminal-state sessions older than retention_days."""
         from datetime import UTC, datetime, timedelta
 
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat(timespec="seconds")
-        db = await self._get_conn()
-        # Delete associated events and PR proposals first (FK cascade may not cover pending_pr)
-        await db.execute(
-            "DELETE FROM pending_pr WHERE session_id IN "
-            "(SELECT session_id FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?)",
-            (cutoff,),
-        )
-        await db.execute(
-            "DELETE FROM session_events WHERE session_id IN "
-            "(SELECT session_id FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?)",
-            (cutoff,),
-        )
-        cursor = await db.execute(
-            "DELETE FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?",
-            (cutoff,),
-        )
-        await db.commit()
+        async with self._conn() as db:
+            # Delete associated events and PR proposals first (FK cascade may not cover pending_pr)
+            await db.execute(
+                "DELETE FROM pending_pr WHERE session_id IN "
+                "(SELECT session_id FROM sessions"
+                " WHERE status IN ('completed','failed','cancelled')"
+                " AND updated_at < ?)",
+                (cutoff,),
+            )
+            await db.execute(
+                "DELETE FROM session_events WHERE session_id IN "
+                "(SELECT session_id FROM sessions"
+                " WHERE status IN ('completed','failed','cancelled')"
+                " AND updated_at < ?)",
+                (cutoff,),
+            )
+            cursor = await db.execute(
+                "DELETE FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?",
+                (cutoff,),
+            )
+            await db.commit()
         return cursor.rowcount
 
     async def close(self) -> None:
-        if self._conn is not None:
-            await self._conn.close()
-            self._conn = None
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
 
 
 class SessionManager:

@@ -268,6 +268,14 @@
     return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "");
   }
 
+  // 枚举值本地化：构造 `${prefix}_${value}` 的 i18n key，
+  // 翻译失败时回退为原始 value 字符串
+  function enumLabel(prefix, value) {
+    const key = prefix + "_" + safeClass(value);
+    const translated = translate(key);
+    return translated === key ? String(value || "") : translated;
+  }
+
   async function apiJson(url, options) {
     const response = await fetch(url, options);
     if (!response.ok) {
@@ -495,6 +503,7 @@
     escapeHtml,
     escapeAttr,
     safeClass,
+    enumLabel,
     translate,
     applyI18n,
     formatDuration,
@@ -509,7 +518,4 @@
   };
 
   window.IssueAgent = ns;
-  // 向后兼容：保留旧的全局导出
-  window.apiJson = apiJson;
-  window.escapeHtml = escapeHtml;
 })();

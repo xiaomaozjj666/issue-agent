@@ -28,6 +28,7 @@ from app.evidence import EvidenceValidator
 from app.i18n import get_final_output_prompt, get_report_phase_instruction, get_report_retry_prompt
 from app.json_utils import extract_json
 from app.models import AnalysisReport
+from app.provider import iter_deltas
 from app.retry import build_attempt_plan
 from app.tools import ToolExecutor
 
@@ -79,11 +80,8 @@ class ReportGenerator:
 
             content_parts: list[str] = []
             has_choices = False
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
+            async for delta in iter_deltas(stream):
                 has_choices = True
-                delta = chunk.choices[0].delta
 
                 # 实时推送 reasoning_content 到前端（DeepSeek thinking 模式）
                 reasoning = getattr(delta, "reasoning_content", None) or getattr(

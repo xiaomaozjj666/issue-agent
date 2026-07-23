@@ -237,16 +237,16 @@ async def test_purge_old_deletes_terminal_sessions_beyond_retention(tmp_path) ->
     # so the purge query sees them as beyond the retention window.
     stale_ts = "2020-01-01T00:00:00+00:00"
     store = manager._store
-    if hasattr(store, "_get_conn"):
-        db = await store._get_conn()
-        for sid in (
-            old_completed.session_id,
-            old_failed.session_id,
-            old_cancelled.session_id,
-            fresh_running.session_id,
-        ):
-            await db.execute("UPDATE sessions SET updated_at=? WHERE session_id=?", (stale_ts, sid))
-        await db.commit()
+    if hasattr(store, "_conn"):
+        async with store._conn() as db:
+            for sid in (
+                old_completed.session_id,
+                old_failed.session_id,
+                old_cancelled.session_id,
+                fresh_running.session_id,
+            ):
+                await db.execute("UPDATE sessions SET updated_at=? WHERE session_id=?", (stale_ts, sid))
+            await db.commit()
 
     purged = await manager.purge_old_sessions(retention_days=30)
     assert purged == 3
