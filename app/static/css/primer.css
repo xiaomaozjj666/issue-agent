@@ -4809,3 +4809,32 @@ body.modal-open {
   width: 14px;
   height: 14px;
 }
+
+/* ── ReactBits 动效复刻（motion.js 配套样式） ──────────── */
+/* 涟漪元素：pointer-events 防止干扰点击，z-index 置于内容下方 */
+.motion-ripple {
+  z-index: 0;
+}
+
+/* TiltCard 悬停时的光泽层（可选，克制版不加额外光泽） */
+.report-metric-card {
+  transform-style: preserve-3d;
+}
+
+/* prefers-reduced-motion：禁用所有 motion.js 动效，
+   确保无障碍用户不受动画干扰 */
+@media (prefers-reduced-motion: reduce) {
+  .report-metric-card,
+  .evidence-item,
+  .change-item,
+  .risk-item,
+  .review-findings li {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  .motion-ripple {
+    display: none !important;
+  }
+}
