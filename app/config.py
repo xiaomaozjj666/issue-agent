@@ -78,9 +78,15 @@ class Settings(BaseSettings):
     )
     max_pr_files: int = Field(default=20, ge=1, le=50)
     max_pr_total_bytes: int = Field(default=1_000_000, ge=4_096, le=10_000_000)
-    # 会话导入请求体上限：会话导出包含 tree/messages/report/events，5MB 覆盖典型场景。
-    # 既防御恶意超大 JSON 导致的 DoS，又保留大仓库会话的导入能力。
     max_session_import_bytes: int = Field(default=5_242_880, ge=65_536, le=52_428_800)
+    # ── Circuit breaker ────────────────────────────────────────────────
+    # LLM provider 熔断器：连续失败 N 次后快速拒绝，避免所有请求等到超时。
+    circuit_breaker_threshold: int = Field(default=5, ge=2, le=20)
+    circuit_breaker_recovery: float = Field(default=30.0, gt=1, le=300)
+    # ── Batch processing ───────────────────────────────────────────────
+    # 批量分析并发数和队列容量：无外部 broker，纯 asyncio 实现。
+    batch_max_concurrent: int = Field(default=2, ge=1, le=8)
+    batch_max_queue_size: int = Field(default=100, ge=1, le=500)
 
 
 @lru_cache
