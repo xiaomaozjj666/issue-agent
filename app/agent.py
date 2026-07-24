@@ -20,6 +20,7 @@ import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessage
 
+from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
 from app.errors import ModelResponseError
 from app.events import (
@@ -65,10 +66,12 @@ class IssueAgent:
         settings: Settings,
         *,
         client: AsyncOpenAI | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         self.settings = settings
         self._client: AsyncOpenAI | None = client
         self._owns_client = client is None
+        self._circuit_breaker = circuit_breaker
         # 报告生成委托给独立的 ReportGenerator，避免 IssueAgent 单类过大。
         # client 延迟创建（_get_client），所以这里先用 None，首次生成报告时再绑定。
         self._report_generator: ReportGenerator | None = None
@@ -93,7 +96,9 @@ class IssueAgent:
     def _get_report_generator(self) -> ReportGenerator:
         """延迟创建 ReportGenerator，确保 client 已就绪。"""
         if self._report_generator is None:
-            self._report_generator = ReportGenerator(self.settings, self._get_client())
+            self._report_generator = ReportGenerator(
+                self.settings, self._get_client(), circuit_breaker=self._circuit_breaker
+            )
         return self._report_generator
 
     # ── streaming investigation ─────────────────────────────────────
@@ -168,12 +173,21 @@ class IssueAgent:
                     )
                 if session is not None:
                     session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
-                response = await client.chat.completions.create(
-                    **chat_request_options(self.settings),
-                    messages=messages,  # type: ignore[arg-type]
-                    tools=tools,  # type: ignore[arg-type]
-                    max_tokens=self.settings.max_output_tokens,
-                )
+                if self._circuit_breaker is not None:
+                    response = await self._circuit_breaker.call(
+                        client.chat.completions.create,
+                        **chat_request_options(self.settings),
+                        messages=messages,  # type: ignore[arg-type]
+                        tools=tools,  # type: ignore[arg-type]
+                        max_tokens=self.settings.max_output_tokens,
+                    )
+                else:
+                    response = await client.chat.completions.create(
+                        **chat_request_options(self.settings),
+                        messages=messages,  # type: ignore[arg-type]
+                        tools=tools,  # type: ignore[arg-type]
+                        max_tokens=self.settings.max_output_tokens,
+                    )
 
                 if not response.choices:
                     raise ModelResponseError("The model returned no choices")
@@ -231,7 +245,7 @@ class IssueAgent:
                     session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                     session.metrics["review_calls"] = int(session.metrics.get("review_calls", 0)) + 1
                 try:
-                    outcome = await ReviewerAgent(self.settings, client).review(
+                    outcome = await ReviewerAgent(self.settings, client, circuit_breaker=self._circuit_breaker).review(
                         issue=issue,
                         report=report,
                         file_cache=executor.file_cache,
@@ -578,6 +592,8 @@ class IssueAgent:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+        if self._circuit_breaker is not None:
+            return await self._circuit_breaker.call(client.chat.completions.create, **kwargs)
         return await client.chat.completions.create(**kwargs)
 
     async def _call_llm_stream(
@@ -604,6 +620,8 @@ class IssueAgent:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+        if self._circuit_breaker is not None:
+            return await self._circuit_breaker.call(client.chat.completions.create, **kwargs)
         return await client.chat.completions.create(**kwargs)
 
     def _build_executor(self, github: GitHubClient, issue: IssueData, tree: list[str], **kwargs) -> ToolExecutor:

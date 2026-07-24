@@ -10,6 +10,7 @@ import logging
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
+from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
 from app.errors import ReviewResponseError
 from app.evidence import EvidenceValidator
@@ -28,9 +29,12 @@ logger = logging.getLogger(__name__)
 class ReviewerAgent:
     """Review an investigator report using only independently supplied source evidence."""
 
-    def __init__(self, settings: Settings, client: AsyncOpenAI) -> None:
+    def __init__(
+        self, settings: Settings, client: AsyncOpenAI, *, circuit_breaker: CircuitBreaker | None = None
+    ) -> None:
         self.settings = settings
         self._client = client
+        self._circuit_breaker = circuit_breaker
 
     async def review(
         self,
@@ -95,12 +99,21 @@ class ReviewerAgent:
                     {"role": "user", "content": get_review_retry_prompt(last_raw_content, last_failure_reason)},
                 ]
 
-            response = await self._client.chat.completions.create(  # type: ignore[call-overload]
-                **plan.options,
-                messages=attempt_messages,
-                response_format={"type": "json_object"},
-                max_tokens=self.settings.review_max_tokens,
-            )
+            if self._circuit_breaker is not None:
+                response = await self._circuit_breaker.call(
+                    self._client.chat.completions.create,
+                    **plan.options,
+                    messages=attempt_messages,
+                    response_format={"type": "json_object"},
+                    max_tokens=self.settings.review_max_tokens,
+                )
+            else:
+                response = await self._client.chat.completions.create(  # type: ignore[call-overload]
+                    **plan.options,
+                    messages=attempt_messages,
+                    response_format={"type": "json_object"},
+                    max_tokens=self.settings.review_max_tokens,
+                )
             if not response.choices:
                 last_raw_content = ""
                 last_failure_reason = "The reviewer returned no choices"

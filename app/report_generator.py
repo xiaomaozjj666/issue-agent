@@ -21,6 +21,7 @@ from collections.abc import AsyncGenerator
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
+from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
 from app.errors import ModelResponseError
 from app.events import AgentEvent, reasoning_event
@@ -43,9 +44,12 @@ class ReportGenerator:
     供现有测试和调用方继续使用，无需改动。
     """
 
-    def __init__(self, settings: Settings, client: AsyncOpenAI) -> None:
+    def __init__(
+        self, settings: Settings, client: AsyncOpenAI, *, circuit_breaker: CircuitBreaker | None = None
+    ) -> None:
         self._settings = settings
         self._client = client
+        self._circuit_breaker = circuit_breaker
 
     async def generate_stream(
         self,
@@ -70,13 +74,23 @@ class ReportGenerator:
             )
 
             # 流式调用：实时接收 reasoning_content 和 content 增量
-            stream = await self._client.chat.completions.create(  # type: ignore[call-overload]
-                **plan.options,
-                messages=plan.messages,
-                response_format={"type": "json_object"},
-                max_tokens=self._settings.max_output_tokens,
-                stream=True,
-            )
+            if self._circuit_breaker is not None:
+                stream = await self._circuit_breaker.call(
+                    self._client.chat.completions.create,
+                    **plan.options,
+                    messages=plan.messages,
+                    response_format={"type": "json_object"},
+                    max_tokens=self._settings.max_output_tokens,
+                    stream=True,
+                )
+            else:
+                stream = await self._client.chat.completions.create(  # type: ignore[call-overload]
+                    **plan.options,
+                    messages=plan.messages,
+                    response_format={"type": "json_object"},
+                    max_tokens=self._settings.max_output_tokens,
+                    stream=True,
+                )
 
             content_parts: list[str] = []
             has_choices = False
