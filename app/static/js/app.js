@@ -2295,6 +2295,9 @@
 
     // #16 图表懒加载 + #28 骨架屏：IntersectionObserver 触发初始化
     initLazyCharts(r, sessionData);
+
+    // ReactBits 动效复刻：指标数字滚动 + 列表逐项入场 + 卡片倾斜 + 涟漪 + 平滑展开
+    if (IA.Motion) IA.Motion.applyReportMotion(d);
   }
 
   // #16 图表懒加载：进入视口时再初始化 ECharts 实例，减少首屏渲染开销
@@ -3650,6 +3653,8 @@
     loadSessions();
     // CDN 脚本在 <head> 中先于本脚本加载，DOMContentLoaded 时 onerror 标志已就绪
     checkCdnFailures();
+    // ReactBits 动效全局初始化：主题切换过渡 + 主按钮涟漪
+    if (IA.Motion) IA.Motion.init();
   });
 
   // DOM 已就绪时立即加载；否则由 DOMContentLoaded 处理（保留向后兼容入口）
