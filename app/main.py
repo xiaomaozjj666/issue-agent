@@ -582,9 +582,31 @@ async def export_session(session_id: str, manager: SessionMgr) -> JSONResponse:
 @app.post("/session/import", response_model=SessionSummary)
 async def import_session(request: Request, manager: SessionMgr) -> SessionSummary:
     """导入会话 JSON，创建新会话（生成新 session_id，保留原始数据）。"""
+    settings = get_settings()
+    # 两阶段大小校验：先看 Content-Length 早拒（避免读取超大 body 浪费带宽），
+    # 再校验实际 body 字节数（防御 chunked transfer 不带 Content-Length 的场景）。
+    content_length = request.headers.get("Content-Length")
+    if content_length:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header") from None
+        if declared > settings.max_session_import_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Import payload too large: {declared} bytes exceeds limit {settings.max_session_import_bytes}",
+            )
+
+    raw_body = await request.body()
+    if len(raw_body) > settings.max_session_import_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Import payload too large: {len(raw_body)} bytes exceeds limit {settings.max_session_import_bytes}",
+        )
+
     try:
-        body = await request.json()
-    except Exception as exc:
+        body = json.loads(raw_body)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
 
     if not isinstance(body, dict) or body.get("format") != "issue-agent-session":

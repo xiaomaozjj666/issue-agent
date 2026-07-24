@@ -139,15 +139,35 @@
     };
   }
 
+  // 归一化文件路径：统一分隔符、去掉 ./ 与 a/ b/(diff) 前缀、转小写
+  function normPath(p) {
+    return String(p || "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/^[ab]\//, "").toLowerCase();
+  }
+
+  // 构建"文件已读"匹配器：合并 files_read 与 files_examined 两个来源，
+  // 归一化后支持精确 / 后缀匹配，容忍 src/ 等前缀差异导致的匹配失败
+  function buildFileReadMatcher(report, sessionData) {
+    const sources = [];
+    if (sessionData && Array.isArray(sessionData.files_read)) Array.prototype.push.apply(sources, sessionData.files_read);
+    if (report && Array.isArray(report.files_examined)) Array.prototype.push.apply(sources, report.files_examined);
+    const normed = sources.map(normPath).filter(Boolean);
+    return function (path) {
+      const p = normPath(path);
+      if (!p) return false;
+      for (let i = 0; i < normed.length; i++) {
+        const n = normed[i];
+        if (n === p || n.endsWith("/" + p) || p.endsWith("/" + n)) return true;
+      }
+      return false;
+    };
+  }
+
   // ── 数据预处理：证据校验评分 ────────────────────────────
   // 4 个维度各打 0/0.5/1 分，综合评估证据可信度
   // 返回 { scores: [[dim0,dim1,dim2,dim3], ...], labels: [...], details: [...] }
   function scoreEvidence(report, sessionData) {
     const evidence = report.evidence || [];
-    const filesRead = (sessionData && sessionData.files_read && sessionData.files_read.length)
-      ? sessionData.files_read
-      : (report.files_examined || []);
-    const filesReadSet = new Set(filesRead);
+    const isFileRead = buildFileReadMatcher(report, sessionData);
     const reviewPassed = report.review_audit && report.review_audit.status === "approved";
 
     // 文件名智能去重：短名冲突时回退到完整路径
@@ -166,7 +186,7 @@
     const details = [];
     evidence.forEach(function (e, i) {
       // 维度 0：文件已读取
-      const fileReadScore = filesReadSet.has(e.path) ? 1 : 0;
+      const fileReadScore = isFileRead(e.path) ? 1 : 0;
       // 维度 1：行号有效
       let linesScore = 0;
       if (e.lines && /^L\d+(-L?\d+)?$/.test(e.lines)) linesScore = 1;
@@ -197,8 +217,8 @@
   }
 
   // 计算证据-根因支撑权重 (0~1)
-  function supportWeight(e, filesReadSet) {
-    const fileRead = filesReadSet.has(e.path) ? 1 : 0;
+  function supportWeight(e, isFileRead) {
+    const fileRead = isFileRead(e.path) ? 1 : 0;
     let linesValid = 0;
     if (e.lines && /^L\d+(-L?\d+)?$/.test(e.lines)) linesValid = 1;
     else if (e.lines && /^L/i.test(e.lines)) linesValid = 0.5;
@@ -361,10 +381,7 @@
       return null;
     }
 
-    const filesRead = (sessionData && sessionData.files_read && sessionData.files_read.length)
-      ? sessionData.files_read
-      : (report.files_examined || []);
-    const filesReadSet = new Set(filesRead);
+    const isFileRead = buildFileReadMatcher(report, sessionData);
 
     // 从 root_cause 提取关键论点作为中间节点
     const causeText = report.root_cause || t("sankey_default_cause");
@@ -389,7 +406,7 @@
       return e.lines ? shortPath + " " + e.lines : shortPath;
     });
     fileNames.forEach(function (f, i) {
-      const w = supportWeight(evidence[i], filesReadSet);
+      const w = supportWeight(evidence[i], isFileRead);
       nodes.push({ name: f, itemStyle: { color: w >= 0.7 ? palette.success : palette.muted } });
     });
 
@@ -404,7 +421,7 @@
     evidence.forEach(function (e, i) {
       const targetCause = causeLabels[i % causeLabels.length];
       const fileName = fileNames[i];
-      const w = supportWeight(e, filesReadSet);
+      const w = supportWeight(e, isFileRead);
       // Sankey value 需 > 0，权重 0 时给最小值 0.1
       const sankeyValue = Math.max(w * 10, 0.1);
       links.push({
@@ -482,9 +499,10 @@
           color: palette.text,
           fontSize: layout.fontSize,
           fontWeight: 500,
-          formatter: function (name) {
+          formatter: function (params) {
+            const name = params && params.name != null ? params.name : "";
             const max = layout.fontSize <= 10 ? 14 : 20;
-            if (typeof name !== "string") return name;
+            if (typeof name !== "string") return String(name);
             return name.length > max ? name.slice(0, max) + "…" : name;
           },
         },
@@ -610,6 +628,7 @@
         gap: 4,
         label: {
           show: true,
+          position: "inside",
           color: "#ffffff",
           fontSize: 11,
           fontWeight: 600,

@@ -29,7 +29,8 @@ class Settings(BaseSettings):
     openai_thinking: Literal["enabled", "disabled"] = "enabled"
     openai_reasoning_effort: Literal["high", "max"] = "high"
     openai_timeout: float = Field(default=180.0, gt=0, le=300, description="DeepSeek thinking mode often needs 60-120s")
-    openai_max_retries: int = Field(default=2, ge=0, le=5)
+    # SDK 层不重试：报告生成/审查已有应用层重试（max_report_retries），避免双重重试放大延迟。
+    openai_max_retries: int = Field(default=0, ge=0, le=5)
 
     # ── GitHub integration ───────────────────────────────────────────
     github_token: str | None = None
@@ -48,10 +49,10 @@ class Settings(BaseSettings):
     )
 
     # ── Agent behaviour ──────────────────────────────────────────────
-    max_candidate_files: int = Field(default=20, ge=1, le=30)
+    max_candidate_files: int = Field(default=12, ge=1, le=30)
     max_planning_paths: int = Field(default=80, ge=10, le=200)
-    max_file_chars: int = Field(default=20_000, ge=1_000, le=50_000)
-    max_total_context_chars: int = Field(default=100_000, ge=5_000, le=200_000)
+    max_file_chars: int = Field(default=16_000, ge=1_000, le=50_000)
+    max_total_context_chars: int = Field(default=80_000, ge=5_000, le=200_000)
     max_output_tokens: int = Field(default=8_000, ge=500, le=16_000)
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
     max_investigation_ledger_chars: int = Field(default=12_000, ge=1_000, le=50_000)
@@ -77,6 +78,9 @@ class Settings(BaseSettings):
     )
     max_pr_files: int = Field(default=20, ge=1, le=50)
     max_pr_total_bytes: int = Field(default=1_000_000, ge=4_096, le=10_000_000)
+    # 会话导入请求体上限：会话导出包含 tree/messages/report/events，5MB 覆盖典型场景。
+    # 既防御恶意超大 JSON 导致的 DoS，又保留大仓库会话的导入能力。
+    max_session_import_bytes: int = Field(default=5_242_880, ge=65_536, le=52_428_800)
 
 
 @lru_cache
