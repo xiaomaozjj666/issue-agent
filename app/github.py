@@ -469,16 +469,18 @@ class GitHubClient:
     async def get_file_sha(self, owner: str, repo: str, path: str, ref: str) -> str | None:
         repo_segment = self._repo_segment(owner, repo)
         encoded_path = quote(path, safe="/")
-        response = await self._client.get(
-            f"/repos/{repo_segment}/contents/{encoded_path}",
-            params={"ref": ref},
-        )
-        if response.status_code == 404:
-            return None
-        if response.status_code in RATE_LIMIT_STATUSES:
-            raise GitHubRateLimitError(f"GitHub API rate limit hit (status {response.status_code})")
-        if response.status_code >= 400:
-            raise GitHubError(f"Failed to inspect existing file: {response.text}")
+        # 复用 _get 获得 5xx 重试 + 限流处理，与其他 GET 方法保持一致。
+        # _get 对 404 抛 GitHubError("GitHub API returned 404: ...")，这里捕获并转为 None。
+        try:
+            response = await self._get(
+                f"/repos/{repo_segment}/contents/{encoded_path}",
+                params={"ref": ref},
+            )
+        except GitHubError as exc:
+            # 严格匹配 "returned 404" 前缀，避免误捕获含 404 的其他错误消息
+            if "GitHub API returned 404:" in str(exc):
+                return None
+            raise
         sha = response.json().get("sha")
         return sha if isinstance(sha, str) and sha else None
 

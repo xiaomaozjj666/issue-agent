@@ -320,33 +320,50 @@ class IssueAgent:
             logger.exception("chat_stream failed for session %s", session.session_id)
             yield {"type": "error", "message": _friendly_chat_error(exc)}
 
-    async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
+    def _chat_prepare(self, session: Session, message: str) -> tuple[GitHubClient, ToolExecutor, list[dict]]:
+        """Chat 共享初始化：校验 session、构建 executor 与 messages。
+
+        返回 (github, executor, messages)。调用方负责 ``async with github`` 管理
+        client 生命周期，消除 _chat / _chat_stream 的重复初始化逻辑。
+        """
         if session.issue is None:
             raise ValueError("Session not initialized")
 
-        tools = get_tool_definitions(self.settings)
-        async with GitHubClient(
+        github = GitHubClient(
             self.settings.github_token,
             max_file_bytes=self.settings.github_max_file_bytes,
             timeout=self.settings.github_timeout,
             max_retries=self.settings.github_max_retries,
-        ) as github:
-            executor = self._build_executor(
-                github,
-                session.issue,
-                session.tree,
-                file_cache=session.file_cache,
-                files_read=session.files_read,
-            )
+        )
+        executor = self._build_executor(
+            github,
+            session.issue,
+            session.tree,
+            file_cache=session.file_cache,
+            files_read=session.files_read,
+        )
+        investigation_context = _build_investigation_context(session)
+        session.messages.append({"role": "user", "content": message})
+        messages = [
+            {"role": "system", "content": get_chat_system_prompt()},
+            {"role": "system", "content": investigation_context},
+            *session.messages,
+        ]
+        return github, executor, messages
 
-            investigation_context = _build_investigation_context(session)
-            session.messages.append({"role": "user", "content": message})
-            messages = [
-                {"role": "system", "content": get_chat_system_prompt()},
-                {"role": "system", "content": investigation_context},
-                *session.messages,
-            ]
+    def _chat_finalize(self, executor: ToolExecutor, session: Session) -> None:
+        """Chat 共享收尾：回写 file_cache/files_read 并裁剪历史消息。"""
+        session.file_cache = executor.file_cache
+        session.files_read = executor.files_read
+        history_budget = self.settings.max_total_context_chars - sum(
+            len(content) for content in session.file_cache.values()
+        )
+        _trim_session_messages(session.messages, max(history_budget, 0))
 
+    async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
+        tools = get_tool_definitions(self.settings)
+        github, executor, messages = self._chat_prepare(session, message)
+        async with github:
             for _ in range(self.settings.max_agent_iterations):
                 session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                 collected_content_parts: list[str] = []
@@ -384,6 +401,7 @@ class IssueAgent:
                         "type": "error",
                         "message": "Model returned an empty response. Please try rephrasing your question.",
                     }
+                    self._chat_finalize(executor, session)
                     return
                 serialized: dict = {"role": "assistant", "content": collected_content}
                 ordered_tool_calls = [tool_call_buffers[i] for i in sorted(tool_call_buffers)]
@@ -402,12 +420,7 @@ class IssueAgent:
 
                 if not ordered_tool_calls:
                     # 没有工具调用：回复完成
-                    session.file_cache = executor.file_cache
-                    session.files_read = executor.files_read
-                    history_budget = self.settings.max_total_context_chars - sum(
-                        len(content) for content in session.file_cache.values()
-                    )
-                    _trim_session_messages(session.messages, max(history_budget, 0))
+                    self._chat_finalize(executor, session)
                     yield {
                         "type": "done",
                         "reply": collected_content,
@@ -444,12 +457,7 @@ class IssueAgent:
                     session.messages.append(tool_msg)
 
             # 达到迭代上限
-            session.file_cache = executor.file_cache
-            session.files_read = executor.files_read
-            history_budget = self.settings.max_total_context_chars - sum(
-                len(content) for content in session.file_cache.values()
-            )
-            _trim_session_messages(session.messages, max(history_budget, 0))
+            self._chat_finalize(executor, session)
             yield {
                 "type": "done",
                 "reply": t("depth_limit"),
@@ -457,32 +465,9 @@ class IssueAgent:
             }
 
     async def _chat(self, session: Session, message: str) -> ChatResponse:
-        if session.issue is None:
-            raise ValueError("Session not initialized")
-
         tools = get_tool_definitions(self.settings)
-        async with GitHubClient(
-            self.settings.github_token,
-            max_file_bytes=self.settings.github_max_file_bytes,
-            timeout=self.settings.github_timeout,
-            max_retries=self.settings.github_max_retries,
-        ) as github:
-            executor = self._build_executor(
-                github,
-                session.issue,
-                session.tree,
-                file_cache=session.file_cache,
-                files_read=session.files_read,
-            )
-
-            investigation_context = _build_investigation_context(session)
-            session.messages.append({"role": "user", "content": message})
-            messages = [
-                {"role": "system", "content": get_chat_system_prompt()},
-                {"role": "system", "content": investigation_context},
-                *session.messages,
-            ]
-
+        github, executor, messages = self._chat_prepare(session, message)
+        async with github:
             for _ in range(self.settings.max_agent_iterations):
                 session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                 response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
@@ -494,12 +479,7 @@ class IssueAgent:
                 session.messages.append(serialized)
 
                 if not msg.tool_calls:
-                    session.file_cache = executor.file_cache
-                    session.files_read = executor.files_read
-                    history_budget = self.settings.max_total_context_chars - sum(
-                        len(content) for content in session.file_cache.values()
-                    )
-                    _trim_session_messages(session.messages, max(history_budget, 0))
+                    self._chat_finalize(executor, session)
                     return ChatResponse(
                         session_id=session.session_id,
                         reply=msg.content or "",
@@ -508,7 +488,15 @@ class IssueAgent:
 
                 for tc in msg.tool_calls:
                     name, args = parse_tool_call(tc)
-                    result = await executor.execute(name, args)
+                    # 非流式也加超时保护，与 _chat_stream 保持一致（修复评估发现的不一致）
+                    try:
+                        result = await asyncio.wait_for(
+                            executor.execute(name, args),
+                            timeout=self.settings.tool_timeout,
+                        )
+                    except TimeoutError:
+                        result = f"Error: Tool '{name}' timed out after {self.settings.tool_timeout:.0f}s"
+                        logger.warning("Chat tool %s timed out after %ss", name, self.settings.tool_timeout)
                     session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     session.metrics["files_read"] = len(executor.files_read)
                     if executor.pr_proposal is not None:
@@ -517,12 +505,7 @@ class IssueAgent:
                     messages.append(tool_msg)
                     session.messages.append(tool_msg)
 
-        session.file_cache = executor.file_cache
-        session.files_read = executor.files_read
-        history_budget = self.settings.max_total_context_chars - sum(
-            len(content) for content in session.file_cache.values()
-        )
-        _trim_session_messages(session.messages, max(history_budget, 0))
+        self._chat_finalize(executor, session)
         return ChatResponse(
             session_id=session.session_id,
             reply=t("depth_limit"),
