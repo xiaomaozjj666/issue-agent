@@ -320,7 +320,7 @@
             '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:260px;white-space:normal;">' + IA.escapeHtml(detail) + '</div>';
         },
       }),
-      grid: { left: 8, right: 16, top: 16, bottom: 60, containLabel: true },
+      grid: { left: 8, right: 16, top: 36, bottom: 60, containLabel: true },
       toolbox: toolbox(palette),
       xAxis: {
         type: "category",
@@ -471,7 +471,7 @@
       toolbox: toolbox(palette),
       legend: {
         show: true,
-        right: 8,
+        left: 8,
         top: 0,
         data: [
           { name: t("sankey_legend_strong"), icon: "circle", itemStyle: { color: palette.success } },
@@ -489,7 +489,7 @@
         orient: "horizontal",
         left: layout.left,
         right: layout.right,
-        top: 28,
+        top: 36,
         bottom: 16,
         nodeWidth: layout.nodeWidth,
         nodeGap: layout.nodeGap,
@@ -619,7 +619,7 @@
         }),
         left: "10%",
         right: "10%",
-        top: 16,
+        top: 36,
         bottom: 30,
         width: "80%",
         minSize: "20%",
@@ -684,7 +684,7 @@
         title: {
           text: IA.escapeHtml(t("funnel_waste_title")),
           left: "center",
-          top: 0,
+          bottom: 0,
           textStyle: { color: palette.textDim, fontSize: 11, fontWeight: 500 },
         },
         tooltip: mobileTooltip({
