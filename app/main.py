@@ -22,13 +22,16 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openai import APIError
+from pydantic import BaseModel as PydanticBaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
 from app.build import BUILD_ID
+from app.circuit_breaker import CircuitBreaker
 from app.config import get_settings
+from app.errors import CircuitBreakerOpenError
 from app.events import cancelled_event, error_event, session_event
 from app.github import GitHubError, GitHubRateLimitError
 from app.i18n import get_frontend_strings
@@ -57,6 +60,7 @@ from app.services import (
     session_summary,
 )
 from app.sessions import Session, SessionConflictError, SessionManager
+from app.task_queue import Batch, TaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +77,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     manager = SessionManager(db_path=db_path)
     _app.state.session_manager = manager
 
+    # 熔断器：跨请求共享，追踪 LLM provider 全局健康状态
+    breaker = CircuitBreaker(
+        threshold=settings.circuit_breaker_threshold,
+        recovery=settings.circuit_breaker_recovery,
+    )
+    _app.state.circuit_breaker = breaker
+
     # Purge old completed/failed sessions on startup
     try:
         purged = await manager.purge_old_sessions(settings.session_retention_days)
@@ -81,9 +92,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("Session purge on startup failed; continuing", exc_info=True)
 
+    # 批量分析任务队列：纯 asyncio 实现，无需外部 broker
+    task_queue = TaskQueue(
+        settings,
+        breaker,
+        max_concurrent=settings.batch_max_concurrent,
+        max_queue_size=settings.batch_max_queue_size,
+    )
+    await task_queue.start()
+    _app.state.task_queue = task_queue
+
     try:
         yield
     finally:
+        _app.state.task_queue = None
+        await task_queue.stop()
         _app.state.session_manager = None
         await manager.close()
 
@@ -155,8 +178,15 @@ def get_session_manager(request: Request) -> SessionManager:
     return manager
 
 
+def get_circuit_breaker(request: Request) -> CircuitBreaker:
+    """FastAPI dependency: retrieve the CircuitBreaker from app state."""
+    breaker: CircuitBreaker = request.app.state.circuit_breaker
+    return breaker
+
+
 # Annotated dependency alias — avoids B008 lint warnings and reduces line length.
 SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
+CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
 
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -172,14 +202,20 @@ async def session_conflict_handler(request: Request, error: SessionConflictError
     return JSONResponse(status_code=409, content={"detail": "Session changed concurrently; reload and try again"})
 
 
+@app.exception_handler(CircuitBreakerOpenError)
+async def circuit_breaker_handler(request: Request, error: CircuitBreakerOpenError) -> JSONResponse:
+    logger.warning("Circuit breaker open, rejecting request to %s", request.url.path)
+    return JSONResponse(status_code=503, content={"detail": str(error)})
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "app": "issue-agent", "build_id": BUILD_ID}
 
 
 @app.post("/analyze", response_model=AnalysisReport)
-async def analyze(request: AnalyzeRequest) -> AnalysisReport:
-    agent = IssueAgent(get_settings())
+async def analyze(request: AnalyzeRequest, breaker: CircuitBreakerDep) -> AnalysisReport:
+    agent = IssueAgent(get_settings(), circuit_breaker=breaker)
     try:
         return await agent.investigate(str(request.issue_url))
     except ValueError as error:
@@ -198,9 +234,11 @@ async def analyze(request: AnalyzeRequest) -> AnalysisReport:
 
 
 @app.post("/stream")
-async def stream_analysis(request: StreamRequest, session_mgr: SessionMgr) -> StreamingResponse:
+async def stream_analysis(
+    request: StreamRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep
+) -> StreamingResponse:
     settings = get_settings()
-    agent = IssueAgent(settings)
+    agent = IssueAgent(settings, circuit_breaker=breaker)
 
     async def event_generator() -> AsyncIterator[str]:
         session: Session | None = None
@@ -292,8 +330,8 @@ async def stream_analysis(request: StreamRequest, session_mgr: SessionMgr) -> St
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, session_mgr: SessionMgr) -> ChatResponse:
-    agent = IssueAgent(get_settings())
+async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep) -> ChatResponse:
+    agent = IssueAgent(get_settings(), circuit_breaker=breaker)
     session: Session | None = None
     try:
         if request.session_id:
@@ -352,7 +390,7 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr) -> ChatResponse:
 
 
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> StreamingResponse:
+async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep) -> StreamingResponse:
     """Stream chat reply token-by-token via Server-Sent Events.
 
     SSE event shapes (``data: <json>\\n\\n``):
@@ -373,7 +411,7 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr) -> Streamin
     if session.archived_at is not None:
         raise HTTPException(status_code=409, detail="Restore the archived session before continuing")
 
-    agent = IssueAgent(get_settings())
+    agent = IssueAgent(get_settings(), circuit_breaker=breaker)
     async with session.lock:
         session.status = "running"
         session.phase = "chatting"
@@ -660,6 +698,71 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     if refreshed is None:
         raise HTTPException(status_code=500, detail="Imported session could not be loaded")
     return session_summary(refreshed)
+
+
+
+
+# ── 批量分析 ──────────────────────────────────────────────────
+# 异步任务队列：提交多个 issue URL，后台逐一调查，轮询进度。
+class BatchSubmitRequest(PydanticBaseModel):
+    issue_urls: list[str]
+
+
+class BatchTaskResponse(PydanticBaseModel):
+    task_id: str
+    issue_url: str
+    status: str
+    error: str | None = None
+
+
+class BatchStatusResponse(PydanticBaseModel):
+    batch_id: str
+    status: str
+    progress: dict
+    tasks: list[BatchTaskResponse]
+
+
+def get_task_queue(request: Request) -> TaskQueue:
+    """FastAPI dependency: retrieve the TaskQueue from app state."""
+    queue: TaskQueue = request.app.state.task_queue
+    return queue
+
+
+TaskQueueDep = Annotated[TaskQueue, Depends(get_task_queue)]
+
+
+@app.post("/batch", response_model=BatchStatusResponse)
+async def submit_batch(request: BatchSubmitRequest, queue: TaskQueueDep) -> BatchStatusResponse:
+    try:
+        batch = queue.submit(request.issue_urls)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _batch_response(batch)
+
+
+@app.get("/batch/{batch_id}", response_model=BatchStatusResponse)
+async def get_batch_status(batch_id: str, queue: TaskQueueDep) -> BatchStatusResponse:
+    batch = queue.get_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return _batch_response(batch)
+
+
+def _batch_response(batch: Batch) -> BatchStatusResponse:
+    return BatchStatusResponse(
+        batch_id=batch.batch_id,
+        status=batch.status,
+        progress=batch.progress,
+        tasks=[
+            BatchTaskResponse(
+                task_id=t.task_id,
+                issue_url=t.issue_url,
+                status=t.status,
+                error=t.error,
+            )
+            for t in batch.tasks
+        ],
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

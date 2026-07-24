@@ -11,3 +11,10 @@ class ModelResponseError(RuntimeError):
 
 class ReviewResponseError(RuntimeError):
     """独立审查器返回不可用：空响应、无 choices、JSON 校验失败等。"""
+
+
+class CircuitBreakerOpenError(RuntimeError):
+    """熔断器打开：LLM provider 连续失败超过阈值，快速拒绝请求。
+
+    调用方应捕获此异常并返回 HTTP 503 而非 502，
+    以便客户端区分"provider 不可用"和"临时故障"。"""
