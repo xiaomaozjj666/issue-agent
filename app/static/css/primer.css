@@ -504,9 +504,11 @@ a:hover {
 }
 
 /* 输入框 */
-#sidebar input,
-.dialog-body input,
-#input-bar input {
+/* 排除 checkbox：ID 选择器特异性会压过 .session-checkbox，
+   把复选框渲染成 34px 高的文本输入框样式 */
+#sidebar input:not([type="checkbox"]),
+.dialog-body input:not([type="checkbox"]),
+#input-bar input:not([type="checkbox"]) {
   min-height: 34px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -524,9 +526,9 @@ a:hover {
   opacity: 1;
 }
 
-#sidebar input:focus,
-.dialog-body input:focus,
-#input-bar input:focus {
+#sidebar input:not([type="checkbox"]):focus,
+.dialog-body input:not([type="checkbox"]):focus,
+#input-bar input:not([type="checkbox"]):focus {
   border-color: var(--accent);
   outline: none;
   box-shadow: 0 0 0 3px var(--ring), var(--input-shadow);
@@ -684,6 +686,15 @@ a:hover {
   white-space: nowrap;
 }
 
+/* flex 容器的 text-overflow 不作用于子元素文本：
+   文字 span 自身需要省略号规则，否则超长 repo 名会被硬裁切到半个字符 */
+.session-repo > span:not(.status-dot) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -775,7 +786,8 @@ a:hover {
   border-radius: var(--radius-sm);
 }
 
-/* #45 批量选择复选框：绝对定位在行左侧 */
+/* #45 批量选择复选框：绝对定位在行左侧。
+   默认隐藏避免视觉噪音，悬停/键盘聚焦/已勾选/批量选择进行中时显示 */
 .session-select {
   position: absolute;
   top: 10px;
@@ -786,6 +798,22 @@ a:hover {
   width: 18px;
   height: 18px;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.session-row:hover .session-select,
+.session-row:focus-within .session-select,
+.session-select:has(.session-checkbox:checked),
+#history-list[data-selecting="1"] .session-select {
+  opacity: 1;
+}
+
+/* 触屏端无 hover：复选框始终可见，保证批量操作可发现 */
+@media (hover: none) {
+  .session-select {
+    opacity: 1;
+  }
 }
 
 .session-checkbox {

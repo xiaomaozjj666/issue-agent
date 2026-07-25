@@ -399,7 +399,8 @@
     checkbox.className = "session-checkbox";
     checkbox.dataset.sessionId = session.session_id;
     checkbox.checked = selectedSessions.has(session.session_id);
-    checkbox.setAttribute("aria-label", t("batch_selected_count", { count: 1 }));
+    // aria-label 描述控件用途而非选中数量（选中状态由 checked 属性本身传达）
+    checkbox.setAttribute("aria-label", t("session_select_aria", { title: session.title || session.repo || session.session_id }));
     checkbox.addEventListener("click", function (e) { e.stopPropagation(); });
     checkbox.addEventListener("change", function () {
       if (checkbox.checked) {
@@ -813,6 +814,8 @@
     const list = document.getElementById("history-list");
     if (!list) return;
     const count = selectedSessions.size;
+    // 批量选择进行中时标记列表，让所有复选框保持可见（CSS 据此控制显隐）
+    list.dataset.selecting = count > 0 ? "1" : "0";
     let bar = document.getElementById("batch-toolbar");
     if (count === 0) {
       if (bar) bar.remove();
@@ -3230,7 +3233,8 @@
   var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
   var filesReadSet = {};
   filesRead.forEach(function(p){ filesReadSet[p] = true; });
-  var reviewPass = report.review_audit && report.review_audit.status === 'approved';
+  // approved/revised 均视为审查已验证（revised 展示的即修订版），与主视图 charts.js 语义一致
+  var reviewPass = report.review_audit && (report.review_audit.status === 'approved' || report.review_audit.status === 'revised');
   // BRAND 配色（与主应用 charts.js 统一）
   var C = { blue:'#165DFF', green:'#00B42A', red:'#F53F3F', orange:'#FF7D00', gray:'#86909C', text:'#f1f5f9', textDim:'#94a3b8', line:'#334155', bg:'#0f172a' };
 
@@ -3779,6 +3783,9 @@
     applyStoredTheme();
     IA.applyI18n(document);
     bindEvents();
+    // 首次进入时主区域渲染 Hero 欢迎页，避免空白等待（无活跃会话时的默认视图）
+    renderHero();
+    updateBackButton();
     loadSessions();
     // CDN 脚本在 <head> 中先于本脚本加载，DOMContentLoaded 时 onerror 标志已就绪
     checkCdnFailures();

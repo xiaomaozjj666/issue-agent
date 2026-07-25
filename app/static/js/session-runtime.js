@@ -29,9 +29,15 @@
     const total = meaningful.length;
     const buildStepHtml = function (event) {
       let label = event.message || event.type;
-      if (event.type === "phase" && event.data) label = event.data.label || event.data.phase;
+      if (event.type === "phase" && event.data) {
+        // 历史事件的 data.label 存的是英文原文，优先用 phase 枚举的 i18n 文案，
+        // 翻译缺失（enumLabel 回退为原值）时再降级到原始 label
+        const phaseLabel = event.data.phase ? IA.enumLabel("phase", event.data.phase) : "";
+        if (phaseLabel && phaseLabel !== String(event.data.phase)) label = phaseLabel;
+        else label = event.data.label || event.data.phase;
+      }
       if (event.type === "tool_call" && event.data) label = `${t("tool_call_label")}: ${event.data.name}`;
-      if (event.type === "review" && event.data) label = t("review_progress", { status: event.data.status });
+      if (event.type === "review" && event.data) label = t("review_progress", { status: IA.enumLabel("review_status", event.data.status) });
       return `<div class="timeline-step"><span>${IA.escapeHtml(label)}</span></div>`;
     };
     const allStepsHtml = meaningful.map(buildStepHtml).join("");

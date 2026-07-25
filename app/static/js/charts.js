@@ -191,7 +191,10 @@
   function scoreEvidence(report, sessionData) {
     const evidence = report.evidence || [];
     const isFileRead = buildFileReadMatcher(report, sessionData);
-    const reviewPassed = report.review_audit && report.review_audit.status === "approved";
+    // approved=审查直接通过；revised=审查后已修订（展示的即修订版，证据同样经过验证）
+    // 仅 not_run / unavailable 视为未验证
+    const reviewStatus = (report.review_audit && report.review_audit.status) || "not_run";
+    const reviewPassed = reviewStatus === "approved" || reviewStatus === "revised";
 
     // 文件名智能去重：短名冲突时回退到完整路径
     const rawPaths = evidence.map(function (e) { return e.path || "unknown"; });
@@ -233,7 +236,7 @@
       });
     });
 
-    return { scores: scores, labels: labels, details: details, evidence: evidence };
+    return { scores: scores, labels: labels, details: details, evidence: evidence, reviewStatus: reviewStatus };
   }
 
   // ── 区块1：证据可信度矩阵 ────────────────────────────────
@@ -286,12 +289,14 @@
       t("matrix_dim_file_read"),
     ];
 
-    // 构造 heatmap 数据：[x, y, value]，y 轴从上到下 = dimensions 数组顺序
+    // 构造 heatmap 数据：[x, y, value]，ECharts 类目 y 轴自下而上：
+    // y=0 审查已验证 / y=1 有理由说明 / y=2 行号有效 / y=3 文件已读取，
+    // 与 scores 数组 [文件已读, 行号, 理由, 审查] 顺序相反，需反向映射
     // 所有数据统一用数组格式，避免对象格式与 visualMap 冲突导致颜色映射失效
     const heatData = [];
     data.scores.forEach(function (scores, xIdx) {
       scores.forEach(function (val, yIdx) {
-        heatData.push([xIdx, yIdx, val]);
+        heatData.push([xIdx, 3 - yIdx, val]);
       });
     });
 
@@ -321,7 +326,14 @@
           const statusText = pass ? t("matrix_pass") : t("matrix_fail");
           // 该维度的核验原文
           let detail = "";
-          if (dimIdx === 0) detail = d.reviewVerified >= 1 ? t("matrix_detail_review_pass") : t("matrix_detail_review_fail");
+          if (dimIdx === 0) {
+            // 区分"直接通过"与"修订后通过"，避免 revised 状态显示误导性文案
+            if (d.reviewVerified >= 1) {
+              detail = data.reviewStatus === "revised" ? t("matrix_detail_review_revised") : t("matrix_detail_review_pass");
+            } else {
+              detail = t("matrix_detail_review_fail");
+            }
+          }
           else if (dimIdx === 1) detail = d.reason || t("matrix_detail_no_reason");
           else if (dimIdx === 2) detail = d.lines ? (t("matrix_detail_lines") + ": " + d.lines) : t("matrix_detail_no_lines");
           else if (dimIdx === 3) detail = d.fileRead >= 1 ? (t("matrix_detail_file_read") + ": " + d.path) : t("matrix_detail_file_not_read");
