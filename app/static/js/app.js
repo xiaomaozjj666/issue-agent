@@ -1045,7 +1045,7 @@
       });
     }
 
-    // ReactBits 动效挂载：星空背景 + 标题解密 + 卡片聚光灯
+    // ReactBits 动效挂载：全屏点阵背景 + 标题逐字入场 + 卡片聚光灯
     if (IA.Motion && IA.Motion.applyHeroMotion) {
       IA.Motion.applyHeroMotion(hero);
     }

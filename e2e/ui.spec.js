@@ -139,7 +139,7 @@ test("opens reports without hiding the conversation and builds valid GitHub link
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeHidden();
   await page.getByRole("button", { name: "返回上一步" }).click();
   // 退出会话后回到 Hero 欢迎页（而非旧版的空状态提示）
-  await expect(page.getByLabel("对话消息")).toContainText("把任意 GitHub Issue");
+  await expect(page.getByLabel("对话消息")).toContainText("从一条 Issue 链接开始");
 });
 
 test("restores the back button after a failed history request", async ({ page }) => {
