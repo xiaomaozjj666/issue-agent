@@ -1514,10 +1514,6 @@ a:hover {
     var(--bg);
 }
 
-[data-theme="light"] .hero-net-canvas {
-  opacity: 0.85;
-}
-
 /* 响应式：窄屏下压缩间距 */
 @media (max-width: 900px) {
   .msg.hero {

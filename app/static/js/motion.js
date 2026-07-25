@@ -566,7 +566,8 @@
     let linkAlpha = 0.16;
     let accentColor = "59,130,246";
 
-    // 从主题 CSS 变量取色，亮色主题用更深的灰保证可见但不抢眼
+    // 从主题 CSS 变量取色；白底下同等透明度的浅灰几乎不可见，
+    // 亮色主题改用更深的 slate-600 并抬高透明度才能达到与暗色相当的存在感
     function readColors() {
       const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
       const m = /^#([0-9a-f]{6})$/i.exec(accent);
@@ -577,9 +578,9 @@
           parseInt(m[1].slice(4, 6), 16);
       }
       const light = document.documentElement.getAttribute("data-theme") === "light";
-      baseColor = light ? "100,116,139" : "148,163,184";
-      nodeAlpha = light ? 0.5 : 0.4;
-      linkAlpha = light ? 0.2 : 0.16;
+      baseColor = light ? "71,85,105" : "148,163,184";
+      nodeAlpha = light ? 0.6 : 0.4;
+      linkAlpha = light ? 0.3 : 0.16;
     }
 
     function rebuild() {
