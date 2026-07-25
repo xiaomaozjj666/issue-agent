@@ -124,23 +124,26 @@
     matrix_dim_review_verified: "Review verified",
     matrix_pass: "Pass",
     matrix_fail: "Fail",
-    sankey_chart_title: "Evidence-to-root-cause support",
-    sankey_chart_caption: "Reasoning chain: Issue → root cause → evidence",
-    sankey_issue_node: "Issue",
-    sankey_default_cause: "Root cause",
-    sankey_cause_node_label: "Cause {n}",
-    sankey_strong_support: "Strong support (read + valid lines)",
-    sankey_weak_support: "Weak support (reason only)",
-    funnel_chart_title: "Investigation efficiency",
-    funnel_chart_caption: "Model calls → tool calls → files read → valid evidence",
-    funnel_model_calls: "Model calls",
-    funnel_tool_calls: "Tool calls",
-    funnel_files_read: "Files read",
-    funnel_valid_evidence: "Valid evidence",
-    funnel_count: "Count",
-    funnel_conversion: "Step conversion",
-    funnel_overall: "Overall conversion",
-    funnel_empty: "No investigation data available",
+    coverage_chart_title: "Investigation coverage",
+    coverage_chart_caption: "Which files that were read became evidence — red bars flag citations of files never read",
+    coverage_read_supported: "Read & cited as evidence",
+    coverage_read_unused: "Read, not cited",
+    coverage_not_read: "Cited but never read",
+    coverage_phantom_hint: "This file was cited as evidence but never actually read — verify manually",
+    coverage_evidence_count: "Evidence entries",
+    coverage_others: "+{n} more files",
+    coverage_stat: "Coverage: {used}/{total} files read became evidence ({pct}%)",
+    coverage_empty: "No coverage data available",
+    timeline_chart_title: "Investigation phase timing",
+    timeline_chart_caption: "Real time spent per phase from the event log — the longest phase is highlighted",
+    timeline_tools: "{n} tool calls",
+    timeline_total: "Total: {duration}",
+    timeline_fallback_note: "No phase timing data · showing activity totals",
+    timeline_metric_model_calls: "Model calls",
+    timeline_metric_tool_calls: "Tool calls",
+    timeline_metric_files_read: "Files read",
+    timeline_metric_evidence: "Evidence",
+    timeline_empty: "No investigation data available",
     chart_save_image: "Save as image",
     chart_restore: "Restore",
     report_fullscreen: "Fullscreen",
@@ -177,7 +180,6 @@
     files_tracker_empty: "No files explored yet",
     files_tracker_expand: "Expand dirs",
     files_tracker_collapse: "Collapse dirs",
-    sankey_medium_support: "Medium support (read, lines invalid)",
     chart_data_view: "View data",
     chart_data_view_refresh: "Refresh",
     report_evidence_chart_empty: "No code evidence yet",
@@ -200,6 +202,43 @@
     report_exit_split: "Exit split view",
     // #22 Heatmap 部分通过
     matrix_partial: "Partial",
+    // ── Hero 欢迎页（charts.js / app.js 共用） ─────────────────
+    hero_title: "Turn any GitHub Issue",
+    hero_title_accent: "into an actionable fix plan",
+    hero_subtitle: "Auto-reads body & comments · Locates root cause in code · Generates patches & regression tests · Independent review as safety net",
+    hero_eyebrow_text: "Repository Intelligence",
+    hero_step1_label: "01",
+    hero_step1_title: "Paste Issue URL",
+    hero_step1_desc: "Supports any public repository Issue URL",
+    hero_step2_label: "02",
+    hero_step2_title: "Agent auto-investigates",
+    hero_step2_desc: "Reads code · Searches symbols · Verifies causal chain",
+    hero_step3_label: "03",
+    hero_step3_title: "View pyramid report",
+    hero_step3_desc: "Conclusion first · Evidence visual · Fixes actionable",
+    hero_examples_title: "Try these real cases",
+    hero_examples_desc: "Click to start analysis",
+    hero_example_1_repo: "psf/requests",
+    hero_example_1_desc: "urllib3 redirect stripping Authorization",
+    hero_example_2_repo: "python/cpython",
+    hero_example_2_desc: "pathlib.Path glob performance regression",
+    hero_example_3_repo: "pallets/flask",
+    hero_example_3_desc: "Blueprint static folder endpoint conflict",
+    hero_start_button: "Start analysis",
+    // ── 证据矩阵详情（charts.js 矩阵 tooltip） ─────────────────
+    matrix_detail_review_pass: "Review approved",
+    matrix_detail_review_fail: "Review not approved",
+    matrix_detail_no_reason: "No reason provided",
+    matrix_detail_lines: "Lines",
+    matrix_detail_no_lines: "No line reference",
+    matrix_detail_file_read: "File read",
+    matrix_detail_file_not_read: "File not read",
+    matrix_summary_total: "Total evidence",
+    matrix_summary_failed: "Failed evidence",
+    matrix_summary_risks: "Risk evidence",
+    matrix_summary_no_risks: "No risk",
+    chart_load_failed: "Chart library failed to load. Check your network or refresh.",
+    cancel_failed_retry: "Cancel polling failed repeatedly. Check your network or refresh to see real status.",
   };
 
   function loadI18n() {
@@ -513,6 +552,27 @@
     return `${base}/blob/${ref}/${encodedPath}${linePart}`;
   }
 
+  // 跳转到指定索引的证据条目并临时高亮 1.6s
+  // 给图表点击下钻用：用户在矩阵/桑基图点击数据元素后，自动滚到对应证据
+  function jumpToEvidence(idx) {
+    if (typeof idx !== "number" || idx < 0) return;
+    const item = document.querySelector('.evidence-item[data-evidence-idx="' + idx + '"]');
+    if (!item) return;
+    item.scrollIntoView({ behavior: "smooth", block: "center" });
+    item.classList.add("evidence-highlight");
+    setTimeout(function () { item.classList.remove("evidence-highlight"); }, 1600);
+  }
+
+  // 跳转到指定 id 的报告章节并临时高亮
+  function jumpToSection(id) {
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.classList.add("section-highlight");
+    setTimeout(function () { target.classList.remove("section-highlight"); }, 1500);
+  }
+
   const ns = {
     apiJson,
     escapeHtml,
@@ -530,6 +590,8 @@
     renderSideBySideDiff,
     buildGitHubUrl,
     parseSseEvents,
+    jumpToEvidence,
+    jumpToSection,
   };
 
   window.IssueAgent = ns;

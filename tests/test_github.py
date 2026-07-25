@@ -217,7 +217,7 @@ async def test_get_does_not_retry_4xx_client_errors() -> None:
     await github._client.aclose()
     github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     async with github:
-        with pytest.raises(GitHubError, match="404"):
+        with pytest.raises(GitHubError, match="not found"):
             await github.get_issue("acme", "widget", 1)
 
     assert call_count == 1

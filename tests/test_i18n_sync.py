@@ -111,8 +111,9 @@ def test_i18n_defaults_are_subset_of_frontend_strings_en() -> None:
 # 避免 enumLabel 回退为原始 value 字符串（用户看到裸英文枚举值）。
 _ENUM_DOMAINS: dict[str, set[str]] = {
     "phase": {
-        "starting", "investigating", "reviewing", "reporting",
-        "chatting", "completed", "failed", "interrupted", "cancelled",
+        "starting", "queued", "fetching", "preloading", "exploring",
+        "verifying", "investigating", "reviewing", "reporting",
+        "chatting", "done", "completed", "failed", "interrupted", "cancelled",
     },
     "status": {"running", "completed", "failed", "cancelled"},
     "review_status": {"approved", "revised", "rejected", "unavailable"},
