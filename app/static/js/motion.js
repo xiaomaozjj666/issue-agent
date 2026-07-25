@@ -561,13 +561,13 @@
     let pointerY = -1e4;
     let rafId = null;
     let lastTs = 0;
-    let baseColor = "148,163,184";
-    let nodeAlpha = 0.4;
-    let linkAlpha = 0.16;
+    let baseColor = "203,213,225";
+    let nodeAlpha = 0.5;
+    let linkAlpha = 0.22;
     let accentColor = "59,130,246";
 
-    // 从主题 CSS 变量取色；白底下同等透明度的浅灰几乎不可见，
-    // 亮色主题改用更深的 slate-600 并抬高透明度才能达到与暗色相当的存在感
+    // 从主题 CSS 变量取色；两端都往对比度高的方向取：白底用深灰（slate-600）、
+    // 黑底用亮灰（slate-300），否则同等透明度下背景几乎不可见
     function readColors() {
       const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
       const m = /^#([0-9a-f]{6})$/i.exec(accent);
@@ -578,9 +578,9 @@
           parseInt(m[1].slice(4, 6), 16);
       }
       const light = document.documentElement.getAttribute("data-theme") === "light";
-      baseColor = light ? "71,85,105" : "148,163,184";
-      nodeAlpha = light ? 0.6 : 0.4;
-      linkAlpha = light ? 0.3 : 0.16;
+      baseColor = light ? "71,85,105" : "203,213,225";
+      nodeAlpha = light ? 0.6 : 0.5;
+      linkAlpha = light ? 0.3 : 0.22;
     }
 
     function rebuild() {
