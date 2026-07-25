@@ -97,6 +97,8 @@
     const baseDur = 280;
     items.forEach(function (item, idx) {
       if (idx >= maxAnimated) return;
+      // 已被 ScrollReveal 接管的元素跳过，避免两套入场动画互相覆盖
+      if (item.dataset.scrollReveal === "1") return;
       item.style.opacity = "0";
       item.style.transform = "translateY(6px)";
       item.style.transition = "opacity " + baseDur + "ms cubic-bezier(0.16,1,0.3,1), transform " + baseDur + "ms cubic-bezier(0.16,1,0.3,1)";
@@ -541,11 +543,117 @@
     heroEl.addEventListener("mouseleave", onLeave);
   }
 
+  // ── 11. ClickSpark：关键动作点击火花 ─────────────────────
+  // ReactBits Animations/ClickSpark 复刻（DOM 版，免 canvas）
+  // 仅用于"启动分析"类主 CTA：点击时 8 根短线从点击点向外迸发，
+  // 与 Ripple（面反馈）互补，强调"已触发关键动作"的确认感。
+  // 严格限定选择器范围，避免滥用导致视觉噪音
+  const SPARK_SELECTOR = ".primary-action, .hero-cta-button, .hero-example";
+  let sparkDelegated = false;
+  function initClickSpark() {
+    if (sparkDelegated || prefersReducedMotion()) return;
+    sparkDelegated = true;
+    document.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 && e.pointerType !== "touch") return;
+      const el = e.target.closest(SPARK_SELECTOR);
+      if (!el || el.disabled) return;
+      const burst = document.createElement("span");
+      burst.className = "motion-spark-burst";
+      // 固定定位到视口坐标，避免受按钮 overflow:hidden 裁剪
+      burst.style.left = e.clientX + "px";
+      burst.style.top = e.clientY + "px";
+      for (let i = 0; i < 8; i++) {
+        const line = document.createElement("span");
+        line.className = "motion-spark-line";
+        line.style.setProperty("--spark-angle", (i * 45) + "deg");
+        burst.appendChild(line);
+      }
+      document.body.appendChild(burst);
+      setTimeout(function () {
+        if (burst.parentNode) burst.parentNode.removeChild(burst);
+      }, 480);
+    }, { passive: true });
+  }
+
+  // ── 12. BlurText：模糊→清晰入场 ──────────────────────
+  // ReactBits Text Animations/BlurText 复刻
+  // 整段文字从 blur(8px)+下移 淡入到清晰，与主标题 SplitText 逐字
+  // 入场形成"先逐字后整段"的层次节奏；动画结束后清理 inline 样式
+  function applyBlurText(el, delay) {
+    if (!el || prefersReducedMotion()) return;
+    const startDelay = delay || 0;
+    el.style.opacity = "0";
+    el.style.filter = "blur(8px)";
+    el.style.transform = "translateY(6px)";
+    el.style.transition =
+      "opacity 480ms cubic-bezier(0.16,1,0.3,1) " + startDelay + "ms, " +
+      "filter 480ms cubic-bezier(0.16,1,0.3,1) " + startDelay + "ms, " +
+      "transform 480ms cubic-bezier(0.16,1,0.3,1) " + startDelay + "ms";
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        el.style.opacity = "1";
+        el.style.filter = "blur(0)";
+        el.style.transform = "translateY(0)";
+      });
+    });
+    setTimeout(function () {
+      el.style.transition = "";
+      el.style.filter = "";
+      el.style.transform = "";
+      el.style.opacity = "";
+    }, startDelay + 540);
+  }
+
+  // ── 13. ScrollReveal：滚动进入视口时入场 ──────────────
+  // ReactBits Text Animations/ScrollReveal 思路的块级实现
+  // 现有 stagger 入场在渲染时一次性播完，用户滚到下方章节时无感；
+  // 改用 IntersectionObserver：视口外的章节到达时才播入场动画，
+  // root 传报告滚动容器（#report）；不支持 IO 时退化为直接显示
+  function applyScrollReveal(scrollRoot, items) {
+    if (!items || !items.length || prefersReducedMotion()) return;
+    if (!("IntersectionObserver" in window)) return;
+    const rootRect = scrollRoot ? scrollRoot.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    const toObserve = [];
+    Array.prototype.slice.call(items).forEach(function (item) {
+      const r = item.getBoundingClientRect();
+      // 已在视口内的交给渲染时的 stagger 动画，不重复处理
+      if (r.top < rootRect.bottom && r.bottom > rootRect.top) return;
+      item.dataset.scrollReveal = "1";
+      item.style.opacity = "0";
+      item.style.transform = "translateY(14px)";
+      toObserve.push(item);
+    });
+    if (!toObserve.length) return;
+    const io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        const item = entry.target;
+        io.unobserve(item);
+        item.style.transition = "opacity 420ms cubic-bezier(0.16,1,0.3,1), transform 420ms cubic-bezier(0.16,1,0.3,1)";
+        requestAnimationFrame(function () {
+          item.style.opacity = "1";
+          item.style.transform = "translateY(0)";
+        });
+        // 动画结束后清理 inline 样式，恢复 CSS hover 规则优先级
+        setTimeout(function () {
+          item.style.transition = "";
+          item.style.transform = "";
+          item.style.opacity = "";
+          delete item.dataset.scrollReveal;
+        }, 480);
+      });
+    }, { root: scrollRoot || null, rootMargin: "0px 0px -8% 0px", threshold: 0.05 });
+    toObserve.forEach(function (item) { io.observe(item); });
+  }
+
   // ── 报告动效一键应用 ───────────────────────────────────
   // 在 renderReport 完成后调用，统一挂载所有报告相关动效
   function applyReportMotion(container) {
     if (!container) return;
     applyCounters(container);
+    // 视口外章节先交给 ScrollReveal 接管（打标记），再对视口内章节 stagger 入场
+    const scrollRoot = document.getElementById("report");
+    applyScrollReveal(scrollRoot, container.querySelectorAll(".report-section"));
     applyReportListAnimation(container);
     applyTiltToMetricCards(container);
     // SpotlightCard 报告指标卡 + 核心结论卡
@@ -587,6 +695,9 @@
     if (titleEl) {
       applySplitText(titleEl);
     }
+    // 副标题 BlurText：延迟到主标题逐字接近尾声时淡入，形成层次节奏
+    const subtitleEl = heroEl.querySelector(".hero-subtitle");
+    if (subtitleEl) applyBlurText(subtitleEl, 260);
     // 卡片 SpotlightCard 聚光灯
     applySpotlights(heroEl);
     // CTA 磁吸
@@ -599,6 +710,8 @@
     attachThemeTransition();
     // 全局涟漪委托：覆盖所有按钮类元素，动态新增也自动生效
     initRippleDelegation();
+    // 主 CTA 点击火花委托：仅限"启动分析"类关键动作
+    initClickSpark();
   }
 
   // ── 暴露命名空间 ───────────────────────────────────────
@@ -619,6 +732,9 @@
     applySpotlights: applySpotlights,
     attachMagnet: attachMagnet,
     attachGridGlow: attachGridGlow,
+    initClickSpark: initClickSpark,
+    applyBlurText: applyBlurText,
+    applyScrollReveal: applyScrollReveal,
     applyReportMotion: applyReportMotion,
     applyHeroMotion: applyHeroMotion,
     init: init,
