@@ -28,12 +28,12 @@ from starlette.types import ASGIApp
 
 from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
-from app.build import BUILD_ID
+from app.build import get_build_id
 from app.circuit_breaker import CircuitBreaker
 from app.config import get_settings
 from app.errors import CircuitBreakerOpenError
 from app.events import cancelled_event, error_event, session_event
-from app.github import GitHubError, GitHubRateLimitError
+from app.github import GitHubError, GitHubRateLimitError, GitHubResourceError
 from app.i18n import get_frontend_strings
 from app.logging_config import setup_logging
 from app.models import (
@@ -210,7 +210,7 @@ async def circuit_breaker_handler(request: Request, error: CircuitBreakerOpenErr
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "app": "issue-agent", "build_id": BUILD_ID}
+    return {"status": "ok", "app": "issue-agent", "build_id": get_build_id()}
 
 
 @app.post("/analyze", response_model=AnalysisReport)
@@ -222,6 +222,8 @@ async def analyze(request: AnalyzeRequest, breaker: CircuitBreakerDep) -> Analys
         raise HTTPException(status_code=422, detail=str(error)) from error
     except GitHubRateLimitError as error:
         raise HTTPException(status_code=429, detail=str(error)) from error
+    except GitHubResourceError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except GitHubError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except APIError as error:
@@ -375,6 +377,9 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBr
     except GitHubRateLimitError as error:
         await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=429, detail=str(error)) from error
+    except GitHubResourceError as error:
+        await mark_session_failed(session_mgr, session, error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except GitHubError as error:
         await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -776,6 +781,6 @@ async def root(request: Request):
         context={
             "language": settings.language,
             "frontend_strings": get_frontend_strings(settings.language),
-            "build_id": BUILD_ID,
+            "build_id": get_build_id(),
         },
     )

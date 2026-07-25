@@ -50,6 +50,47 @@ async function mockCompletedSessions(page, sessions = [summary("session-1", "路
   });
 }
 
+test("renders real-data report charts without console errors", async ({ page }) => {
+  // 带完整调查数据的会话：已读文件 + 阶段事件时间戳，驱动覆盖图与阶段耗时图
+  const base = Date.parse("2026-07-20T10:00:00Z");
+  const at = (sec) => new Date(base + sec * 1000).toISOString();
+  const richDetail = {
+    ...detail("session-1", "路径解析失败"),
+    files_read: ["src/a #1.py", "src/util.py"],
+    metrics: { model_calls: 4, tool_calls: 6, files_read: 2 },
+    events: [
+      { type: "phase", data: { phase: "fetching" }, created_at: at(0) },
+      { type: "phase", data: { phase: "exploring" }, created_at: at(3) },
+      { type: "tool_call", data: { name: "read_file" }, created_at: at(5) },
+      { type: "phase", data: { phase: "reviewing" }, created_at: at(12) },
+      { type: "done", data: {}, created_at: at(15) },
+    ],
+  };
+  await page.route("**/sessions?**", (route) => route.fulfill({ json: [summary("session-1", "路径解析失败")] }));
+  await page.route(/\/session\/session-1$/, (route) => route.fulfill({ json: richDetail }));
+  const consoleErrors = [];
+  page.on("pageerror", (error) => consoleErrors.push(String(error)));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") consoleErrors.push(msg.text());
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: /acme\/widget #1/ }).click();
+  await page.getByRole("button", { name: "查看完整报告" }).click();
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
+
+  // 三个图表都是懒加载：滚动进入视口后应渲染出真实 canvas
+  for (const id of ["report-evidence-chart", "report-coverage-chart", "report-timeline-chart"]) {
+    const el = page.locator(`#${id}`);
+    await el.scrollIntoViewIfNeeded();
+    await expect(el.locator("canvas").first(), `${id} 应渲染出 canvas`).toBeVisible({ timeout: 10_000 });
+  }
+
+  // CDN 资源加载失败不算应用错误（离线环境降级路径另有兼容）
+  const appErrors = consoleErrors.filter((text) => !/net::|Failed to load resource/i.test(text));
+  expect(appErrors).toEqual([]);
+});
+
 test("localizes interface chrome, relative time, and untrusted session text", async ({ page }) => {
   await mockCompletedSessions(page, [summary("session-1", '<img src=x onerror="window.__xss=1">')]);
   await page.goto("/");
@@ -71,7 +112,7 @@ test("opens reports without hiding the conversation and builds valid GitHub link
 
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
   await expect(page.getByLabel("对话消息")).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("置信度高");
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("可信度高");
   await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("独立审查 · 已通过");
   await expect(page.getByRole("link", { name: "查看源码" })).toHaveAttribute(
     "href",
@@ -91,13 +132,14 @@ test("opens reports without hiding the conversation and builds valid GitHub link
   const downloadPath = await download.path();
   expect(downloadPath).not.toBeNull();
   const markdown = await fs.readFile(downloadPath, "utf-8");
-  expect(markdown).toContain("## 根因");
+  expect(markdown).toContain("## 问题根因");
   expect(markdown).toContain("**置信度:** 高");
 
   await page.getByRole("button", { name: "返回上一步" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeHidden();
   await page.getByRole("button", { name: "返回上一步" }).click();
-  await expect(page.getByLabel("对话消息")).toContainText("选择一个历史会话");
+  // 退出会话后回到 Hero 欢迎页（而非旧版的空状态提示）
+  await expect(page.getByLabel("对话消息")).toContainText("把任意 GitHub Issue");
 });
 
 test("restores the back button after a failed history request", async ({ page }) => {
@@ -124,8 +166,14 @@ test("restores the back button after a failed history request", async ({ page })
 
 test("clears follow-up input after sending", async ({ page }) => {
   await mockCompletedSessions(page);
-  await page.route("**/chat", (route) =>
-    route.fulfill({ json: { reply: "已收到。", tools_used: [], report: null } }),
+  // 追问已迁移到 /chat/stream SSE 接口，mock 需返回事件流格式
+  await page.route("**/chat/stream", (route) =>
+    route.fulfill({
+      contentType: "text/event-stream",
+      body:
+        'data: {"type":"delta","content":"已收到。"}\n\n' +
+        'data: {"type":"done","reply":"已收到。","tools_used":[]}\n\n',
+    }),
   );
   await page.goto("/");
   await page.getByRole("button", { name: /acme\/widget #1/ }).click();

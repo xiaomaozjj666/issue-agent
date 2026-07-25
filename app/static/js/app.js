@@ -300,6 +300,7 @@
     });
 
     list.innerHTML = "";
+    const newRows = [];
     orderedGroupNames.forEach(function (groupName) {
       const items = groups.get(groupName);
       if (!items) return;
@@ -316,11 +317,15 @@
           updateSessionRow(oldRow, item);
           group.appendChild(oldRow);
         } else {
-          group.appendChild(createSessionRow(item));
+          const row = createSessionRow(item);
+          group.appendChild(row);
+          newRows.push(row);
         }
       });
       list.appendChild(group);
     });
+    // 仅对新增 row 应用入场动画，已存在的 row 不重复入场避免闪烁
+    if (IA.Motion && newRows.length) IA.Motion.applySessionListMotion(newRows);
 
     // 恢复滚动位置和焦点
     list.scrollTop = wasScrolling;
@@ -334,6 +339,7 @@
   }
 
   function buildSessionList(list, orderedGroupNames, groups) {
+    const newRows = [];
     orderedGroupNames.forEach(function (groupName) {
       const items = groups.get(groupName);
       if (!items) return;
@@ -344,10 +350,14 @@
       heading.textContent = groupName;
       group.appendChild(heading);
       items.forEach(function (item) {
-        group.appendChild(createSessionRow(item));
+        const row = createSessionRow(item);
+        group.appendChild(row);
+        newRows.push(row);
       });
       list.appendChild(group);
     });
+    // ReactBits AnimatedList 复刻：首次渲染逐项入场
+    if (IA.Motion) IA.Motion.applySessionListMotion(newRows);
   }
 
   // #10 修复：仅更新 row 内动态字段，不重建 DOM，避免 hover 状态丢失
@@ -582,7 +592,15 @@
     }
     const myRequestId = ++restoreRequestId;
     const messagesContainer = document.getElementById("messages");
-    messagesContainer.innerHTML = `<div class="history-loading">${IA.escapeHtml(t("loading_session"))}</div>`;
+    // 会话切换骨架屏：复用 msg-skeleton 样式，与 chat 等待体验一致
+    messagesContainer.innerHTML =
+      `<div class="msg assistant msg-skeleton" aria-hidden="true">` +
+        `<div class="skeleton-bar long"></div>` +
+        `<div class="skeleton-bar medium"></div>` +
+        `<div class="skeleton-bar long"></div>` +
+        `<div class="skeleton-bar short"></div>` +
+        `<div class="skeleton-bar medium"></div>` +
+      `</div>`;
     try {
       const session = await IA.apiJson("/session/" + encodeURIComponent(id));
       // 防竞态：await 期间用户可能又点了另一个会话，丢弃过期响应
@@ -867,7 +885,9 @@
     }
     await loadSessions();
     const successKey = archived ? "batch_archive_done" : "batch_restore_done";
-    addMsg("system", t(successKey, { count: ids.length - failed }) + (failed ? " · " + t("batch_partial_error", { failed: failed }) : ""));
+    const msg = t(successKey, { count: ids.length - failed }) + (failed ? " · " + t("batch_partial_error", { failed: failed }) : "");
+    if (failed) addMsg("system", msg);
+    else flashToast(msg);
   }
 
   async function batchDeleteSelected() {
@@ -891,7 +911,9 @@
     }
     clearSelection();
     await loadSessions();
-    addMsg("system", t("batch_delete_done", { count: ids.length - failed }) + (failed ? " · " + t("batch_partial_error", { failed: failed }) : ""));
+    const msg = t("batch_delete_done", { count: ids.length - failed }) + (failed ? " · " + t("batch_partial_error", { failed: failed }) : "");
+    if (failed) addMsg("system", msg);
+    else flashToast(msg);
   }
 
   function resetWorkspace(showWelcome) {
@@ -1018,6 +1040,11 @@
         input.focus();
         input.scrollIntoView({ behavior: "smooth", block: "center" });
       });
+    }
+
+    // ReactBits 动效挂载：星空背景 + 标题解密 + 卡片聚光灯
+    if (IA.Motion && IA.Motion.applyHeroMotion) {
+      IA.Motion.applyHeroMotion(hero);
     }
   }
 
@@ -1739,6 +1766,18 @@
         stopAnalysisTimer();
         currentPhaseText = "";
         renderReport(report);
+        // SSE 流只携带报告本体，图表与证据 GitHub 链接还需要完整会话数据
+        // （metrics/events/files_read/owner/repo/head_sha），异步拉取后重渲染报告
+        if (sessionId) {
+          (function (reportSessionId) {
+            IA.apiJson("/session/" + encodeURIComponent(reportSessionId)).then(function (session) {
+              // 防竞态：await 期间用户可能已切换到其他会话
+              if (sessionId !== reportSessionId || !report) return;
+              activeSession = session;
+              renderReport(report);
+            }).catch(function () { /* 拉取失败不影响已渲染的报告 */ });
+          })(sessionId);
+        }
         document.getElementById("input-bar").style.display = "flex";
         document.getElementById("report-toggle").style.display = "inline-flex";
         document.getElementById("progress").textContent = "";
@@ -1891,14 +1930,30 @@
     return all.slice(0, 3);
   }
 
-  // 图表渲染函数（renderMatrix/renderSankey/renderFunnel）及辅助工具
-  // （palette/isMobile/toolbox/sankeyLayout 等）已全部抽离到 charts.js，
+  // 图表渲染函数（renderMatrix/renderCoverage/renderTimeline）及辅助工具
+  // （palette/isMobile/toolbox 等）已全部抽离到 charts.js，
   // 通过 IA.Charts.* 调用。app.js 仅保留图表生命周期管理：
   // 懒加载（initLazyCharts）、销毁（disposeReportCharts）、resize、主题切换（refreshReportCharts）。
 
   function renderReport(r) {
     disposeReportCharts();
     const d = document.getElementById("report");
+    // 报告骨架屏：DOM 构建前先占位，避免大报告瞬间空白或卡顿
+    d.innerHTML =
+      `<div class="report-skeleton" aria-hidden="true">` +
+        `<div class="skeleton-bar skeleton-report-title"></div>` +
+        `<div class="skeleton-bar skeleton-report-meta"></div>` +
+        `<div class="skeleton-grid skeleton-grid-4">` +
+          `<div class="skeleton-bar skeleton-cell"></div>` +
+          `<div class="skeleton-bar skeleton-cell"></div>` +
+          `<div class="skeleton-bar skeleton-cell"></div>` +
+          `<div class="skeleton-bar skeleton-cell"></div>` +
+        `</div>` +
+        `<div class="skeleton-bar skeleton-section"></div>` +
+        `<div class="skeleton-bar skeleton-line"></div>` +
+        `<div class="skeleton-bar skeleton-line"></div>` +
+        `<div class="skeleton-bar skeleton-line short"></div>` +
+      `</div>`;
     const parts = [];
     const toc = [];
 
@@ -1909,12 +1964,16 @@
 
     // 1. 核心结论卡（金字塔顶端：结论前置）
     // #12 置信度 badge：high/medium/low 颜色区分，结论卡本身一目了然
+    // 复制按钮：hover 结论区时浮现，点击复制结论全文到剪贴板
     const confClass = IA.safeClass(r.confidence);
     parts.push(
       `<div class="report-conclusion">` +
         `<div class="report-conclusion-header">` +
           `<span class="report-conclusion-label">${IA.escapeHtml(t("report_conclusion_label"))}</span>` +
-          `<span class="confidence-badge confidence-${confClass}">${IA.escapeHtml(enumLabel("confidence", r.confidence))}</span>` +
+          `<div class="report-conclusion-actions">` +
+            `<span class="confidence-badge confidence-${confClass}">${IA.escapeHtml(enumLabel("confidence", r.confidence))}</span>` +
+            `<button type="button" class="report-conclusion-copy" data-copy-target="conclusion" aria-label="${IA.escapeHtml(t("copy"))}">${IA.svgIcon("copy") || '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3.75 1.5a.75.75 0 0 0-.75.75v9.5c0 .414.336.75.75.75h2a.75.75 0 0 1 0 1.5h-2A2.25 2.25 0 0 1 1.5 11.75v-9.5A2.25 2.25 0 0 1 3.75 0h6.5A2.25 2.25 0 0 1 12.5 2.25v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 0-.75-.75h-6.5Z"/><path fill="currentColor" d="M7.75 5.5A2.25 2.25 0 0 0 5.5 7.75v6.5A2.25 2.25 0 0 0 7.75 16.5h6.5a2.25 2.25 0 0 0 2.25-2.25v-6.5a2.25 2.25 0 0 0-2.25-2.25h-6.5Z"/></svg>'}</button>` +
+          `</div>` +
         `</div>` +
         `<p class="report-conclusion-text">${IA.escapeHtml(r.summary)}</p>` +
         `</div>`,
@@ -1946,8 +2005,8 @@
       .join("");
     parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
 
-    // 3. ECharts 三图表：证据可信度矩阵 + 证据-根因支撑图 + 调查效率漏斗
-    // 每个图表回答一个用户真正会问的问题，而非堆砌数量统计
+    // 3. ECharts 三图表：证据可信度矩阵 + 调查覆盖图 + 调查阶段耗时
+    // 每个图表回答一个用户真正会问的问题，全部基于真实调查数据
     const hasEvidence = r.evidence && r.evidence.length;
     const sessionData = activeSession || {};
     if (hasEvidence) {
@@ -1958,21 +2017,21 @@
         `<div id="report-evidence-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("matrix_chart_caption"))}</div>` +
         `</div>`;
-      const sankeyHtml =
+      const coverageHtml =
         `<div class="report-chart report-chart-half">` +
-        `<div class="report-chart-title">${IA.escapeHtml(t("sankey_chart_title"))}</div>` +
-        `<div id="report-confidence-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
-        `<div class="report-chart-caption">${IA.escapeHtml(t("sankey_chart_caption"))}</div>` +
+        `<div class="report-chart-title">${IA.escapeHtml(t("coverage_chart_title"))}</div>` +
+        `<div id="report-coverage-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
+        `<div class="report-chart-caption">${IA.escapeHtml(t("coverage_chart_caption"))}</div>` +
         `</div>`;
-      parts.push(`<div class="report-charts-row">${matrixHtml}${sankeyHtml}</div>`);
-      // 图表 3 单独一行（漏斗图居中显示）
-      const funnelHtml =
+      parts.push(`<div class="report-charts-row">${matrixHtml}${coverageHtml}</div>`);
+      // 图表 3 单独一行（阶段耗时横向条形图）
+      const timelineHtml =
         `<div class="report-chart report-chart-full">` +
-        `<div class="report-chart-title">${IA.escapeHtml(t("funnel_chart_title"))}</div>` +
-        `<div id="report-funnel-chart" class="report-chart-canvas"></div>` +
-        `<div class="report-chart-caption">${IA.escapeHtml(t("funnel_chart_caption"))}</div>` +
+        `<div class="report-chart-title">${IA.escapeHtml(t("timeline_chart_title"))}</div>` +
+        `<div id="report-timeline-chart" class="report-chart-canvas"></div>` +
+        `<div class="report-chart-caption">${IA.escapeHtml(t("timeline_chart_caption"))}</div>` +
         `</div>`;
-      parts.push(`<div class="report-charts-row">${funnelHtml}</div>`);
+      parts.push(`<div class="report-charts-row">${timelineHtml}</div>`);
     }
 
     // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
@@ -2032,12 +2091,12 @@
     // 8. 代码证据
     if (r.evidence && r.evidence.length) {
       const items = r.evidence
-        .map(function (e) {
+        .map(function (e, i) {
           const ghUrl = IA.buildGitHubUrl(activeSession, e.path, e.lines);
           const linkHtml = ghUrl
             ? ` <a class="evidence-link" href="${IA.escapeAttr(ghUrl)}" target="_blank" rel="noopener noreferrer" title="${IA.escapeAttr(t("view_source"))}">${IA.svgIcon("external")}<span class="sr-only">${IA.escapeHtml(t("view_source"))}</span></a>`
             : "";
-          return `<div class="evidence-item"><div class="evidence-path"><span class="evidence-path-text">${IA.escapeHtml(e.path)}</span>${e.lines ? `<span class="evidence-lines">${IA.escapeHtml(e.lines)}</span>` : ""}${linkHtml}</div><p>${IA.escapeHtml(e.reason || "")}</p></div>`;
+          return `<div class="evidence-item" data-evidence-idx="${i}"><div class="evidence-path"><span class="evidence-path-text">${IA.escapeHtml(e.path)}</span>${e.lines ? `<span class="evidence-lines">${IA.escapeHtml(e.lines)}</span>` : ""}${linkHtml}</div><p>${IA.escapeHtml(e.reason || "")}</p></div>`;
         })
         .join("");
       parts.push(pushSection("report-evidence", t("report_evidence"), `<div class="evidence-list">${items}</div>`));
@@ -2131,7 +2190,7 @@
 
     // #16 图表懒加载：用骨架屏占位，IntersectionObserver 触发时再初始化 ECharts
     // 避免首次渲染三个图表导致页面卡顿（移动端尤其明显）
-    ["report-evidence-chart", "report-confidence-chart", "report-funnel-chart"].forEach(function (id) {
+    ["report-evidence-chart", "report-coverage-chart", "report-timeline-chart"].forEach(function (id) {
       const el = document.getElementById(id);
       if (el && !el.querySelector(".chart-skeleton")) {
         el.innerHTML = `<div class="chart-skeleton" aria-hidden="true"><div class="skeleton-bar skeleton-title"></div><div class="skeleton-grid"><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div></div><div class="skeleton-bar skeleton-caption"></div></div>`;
@@ -2147,6 +2206,14 @@
       // scrollspy：高亮当前可见章节对应的 TOC 项
       const tocLinks = tocEl.querySelectorAll("ol a[href^='#']");
       if (tocLinks.length && "IntersectionObserver" in window) {
+        // ReactBits Sliding Indicator 复刻：创建跟随当前章节滑动的左侧指示条
+        const tocOl = tocEl.querySelector("ol");
+        let tocIndicator = tocOl.querySelector(".toc-indicator");
+        if (!tocIndicator) {
+          tocIndicator = document.createElement("div");
+          tocIndicator.className = "toc-indicator";
+          tocOl.appendChild(tocIndicator);
+        }
         const linkMap = {};
         tocLinks.forEach(function (a) {
           const id = a.getAttribute("href").slice(1);
@@ -2163,13 +2230,50 @@
               if (entry.isIntersecting) {
                 tocLinks.forEach(function (l) { l.classList.remove("toc-active"); });
                 link.classList.add("toc-active");
+                // 移动滑动指示条到当前 TOC 项位置
+                const li = link.parentElement;
+                if (li && tocIndicator) {
+                  tocIndicator.style.transform = "translateY(" + li.offsetTop + "px)";
+                  tocIndicator.classList.add("visible");
+                }
               }
             });
           },
           { rootMargin: "-80px 0px -70% 0px", threshold: 0 },
         );
         sections.forEach(function (s) { scrollSpyObserver.observe(s); });
+
+        // TOC 项点击：平滑滚动到目标章节，并临时高亮
+        tocLinks.forEach(function (a) {
+          a.addEventListener("click", function (e) {
+            const href = a.getAttribute("href");
+            if (!href || href.charAt(0) !== "#") return;
+            const target = document.getElementById(href.slice(1));
+            if (!target) return;
+            e.preventDefault();
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+            target.classList.add("section-highlight");
+            setTimeout(function () { target.classList.remove("section-highlight"); }, 1500);
+          });
+        });
       }
+    }
+
+    // 核心结论区：复制结论全文到剪贴板
+    const conclusionCopyBtn = d.querySelector(".report-conclusion-copy");
+    if (conclusionCopyBtn) {
+      conclusionCopyBtn.addEventListener("click", async function () {
+        const conclusionText = (d.querySelector(".report-conclusion-text") || {}).textContent || "";
+        if (!conclusionText) return;
+        try {
+          await navigator.clipboard.writeText(conclusionText);
+          conclusionCopyBtn.classList.add("copied");
+          flashToast(t("copy_done"));
+          setTimeout(function () { conclusionCopyBtn.classList.remove("copied"); }, 1600);
+        } catch (err) {
+          flashToast(t("copy_failed"));
+        }
+      });
     }
 
     // #11 指标网格点击下钻：跳转到对应章节
@@ -2200,7 +2304,7 @@
     });
 
     // #13 返回顶部按钮：滚动超过一屏后显示
-    const reportEl = d.parentElement; // #report-panel
+    // append 到滚动容器 #report 内，position: sticky 相对此容器生效
     let backTopBtn = document.getElementById("report-back-top");
     if (!backTopBtn) {
       backTopBtn = document.createElement("button");
@@ -2211,14 +2315,13 @@
       backTopBtn.title = t("back_to_top");
       backTopBtn.innerHTML = IA.svgIcon("back") ||
         '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 5.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 8 5.5ZM3.97 7.78a.75.75 0 0 1 1.06 0L8 4.81l3.22 3.22a.75.75 0 1 0 1.06-1.06L8 2.69 3.97 6.72a.75.75 0 0 0 0 1.06Z"/></svg>';
-      // 旋转 180 度指向上方
-      backTopBtn.style.transform = "rotate(180deg)";
       backTopBtn.addEventListener("click", function () {
         d.scrollTop = 0;
         d.scrollIntoView({ behavior: "smooth", block: "start" });
       });
-      reportEl.appendChild(backTopBtn);
     }
+    // 始终（重新）append 到滚动容器 #report，确保 sticky 上下文正确
+    d.appendChild(backTopBtn);
     // 移除旧 scroll 监听器，防止 renderReport 重渲染时累积
     if (reportScrollHandler) {
       d.removeEventListener("scroll", reportScrollHandler);
@@ -2305,8 +2408,8 @@
   function initLazyCharts(r, sessionData) {
     const chartSpecs = [
       { id: "report-evidence-chart", render: IA.Charts.renderMatrix },
-      { id: "report-confidence-chart", render: IA.Charts.renderSankey },
-      { id: "report-funnel-chart", render: IA.Charts.renderFunnel },
+      { id: "report-coverage-chart", render: IA.Charts.renderCoverage },
+      { id: "report-timeline-chart", render: IA.Charts.renderTimeline },
     ];
     chartSpecs.forEach(function (spec) {
       const el = document.getElementById(spec.id);
@@ -2335,8 +2438,13 @@
             obs.disconnect();
             const idx = chartLazyObservers.indexOf(obs);
             if (idx >= 0) chartLazyObservers.splice(idx, 1);
+            // 骨架屏淡出：先 opacity→0 过渡，再移除，避免硬切
             const skeleton = el.querySelector(".chart-skeleton");
-            if (skeleton) skeleton.remove();
+            if (skeleton) {
+              skeleton.style.transition = "opacity 200ms ease";
+              skeleton.style.opacity = "0";
+              setTimeout(function () { if (skeleton.parentNode) skeleton.remove(); }, 220);
+            }
             const chart = spec.render(el, r, sessionData);
             if (chart) reportChartInstances.push(chart);
           }
@@ -2902,8 +3010,8 @@
     if (evCount) {
       parts.push(
         '<div class="chart"><div class="chart-title">' + esc(t("matrix_chart_title")) + '</div><div id="chart-matrix" class="chart-canvas"></div><div class="chart-caption">' + esc(t("matrix_chart_caption")) + '</div></div>' +
-        '<div class="chart"><div class="chart-title">' + esc(t("sankey_chart_title")) + '</div><div id="chart-sankey" class="chart-canvas"></div><div class="chart-caption">' + esc(t("sankey_chart_caption")) + '</div></div>' +
-        '<div class="chart"><div class="chart-title">' + esc(t("funnel_chart_title")) + '</div><div id="chart-funnel" class="chart-canvas funnel"></div><div class="chart-caption">' + esc(t("funnel_chart_caption")) + '</div></div>',
+        '<div class="chart"><div class="chart-title">' + esc(t("coverage_chart_title")) + '</div><div id="chart-coverage" class="chart-canvas"></div><div class="chart-caption">' + esc(t("coverage_chart_caption")) + '</div></div>' +
+        '<div class="chart"><div class="chart-title">' + esc(t("timeline_chart_title")) + '</div><div id="chart-timeline" class="chart-canvas"></div><div class="chart-caption">' + esc(t("timeline_chart_caption")) + '</div></div>',
       );
     }
 
@@ -2939,8 +3047,8 @@
     // 6. 代码证据
     if (evCount) {
       let body = '<div class="section"><h2>' + esc(t("report_evidence")) + '</h2>';
-      (r.evidence || []).forEach(function (e) {
-        body += '<div class="evidence-item"><div class="evidence-path"><span class="evidence-path-text">' + esc(e.path || "") + '</span>' + (e.lines ? '<span class="evidence-lines">' + esc(e.lines) + '</span>' : '') + '</div><div class="evidence-reason">' + esc(e.reason || "") + '</div></div>';
+      (r.evidence || []).forEach(function (e, i) {
+        body += '<div class="evidence-item" data-evidence-idx="' + i + '"><div class="evidence-path"><span class="evidence-path-text">' + esc(e.path || "") + '</span>' + (e.lines ? '<span class="evidence-lines">' + esc(e.lines) + '</span>' : '') + '</div><div class="evidence-reason">' + esc(e.reason || "") + '</div></div>';
       });
       body += '</div>';
       parts.push(body);
@@ -3034,7 +3142,6 @@
       .chart{margin:12px 0;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card)}
       .chart-title{font-size:13px;font-weight:600;margin-bottom:8px;color:var(--fg-strong)}
       .chart-canvas{width:100%;height:260px}
-      .chart-canvas.funnel{height:220px}
       .chart-caption{color:var(--muted);font-size:12px;margin-top:4px;line-height:1.5}
       .section{margin-top:20px;padding-top:12px;border-top:1px solid var(--border-muted)}
       .section h2{margin-top:0}
@@ -3116,19 +3223,18 @@
   } catch(e){ console.error('Failed to parse embedded data', e); return; }
 
   // C15: HTML 结构已在生成阶段渲染（buildExportBody），这里只负责图表
-  // 图表逻辑与 charts.js 保持一致：BRAND 配色 + 评分模型 + 权重 + 损耗饼图
+  // 图表逻辑与 charts.js 保持一致：BRAND 配色 + 评分模型 + 覆盖分类 + 阶段耗时
   if (typeof echarts === 'undefined' || window.__echartsFailed) return;
   var evCount = (report.evidence || []).length;
   var metrics = session.metrics || {};
   var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
   var filesReadSet = {};
   filesRead.forEach(function(p){ filesReadSet[p] = true; });
-  var validEv = report.evidence_audit ? report.evidence_audit.valid_references : evCount;
   var reviewPass = report.review_audit && report.review_audit.status === 'approved';
   // BRAND 配色（与主应用 charts.js 统一）
   var C = { blue:'#165DFF', green:'#00B42A', red:'#F53F3F', orange:'#FF7D00', gray:'#86909C', text:'#f1f5f9', textDim:'#94a3b8', line:'#334155', bg:'#0f172a' };
 
-  // 证据评分（4 维度各 0/0.5/1）+ 支撑权重（0~1）
+  // 证据评分（4 维度各 0/0.5/1）
   function scoreEv(e) {
     var fr = filesReadSet[e.path] ? 1 : 0;
     var ls = 0;
@@ -3140,17 +3246,6 @@
     else if (rt.length > 0) rs = 0.5;
     var rv = reviewPass ? 1 : 0;
     return { fr: fr, ls: ls, rs: rs, rv: rv, avg: (fr + ls + rs + rv) / 4 };
-  }
-  function supportW(e) {
-    var fr = filesReadSet[e.path] ? 1 : 0;
-    var ls = 0;
-    if (e.lines && /^L\\d+(-L?\\d+)?$/.test(e.lines)) ls = 1;
-    else if (e.lines && /^L/i.test(e.lines)) ls = 0.5;
-    var rt = (e.reason || '').trim();
-    var rq = 0;
-    if (rt.length >= 20) rq = 1;
-    else if (rt.length > 0) rq = 0.5;
-    return fr * 0.4 + ls * 0.3 + rq * 0.3;
   }
 
   // ── 区块1：证据可信度矩阵 ──
@@ -3199,140 +3294,140 @@
     });
   }
 
-  // ── 区块2：证据-根因桑基图 ──
-  var sankeyEl = document.getElementById('chart-sankey');
-  if (sankeyEl && evCount) {
-    var causeParts = (report.root_cause || '').split(/[。.；;]/).filter(function(s){ return s.trim(); }).slice(0, 2);
-    if (!causeParts.length) causeParts = ['Root cause'];
-    var causeLabels = causeParts.map(function(_, i){ return 'Cause ' + (i + 1); });
-    var nodes = [{ name: 'Issue', itemStyle: { color: C.blue } }];
-    causeLabels.forEach(function(c){ nodes.push({ name: c, itemStyle: { color: C.orange } }); });
-    var fileNames = report.evidence.map(function(e){
-      var p = (e.path || '').split('/'); var sp = p.length > 2 ? '…/' + p.slice(-2).join('/') : e.path;
-      return e.lines ? sp + ' ' + e.lines : sp;
+  // ── 区块2：调查覆盖图 ──
+  var coverageEl = document.getElementById('chart-coverage');
+  if (coverageEl && evCount) {
+    var normP = function(p){ return String(p || '').replace(/\\\\/g, '/').replace(/^\\.\\//, '').replace(/^[ab]\\//, '').toLowerCase(); };
+    var shortN = function(p){ var parts = String(p).split('/'); return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : String(p); };
+    var readList = []; var readSeen = {};
+    filesRead.forEach(function(p){ var n = normP(p); if (n && !readSeen[n]) { readSeen[n] = true; readList.push(n); } });
+    var byFile = {}; var order = [];
+    report.evidence.forEach(function(e){
+      var n = normP(e.path || 'unknown');
+      if (!byFile[n]) { byFile[n] = { count: 0, raw: e.path || 'unknown' }; order.push(n); }
+      byFile[n].count += 1;
     });
-    var edgeDetails = [];
-    fileNames.forEach(function(f, i) {
-      var w = supportW(report.evidence[i]);
-      nodes.push({ name: f, itemStyle: { color: w >= 0.7 ? C.green : C.gray } });
+    var isRead = function(n){
+      for (var i = 0; i < readList.length; i++) { var r0 = readList[i]; if (r0 === n || r0.endsWith('/' + n) || n.endsWith('/' + r0)) return true; }
+      return false;
+    };
+    var supportedRows = []; var phantomRows = [];
+    order.forEach(function(n){
+      var it = byFile[n];
+      var row = { name: shortN(it.raw), count: it.count };
+      if (readList.length && !isRead(n)) { row.status = 'phantom'; phantomRows.push(row); }
+      else { row.status = 'supported'; supportedRows.push(row); }
     });
-    var links = [];
-    causeLabels.forEach(function(c){ links.push({ source: 'Issue', target: c, value: 1 }); });
-    report.evidence.forEach(function(e, i) {
-      var w = supportW(e);
-      links.push({ source: causeLabels[i % causeLabels.length], target: fileNames[i], value: Math.max(w * 10, 0.1),
-        lineStyle: { color: w >= 0.7 ? C.green : C.gray, opacity: w >= 0.7 ? 0.6 : 0.3 } });
-      edgeDetails.push({ source: causeLabels[i % causeLabels.length], target: fileNames[i], weight: w, reason: e.reason || '' });
+    supportedRows.sort(function(a, b){ return a.count - b.count; });
+    var unusedRows = [];
+    readList.forEach(function(n){
+      var ref = order.some(function(ev){ return ev === n || ev.endsWith('/' + n) || n.endsWith('/' + ev); });
+      if (!ref) unusedRows.push({ name: shortN(n), count: 0, status: 'unused' });
     });
-    echarts.init(sankeyEl).setOption({
+    var budget = Math.max(14 - phantomRows.length - supportedRows.length, 1);
+    var aggRow = null;
+    if (unusedRows.length > budget) {
+      var restN = unusedRows.length - (budget - 1);
+      unusedRows = unusedRows.slice(0, budget - 1);
+      aggRow = { name: '+' + restN + ' more files', count: 0, status: 'unused' };
+    }
+    var rows = [];
+    if (aggRow) rows.push(aggRow);
+    rows = rows.concat(unusedRows.slice().reverse(), supportedRows, phantomRows);
+    var colorOf = { supported: C.green, unused: C.gray, phantom: C.red };
+    var stText = { supported: 'Read & cited as evidence', unused: 'Read, not cited', phantom: 'Cited but never read' };
+    echarts.init(coverageEl).setOption({
       animationDuration: 200,
       tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
         formatter: function(p) {
-          if (p.dataType === 'edge') {
-            var ed = edgeDetails.find(function(e){ return e.source === p.data.source && e.target === p.data.target; });
-            if (ed) { var strong = ed.weight >= 0.7; var lb = strong ? 'Strong support' : 'Weak support'; var cl = strong ? C.green : C.gray;
-              return '<div style="font-weight:600">' + ed.source + ' → ' + ed.target + '</div>' +
-                '<div style="color:' + cl + ';font-size:11px">Weight: ' + ed.weight.toFixed(2) + ' · ' + lb + '</div>' +
-                (ed.reason ? '<div style="color:' + C.textDim + ';font-size:11px;max-width:280px;white-space:normal">' + ed.reason + '</div>' : '');
-            }
-          }
-          return '<div style="font-weight:600">' + p.name + '</div>';
+          var row = rows[p.dataIndex];
+          if (!row) return '';
+          return '<div style="font-weight:600">' + row.name + '</div>' +
+            '<div style="color:' + colorOf[row.status] + ';font-size:11px;font-weight:600">' + stText[row.status] + '</div>' +
+            (row.count > 0 ? '<div style="color:' + C.textDim + ';font-size:11px">Evidence: <b>' + row.count + '</b></div>' : '');
         }
       },
-      legend: { show: true, right: 8, top: 0, data: [{ name: 'Strong support', icon: 'circle', itemStyle: { color: C.green } }, { name: 'Weak support', icon: 'circle', itemStyle: { color: C.gray } }], textStyle: { color: C.textDim, fontSize: 10 }, itemWidth: 8, itemHeight: 8 },
-      series: [{ type: 'sankey', data: nodes, links: links, orient: 'horizontal', left: 16, right: 80, top: 28, bottom: 16, nodeWidth: 14, nodeGap: 10, nodeAlign: 'justify', layoutIterations: 32,
-        label: { color: C.text, fontSize: 11, fontWeight: 500 }, lineStyle: { curveness: 0.5 }, emphasis: { focus: 'adjacency', lineStyle: { opacity: 0.8 } } }]
+      grid: { left: 8, right: 56, top: 16, bottom: 16, containLabel: true },
+      xAxis: { type: 'value', minInterval: 1, axisLabel: { color: C.textDim, fontSize: 10 }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
+      yAxis: { type: 'category', data: rows.map(function(r0){ return r0.name; }), axisLabel: { color: C.textDim, fontSize: 10, width: 140, overflow: 'truncate' } },
+      series: [{ type: 'bar', barMaxWidth: 14,
+        data: rows.map(function(r0){ return { value: r0.count, itemStyle: { color: colorOf[r0.status], borderRadius: [0, 3, 3, 0], opacity: r0.status === 'unused' ? 0.55 : 1 } }; }),
+        label: { show: true, position: 'right', fontSize: 10, color: C.textDim,
+          formatter: function(p) { var row = rows[p.dataIndex]; return row && row.count > 0 ? String(row.count) + (row.status === 'phantom' ? ' !' : '') : stText.unused; } } }]
     });
   }
 
-  // ── 区块3：调查效率漏斗 + 损耗饼图 ──
-  var funnelEl = document.getElementById('chart-funnel');
-  if (funnelEl) {
-    var modelCalls = parseInt(metrics.model_calls, 10) || 0;
-    var toolCalls = parseInt(metrics.tool_calls, 10) || 0;
-    var filesReadN = parseInt(metrics.files_read, 10) || filesRead.length || 0;
-    var layers = [
-      { name: 'Model calls', raw: modelCalls, color: C.blue },
-      { name: 'Tool calls', raw: toolCalls, color: C.orange },
-      { name: 'Files read', raw: filesReadN, color: C.red },
-      { name: 'Valid evidence', raw: validEv, color: C.green },
-    ].filter(function(d){ return d.raw > 0; });
-    var globalUtil = modelCalls > 0 ? ((validEv / modelCalls) * 100).toFixed(1) : '0';
-    // 损耗原因：层级间隙标注
-    var lossReasons = [
-      { from: 'Model calls', to: 'Tool calls', reason: 'Invalid instructions / no tool calls' },
-      { from: 'Tool calls', to: 'Files read', reason: 'Call errors / no files read' },
-      { from: 'Files read', to: 'Valid evidence', reason: 'Empty file data / evidence validation failed' },
-    ];
-    if (layers.length) {
-      echarts.init(funnelEl).setOption({
+  // ── 区块3：调查阶段耗时（无阶段事件时回退为活动量概览）──
+  var timelineEl = document.getElementById('chart-timeline');
+  if (timelineEl) {
+    var evts = session.events || [];
+    var stamps = [];
+    evts.forEach(function(ev){ var ts = Date.parse(ev.created_at || ''); if (!isNaN(ts)) stamps.push({ type: ev.type, phase: ev.data && ev.data.phase, ts: ts }); });
+    var phaseEvts = stamps.filter(function(s){ return s.type === 'phase' && s.phase; });
+    var PHASE_EN = { fetching: 'Fetching', preloading: 'Preloading', exploring: 'Exploring', verifying: 'Verifying', reviewing: 'Reviewing' };
+    var fmtS = function(sec){ return sec < 1 ? '<1s' : (sec >= 60 ? Math.floor(sec / 60) + 'm ' + Math.round(sec % 60) + 's' : Math.round(sec) + 's'); };
+    if (phaseEvts.length) {
+      var endTs = stamps.reduce(function(m, s){ return Math.max(m, s.ts); }, phaseEvts[phaseEvts.length - 1].ts);
+      var segs = phaseEvts.map(function(p, i){
+        var start = p.ts; var end = i + 1 < phaseEvts.length ? phaseEvts[i + 1].ts : endTs;
+        var tools = 0;
+        stamps.forEach(function(s){ if (s.type === 'tool_call' && s.ts >= start && (i + 1 < phaseEvts.length ? s.ts < end : s.ts <= end)) tools += 1; });
+        return { label: PHASE_EN[p.phase] || p.phase, seconds: Math.max(0, (end - start) / 1000), tools: tools };
+      });
+      var totalS = Math.max(0, (endTs - phaseEvts[0].ts) / 1000);
+      var maxI = -1; var maxS = 0;
+      segs.forEach(function(s, i){ if (s.seconds > maxS) { maxS = s.seconds; maxI = i; } });
+      var disp = segs.slice().reverse();
+      var maxDisp = maxI >= 0 ? segs.length - 1 - maxI : -1;
+      echarts.init(timelineEl).setOption({
         animationDuration: 200,
         tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
           formatter: function(p) {
-            var item = layers.find(function(d){ return d.name === p.name; });
-            if (!item) return '<div style="font-weight:600">' + p.name + '</div>';
-            var idx = layers.indexOf(item); var prev = idx > 0 ? layers[idx - 1] : null; var prevRaw = prev ? prev.raw : 0;
-            var conv = prevRaw > 0 ? ((item.raw / prevRaw) * 100).toFixed(1) : '100';
-            var overall = modelCalls > 0 ? ((item.raw / modelCalls) * 100).toFixed(1) : '100';
-            var html = '<div style="font-weight:600">' + p.name + '</div><div>Count: <b>' + item.raw + '</b></div>';
-            if (idx > 0) {
-              html += '<div style="color:' + C.textDim + ';font-size:11px">Conversion: ' + conv + '%</div>';
-              var loss = lossReasons.find(function(lr){ return lr.to === item.name; });
-              if (loss) html += '<div style="color:' + C.red + ';font-size:11px;margin-top:2px;">' + loss.reason + '</div>';
-            }
-            html += '<div style="color:' + C.textDim + ';font-size:11px">Overall: ' + overall + '%</div>';
-            return html;
+            var s = disp[p.dataIndex];
+            if (!s) return '';
+            var pct = totalS > 0 ? Math.round((s.seconds / totalS) * 100) : 0;
+            return '<div style="font-weight:600">' + s.label + '</div><div>' + fmtS(s.seconds) + ' · ' + pct + '%</div>' +
+              '<div style="color:' + C.textDim + ';font-size:11px">' + s.tools + ' tool calls</div>';
           }
         },
-        title: { text: 'Global utilization: ' + globalUtil + '%', left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
-        series: [{ type: 'funnel', data: layers.map(function(d){ return { name: d.name, value: d.raw, itemStyle: { color: d.color } }; }),
-          left: '10%', right: '10%', top: 16, bottom: 30, width: '80%', minSize: '20%', maxSize: '100%', sort: 'descending', gap: 4,
-          label: { show: true, color: '#fff', fontSize: 11, fontWeight: 600,
-            formatter: function(p) { var item = layers.find(function(d){ return d.name === p.name; }); if (!item) return p.name;
-              var idx = layers.indexOf(item); var prev = idx > 0 ? layers[idx - 1] : null; var prevRaw = prev ? prev.raw : 0;
-              var conv = prevRaw > 0 ? ((item.raw / prevRaw) * 100).toFixed(0) : '100';
-              return item.name + ': ' + item.raw + (idx > 0 ? ' (' + conv + '%)' : ''); } },
-          labelLine: { show: false }, itemStyle: { borderWidth: 0, borderRadius: 2 } }]
-      });
-    }
-    // 损耗原因文本块（漏斗与饼图之间）
-    var applicableLosses = lossReasons.filter(function(lr) {
-      var fromLayer = layers.find(function(d){ return d.name === lr.from; });
-      var toLayer = layers.find(function(d){ return d.name === lr.to; });
-      return fromLayer && toLayer && fromLayer.raw > toLayer.raw;
-    });
-    var lossEl = document.createElement('div');
-    lossEl.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:8px;padding:6px 10px;border:1px dashed ' + C.line + ';border-radius:8px;background:var(--card);';
-    lossEl.innerHTML = applicableLosses.length
-      ? applicableLosses.map(function(lr){ return '<span style="font-size:11px;color:' + C.textDim + ';white-space:nowrap;">' + lr.from + ' → ' + lr.to + ': ' + lr.reason + '</span>'; }).join('')
-      : '<span style="font-size:11px;color:' + C.textDim + ';">No waste detected</span>';
-    funnelEl.parentElement.insertBefore(lossEl, funnelEl.nextSibling);
-    // 损耗饼图
-    var wasteData = [];
-    if (modelCalls - toolCalls > 0) wasteData.push({ name: 'Invalid model calls', value: modelCalls - toolCalls, color: C.blue });
-    if (toolCalls - filesReadN > 0) wasteData.push({ name: 'Failed tool calls', value: toolCalls - filesReadN, color: C.orange });
-    if (filesReadN - validEv > 0) wasteData.push({ name: 'Unused files', value: filesReadN - validEv, color: C.red });
-    var pieEl = document.createElement('div');
-    pieEl.id = 'chart-funnel-pie';
-    pieEl.style.cssText = 'width:100%;height:160px;';
-    funnelEl.parentElement.insertBefore(pieEl, lossEl.nextSibling);
-    if (wasteData.length) {
-      echarts.init(pieEl).setOption({
-        animationDuration: 200,
-        title: { text: 'Waste breakdown', left: 'center', top: 0, textStyle: { color: C.textDim, fontSize: 11 } },
-        tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, textStyle: { color: C.text, fontSize: 12 },
-          formatter: function(p) { var total = wasteData.reduce(function(s, d){ return s + d.value; }, 0); var pct = total > 0 ? ((p.value / total) * 100).toFixed(1) : '0'; return '<div style="font-weight:600">' + p.name + '</div><div>Count: <b>' + p.value + '</b> (' + pct + '%)</div>'; } },
-        series: [{ type: 'pie', radius: ['30%', '55%'], center: ['50%', '60%'], data: wasteData.map(function(d){ return { name: d.name, value: d.value, itemStyle: { color: d.color } }; }),
-          label: { color: C.textDim, fontSize: 10, formatter: '{b}: {c}' }, labelLine: { length: 8, length2: 8 }, itemStyle: { borderWidth: 2, borderColor: C.bg } }]
+        title: { text: 'Total: ' + fmtS(totalS), left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
+        grid: { left: 8, right: 96, top: 16, bottom: 28, containLabel: true },
+        xAxis: { type: 'value', axisLabel: { color: C.textDim, fontSize: 10, formatter: function(v){ return v + 's'; } }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
+        yAxis: { type: 'category', data: disp.map(function(s){ return s.label; }), axisLabel: { color: C.textDim, fontSize: 11 } },
+        series: [{ type: 'bar', barMaxWidth: 16,
+          data: disp.map(function(s, i){ return { value: Math.round(s.seconds * 10) / 10, itemStyle: { color: i === maxDisp ? C.orange : C.blue, borderRadius: [0, 3, 3, 0] } }; }),
+          label: { show: true, position: 'right', fontSize: 10, color: C.textDim,
+            formatter: function(p) { var s = disp[p.dataIndex]; return s ? fmtS(s.seconds) + (s.tools > 0 ? ' · ' + s.tools + ' tools' : '') : ''; } } }]
       });
     } else {
-      pieEl.innerHTML = '<div style="text-align:center;color:' + C.textDim + ';font-size:11px;padding:48px 0;">No waste detected</div>';
+      var bars = [
+        { label: 'Evidence', value: evCount, color: C.green },
+        { label: 'Files read', value: parseInt(metrics.files_read, 10) || filesRead.length || 0, color: C.gray },
+        { label: 'Tool calls', value: parseInt(metrics.tool_calls, 10) || 0, color: C.orange },
+        { label: 'Model calls', value: parseInt(metrics.model_calls, 10) || 0, color: C.blue },
+      ];
+      if (bars.some(function(b){ return b.value > 0; })) {
+        echarts.init(timelineEl).setOption({
+          animationDuration: 200,
+          tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
+            formatter: function(p){ return '<div style="font-weight:600">' + p.name + ': ' + p.value + '</div>'; } },
+          title: { text: 'No phase timing data · showing activity totals', left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
+          grid: { left: 8, right: 48, top: 16, bottom: 28, containLabel: true },
+          xAxis: { type: 'value', minInterval: 1, axisLabel: { color: C.textDim, fontSize: 10 }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
+          yAxis: { type: 'category', data: bars.map(function(b){ return b.label; }), axisLabel: { color: C.textDim, fontSize: 11 } },
+          series: [{ type: 'bar', barMaxWidth: 16,
+            data: bars.map(function(b){ return { value: b.value, itemStyle: { color: b.color, borderRadius: [0, 3, 3, 0] } }; }),
+            label: { show: true, position: 'right', fontSize: 10, color: C.textDim } }]
+        });
+      } else {
+        timelineEl.innerHTML = '<div style="text-align:center;color:' + C.textDim + ';font-size:11px;padding:48px 0;">No activity data</div>';
+      }
     }
   }
 
   // 窗口 resize 同步
   window.addEventListener('resize', function(){
-    ['chart-matrix','chart-sankey','chart-funnel','chart-funnel-pie'].forEach(function(id){
+    ['chart-matrix','chart-coverage','chart-timeline'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) { var inst = echarts.getInstanceByDom(el); if (inst) inst.resize(); }
     });
@@ -3361,6 +3456,8 @@
       toast.classList.remove("visible");
     }, 1600);
   }
+  // 暴露给其他模块（charts.js 点击下钻时需要 toast 反馈）
+  IA.flashToast = flashToast;
 
   // ── 事件绑定 ────────────────────────────────────────
   function bindEvents() {
@@ -3508,6 +3605,38 @@
         // 右滑超过 60px，且横向位移大于纵向位移 1.5 倍，时长 < 600ms
         if (dx > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 600) {
           toggleReport(false);
+        }
+      }, { passive: true });
+    })();
+    // E32: 移动端侧边栏左缘右滑打开（仅 <=640px 且侧边栏未打开时）
+    (function setupSidebarSwipeOpen() {
+      const body = document.body;
+      if (body.dataset.swipeSidebarBound === "1") return;
+      body.dataset.swipeSidebarBound = "1";
+      let startX = 0, startY = 0, startT = 0, tracking = false;
+      body.addEventListener("touchstart", function (e) {
+        if (!window.matchMedia("(max-width: 640px)").matches) return;
+        const sidebar = document.getElementById("sidebar");
+        if (sidebar.classList.contains("mobile-history-open")) return; // 已打开不重复触发
+        if (document.getElementById("main").classList.contains("report-open")) return; // 报告打开时让位报告手势
+        if (!e.touches || e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+        startT = Date.now();
+        tracking = startX < 28; // 仅从屏幕左缘 28px 内开始才跟踪
+      }, { passive: true });
+      body.addEventListener("touchend", function (e) {
+        if (!tracking) return;
+        tracking = false;
+        const touch = (e.changedTouches && e.changedTouches[0]) || null;
+        if (!touch) return;
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        const dt = Date.now() - startT;
+        if (dx > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 600) {
+          toggleMobileHistory();
+          if (navigator.vibrate) { try { navigator.vibrate(12); } catch (vErr) { /* ignore */ } }
         }
       }, { passive: true });
     })();
