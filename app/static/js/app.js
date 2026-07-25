@@ -1932,7 +1932,7 @@
     return all.slice(0, 3);
   }
 
-  // 图表渲染函数（renderMatrix/renderCoverage/renderTimeline）及辅助工具
+  // 图表渲染函数（renderDiffstat/renderVerify）及辅助工具
   // （palette/isMobile/toolbox 等）已全部抽离到 charts.js，
   // 通过 IA.Charts.* 调用。app.js 仅保留图表生命周期管理：
   // 懒加载（initLazyCharts）、销毁（disposeReportCharts）、resize、主题切换（refreshReportCharts）。
@@ -1986,13 +1986,13 @@
     const review = r.review_audit || { status: "not_run" };
     const reviewLabel =
       review.status === "not_run" ? t("report_review_pending") : enumLabel("review_status", review.status);
-    // 图表仅在有证据时渲染；已读文件/可信度卡片的下钻目标是图表区，
+    // 证据核对图仅在有证据时渲染；已读文件/可信度卡片的下钻目标是该图，
     // 无图表时保持不可点击，避免指向不存在的锚点
     const hasEvidence = r.evidence && r.evidence.length;
     const metrics = [
       { label: t("report_metric_evidence_count"), value: String((r.evidence || []).length), href: "#report-evidence" },
-      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length), href: hasEvidence ? "#report-coverage-section" : null },
-      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence), href: hasEvidence ? "#report-matrix-section" : null },
+      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length), href: hasEvidence ? "#report-verify-section" : null },
+      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence), href: hasEvidence ? "#report-verify-section" : null },
       { label: t("report_metric_review"), value: reviewLabel, href: review.status !== "not_run" ? ".review-section" : null },
       { label: t("report_metric_proposed_changes"), value: String((r.proposed_changes || []).length), href: "#report-changes" },
       { label: t("report_metric_risks"), value: String((r.risks || []).length), href: "#report-risks" },
@@ -2010,32 +2010,34 @@
       .join("");
     parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
 
-    // 3. ECharts 三图表：证据可信度矩阵 + 调查覆盖图 + 调查阶段耗时
-    // 每个图表回答一个用户真正会问的问题，全部基于真实调查数据
+    // 3. ECharts 双图表：补丁改动分布（diffstat）+ 证据核对
+    // 前者对应 git diff --stat 的阅读习惯，后者核对证据是否读过、补丁是否改到
     const sessionData = activeSession || {};
-    if (hasEvidence) {
-      // 图表 1 + 图表 2 并排；容器 id 供指标卡片（可信度/已读文件）下钻锚点
-      const matrixHtml =
-        `<div id="report-matrix-section" class="report-chart report-chart-half">` +
-        `<div class="report-chart-title">${IA.escapeHtml(t("matrix_chart_title"))}</div>` +
-        `<div id="report-evidence-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("matrix_chart_title"))}"></div>` +
-        `<div class="report-chart-caption">${IA.escapeHtml(t("matrix_chart_caption"))}</div>` +
-        `</div>`;
-      const coverageHtml =
-        `<div id="report-coverage-section" class="report-chart report-chart-half">` +
-        `<div class="report-chart-title">${IA.escapeHtml(t("coverage_chart_title"))}</div>` +
-        `<div id="report-coverage-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("coverage_chart_title"))}"></div>` +
-        `<div class="report-chart-caption">${IA.escapeHtml(t("coverage_chart_caption"))}</div>` +
-        `</div>`;
-      parts.push(`<div class="report-charts-row">${matrixHtml}${coverageHtml}</div>`);
-      // 图表 3 单独一行（阶段耗时横向条形图）
-      const timelineHtml =
-        `<div class="report-chart report-chart-full">` +
-        `<div class="report-chart-title">${IA.escapeHtml(t("timeline_chart_title"))}</div>` +
-        `<div id="report-timeline-chart" class="report-chart-canvas" role="img" aria-label="${IA.escapeHtml(t("timeline_chart_title"))}"></div>` +
-        `<div class="report-chart-caption">${IA.escapeHtml(t("timeline_chart_caption"))}</div>` +
-        `</div>`;
-      parts.push(`<div class="report-charts-row">${timelineHtml}</div>`);
+    const hasPatch = !!(r.patch && String(r.patch).trim());
+    if (hasPatch || hasEvidence) {
+      // 两图都有时并排，只有一张时占满整行
+      const halfClass = hasPatch && hasEvidence ? "report-chart-half" : "report-chart-full";
+      const chartBlocks = [];
+      if (hasPatch) {
+        chartBlocks.push(
+          `<div id="report-diffstat-section" class="report-chart ${halfClass}">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("diffstat_chart_title"))}</div>` +
+          `<div id="report-diffstat-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("diffstat_chart_title"))}"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("diffstat_chart_caption"))}</div>` +
+          `</div>`,
+        );
+      }
+      if (hasEvidence) {
+        // 容器 id 供指标卡片（可信度/已读文件）下钻锚点
+        chartBlocks.push(
+          `<div id="report-verify-section" class="report-chart ${halfClass}">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("verify_chart_title"))}</div>` +
+          `<div id="report-verify-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("verify_chart_title"))}"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("verify_chart_caption"))}</div>` +
+          `</div>`,
+        );
+      }
+      parts.push(`<div class="report-charts-row">${chartBlocks.join("")}</div>`);
     }
 
     // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
@@ -2193,8 +2195,8 @@
     d.innerHTML = parts.join("");
 
     // #16 图表懒加载：用骨架屏占位，IntersectionObserver 触发时再初始化 ECharts
-    // 避免首次渲染三个图表导致页面卡顿（移动端尤其明显）
-    ["report-evidence-chart", "report-coverage-chart", "report-timeline-chart"].forEach(function (id) {
+    // 避免首次渲染图表导致页面卡顿（移动端尤其明显）
+    ["report-diffstat-chart", "report-verify-chart"].forEach(function (id) {
       const el = document.getElementById(id);
       if (el && !el.querySelector(".chart-skeleton")) {
         el.innerHTML = `<div class="chart-skeleton" aria-hidden="true"><div class="skeleton-bar skeleton-title"></div><div class="skeleton-grid"><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div></div><div class="skeleton-bar skeleton-caption"></div></div>`;
@@ -2411,15 +2413,16 @@
   // 同时支持 #17 点击放大到模态框：每个图表容器有 .chart-zoom-btn 按钮
   function initLazyCharts(r, sessionData) {
     const chartSpecs = [
-      { id: "report-evidence-chart", render: IA.Charts.renderMatrix },
-      { id: "report-coverage-chart", render: IA.Charts.renderCoverage },
-      { id: "report-timeline-chart", render: IA.Charts.renderTimeline },
+      { id: "report-diffstat-chart", render: IA.Charts.renderDiffstat },
+      { id: "report-verify-chart", render: IA.Charts.renderVerify },
     ];
     chartSpecs.forEach(function (spec) {
       const el = document.getElementById(spec.id);
       if (!el) return;
-      // #17 添加放大按钮（懒加载时即可见，无需等待图表初始化）
-      if (!el.querySelector(".chart-zoom-btn")) {
+      // #17 放大按钮：必须在 spec.render 之后添加——echarts.init 会清空容器
+      // 已有子元素，提前挂的按钮会被后续初始化直接吞掉
+      function addZoomBtn() {
+        if (el.querySelector(".chart-zoom-btn")) return;
         const zoomBtn = document.createElement("button");
         zoomBtn.type = "button";
         zoomBtn.className = "chart-zoom-btn";
@@ -2433,7 +2436,10 @@
       // 无 IntersectionObserver 时立即初始化（降级兼容）
       if (!("IntersectionObserver" in window)) {
         const chart = spec.render(el, r, sessionData);
-        if (chart) reportChartInstances.push(chart);
+        if (chart) {
+          reportChartInstances.push(chart);
+          addZoomBtn();
+        }
         return;
       }
       const observer = new IntersectionObserver(function (entries, obs) {
@@ -2450,7 +2456,10 @@
               setTimeout(function () { if (skeleton.parentNode) skeleton.remove(); }, 220);
             }
             const chart = spec.render(el, r, sessionData);
-            if (chart) reportChartInstances.push(chart);
+            if (chart) {
+              reportChartInstances.push(chart);
+              addZoomBtn();
+            }
           }
         });
       }, { rootMargin: "200px 0px", threshold: 0 });
@@ -3010,13 +3019,17 @@
       metricCard(t("report_metric_risks"), (r.risks || []).length) +
       '</div>');
 
-    // 3. 图表占位（内部 script 填充）
+    // 3. 图表占位（内部 script 填充）：补丁改动分布 + 证据核对
+    const hasPatchExport = !!(r.patch && String(r.patch).trim());
+    const exportChartBlocks = [];
+    if (hasPatchExport) {
+      exportChartBlocks.push('<div class="chart"><div class="chart-title">' + esc(t("diffstat_chart_title")) + '</div><div id="chart-diffstat" class="chart-canvas"></div><div class="chart-caption">' + esc(t("diffstat_chart_caption")) + '</div></div>');
+    }
     if (evCount) {
-      parts.push(
-        '<div class="chart"><div class="chart-title">' + esc(t("matrix_chart_title")) + '</div><div id="chart-matrix" class="chart-canvas"></div><div class="chart-caption">' + esc(t("matrix_chart_caption")) + '</div></div>' +
-        '<div class="chart"><div class="chart-title">' + esc(t("coverage_chart_title")) + '</div><div id="chart-coverage" class="chart-canvas"></div><div class="chart-caption">' + esc(t("coverage_chart_caption")) + '</div></div>' +
-        '<div class="chart"><div class="chart-title">' + esc(t("timeline_chart_title")) + '</div><div id="chart-timeline" class="chart-canvas"></div><div class="chart-caption">' + esc(t("timeline_chart_caption")) + '</div></div>',
-      );
+      exportChartBlocks.push('<div class="chart"><div class="chart-title">' + esc(t("verify_chart_title")) + '</div><div id="chart-verify" class="chart-canvas"></div><div class="chart-caption">' + esc(t("verify_chart_caption")) + '</div></div>');
+    }
+    if (exportChartBlocks.length) {
+      parts.push(exportChartBlocks.join(""));
     }
 
     // 4. 独立审查（与 renderReport 对齐：reviewer_model + review_calls + 证据验证对比 + 根因支撑）
@@ -3227,212 +3240,132 @@
   } catch(e){ console.error('Failed to parse embedded data', e); return; }
 
   // C15: HTML 结构已在生成阶段渲染（buildExportBody），这里只负责图表
-  // 图表逻辑与 charts.js 保持一致：BRAND 配色 + 评分模型 + 覆盖分类 + 阶段耗时
+  // 图表逻辑与 charts.js 保持一致：补丁改动分布 + 证据核对
   if (typeof echarts === 'undefined' || window.__echartsFailed) return;
   var evCount = (report.evidence || []).length;
-  var metrics = session.metrics || {};
   var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
-  var filesReadSet = {};
-  filesRead.forEach(function(p){ filesReadSet[p] = true; });
-  // approved/revised 均视为审查已验证（revised 展示的即修订版），与主视图 charts.js 语义一致
-  var reviewPass = report.review_audit && (report.review_audit.status === 'approved' || report.review_audit.status === 'revised');
   // BRAND 配色（与主应用 charts.js 统一）
   var C = { blue:'#165DFF', green:'#00B42A', red:'#F53F3F', orange:'#FF7D00', gray:'#86909C', text:'#f1f5f9', textDim:'#94a3b8', line:'#334155', bg:'#0f172a' };
 
-  // 证据评分（4 维度各 0/0.5/1）
-  function scoreEv(e) {
-    var fr = filesReadSet[e.path] ? 1 : 0;
-    var ls = 0;
-    if (e.lines && /^L\\d+(-L?\\d+)?$/.test(e.lines)) ls = 1;
-    else if (e.lines && /^L/i.test(e.lines)) ls = 0.5;
-    var rt = (e.reason || '').trim();
-    var rs = 0;
-    if (rt.length >= 20) rs = 1;
-    else if (rt.length > 0) rs = 0.5;
-    var rv = reviewPass ? 1 : 0;
-    return { fr: fr, ls: ls, rs: rs, rv: rv, avg: (fr + ls + rs + rv) / 4 };
+  function normP(p) {
+    var s = String(p || '').split('\\\\').join('/');
+    if (s.indexOf('./') === 0) s = s.slice(2);
+    if (s.indexOf('a/') === 0 || s.indexOf('b/') === 0) s = s.slice(2);
+    return s.toLowerCase();
+  }
+  function shortN(p) { var parts = String(p).split('/'); return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : String(p); }
+  function sameFile(a, b) { return a === b || a.slice(-(b.length + 1)) === '/' + b || b.slice(-(a.length + 1)) === '/' + a; }
+
+  // unified diff → 每文件增删行数（与 charts.js parseDiffstat 同口径）
+  function parseDiff(patch) {
+    var files = []; var current = null; var oldPath = null;
+    String(patch || '').split('\\n').forEach(function(line){
+      if (line.indexOf('--- ') === 0) {
+        var p0 = line.slice(4).trim();
+        oldPath = p0 === '/dev/null' ? null : (p0.indexOf('a/') === 0 ? p0.slice(2) : p0);
+        return;
+      }
+      if (line.indexOf('+++ ') === 0) {
+        var p1 = line.slice(4).trim();
+        var filePath = p1 === '/dev/null' ? oldPath : (p1.indexOf('b/') === 0 ? p1.slice(2) : p1);
+        current = { path: filePath || 'unknown', added: 0, removed: 0 };
+        files.push(current);
+        return;
+      }
+      if (!current) return;
+      if (line.charAt(0) === '+') current.added += 1;
+      else if (line.charAt(0) === '-') current.removed += 1;
+    });
+    return files.filter(function(f){ return f.added > 0 || f.removed > 0; });
   }
 
-  // ── 区块1：证据可信度矩阵 ──
-  var matrixEl = document.getElementById('chart-matrix');
-  if (matrixEl && evCount) {
-    var dims = ['Review verified', 'Has reason', 'Lines valid', 'File read'];
-    var rawPaths = report.evidence.map(function(e){ return e.path || 'unknown'; });
-    var shortNames = rawPaths.map(function(p){ var parts = p.split('/'); return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : p; });
-    var nameCnt = {};
-    shortNames.forEach(function(n){ nameCnt[n] = (nameCnt[n] || 0) + 1; });
-    var labels = shortNames.map(function(n, i){ return nameCnt[n] > 1 ? rawPaths[i] : n; });
-    var scores = report.evidence.map(scoreEv);
-    var heatData = [];
-    scores.forEach(function(s, x) {
-      heatData.push([x, 0, s.rv]);
-      heatData.push([x, 1, s.rs]);
-      heatData.push([x, 2, s.ls]);
-      heatData.push([x, 3, s.fr]);
-    });
-    // 汇总卡片
-    var failed = scores.filter(function(s){ return s.avg < 0.6; });
-    var failedLabels = [];
-    scores.forEach(function(s, i){ if (s.avg < 0.6) failedLabels.push(labels[i]); });
-    var summary = document.createElement('div');
-    summary.style.cssText = 'display:flex;gap:16px;margin-bottom:8px;font-size:12px;color:' + C.textDim + ';';
-    summary.innerHTML = '<span>Total: <b style="color:' + C.text + '">' + scores.length + '</b></span>' +
-      '<span>Failed: <b style="color:' + (failed.length ? C.red : C.text) + '">' + failed.length + '</b></span>' +
-      '<span>Risk: <b style="color:' + C.red + '">' + (failedLabels.length ? failedLabels.slice(0, 3).join(', ') : 'None') + '</b></span>';
-    matrixEl.parentElement.insertBefore(summary, matrixEl);
-    echarts.init(matrixEl).setOption({
+  var diffFiles = parseDiff(report.patch);
+
+  // ── 区块1：补丁改动分布 ──
+  var diffEl = document.getElementById('chart-diffstat');
+  if (diffEl && diffFiles.length) {
+    var dsRows = diffFiles.slice().sort(function(a, b){ return (a.added + a.removed) - (b.added + b.removed); });
+    var MAX_ROWS = 12;
+    if (dsRows.length > MAX_ROWS) {
+      var rest = dsRows.slice(0, dsRows.length - (MAX_ROWS - 1));
+      var agg = { path: '+' + rest.length + ' more files', added: 0, removed: 0 };
+      rest.forEach(function(f){ agg.added += f.added; agg.removed += f.removed; });
+      dsRows = [agg].concat(dsRows.slice(dsRows.length - (MAX_ROWS - 1)));
+    }
+    var totalAdd = 0; var totalDel = 0;
+    diffFiles.forEach(function(f){ totalAdd += f.added; totalDel += f.removed; });
+    echarts.init(diffEl).setOption({
       animationDuration: 200,
       tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
-        formatter: function(p) {
-          var v = p.data[2]; var pass = v >= 0.6; var st = pass ? 'PASS' : 'FAIL'; var sc = pass ? C.green : C.red;
-          return '<div style="font-weight:600">' + labels[p.data[0]] + '</div>' +
-            '<div style="color:' + C.textDim + ';font-size:11px">' + dims[p.data[1]] + '</div>' +
-            '<div style="color:' + sc + ';font-weight:600">' + st + ' · ' + v.toFixed(2) + '</div>';
+        formatter: function(p){
+          var row = dsRows[p.dataIndex];
+          if (!row) return '';
+          return '<div style="font-weight:600">' + row.path + '</div>' +
+            '<div><span style="color:' + C.green + '">+' + row.added + '</span> · <span style="color:' + C.red + '">\u2212' + row.removed + '</span></div>';
         }
       },
-      grid: { left: 8, right: 16, top: 16, bottom: 60, containLabel: true },
-      xAxis: { type: 'category', data: labels, splitArea: { show: true }, axisLabel: { color: C.textDim, fontSize: 10, rotate: 45, width: 70, overflow: 'truncate', interval: 0 } },
-      yAxis: { type: 'category', data: dims, splitArea: { show: true }, axisLabel: { color: C.textDim, fontSize: 11 } },
-      visualMap: { min: 0, max: 1, show: false, inRange: { color: [C.red, C.red, C.green, C.green] } },
-      series: [{ type: 'heatmap', data: heatData, itemStyle: { borderRadius: 3, borderColor: C.bg, borderWidth: 2 },
-        label: { show: true, color: '#fff', fontSize: 10, fontWeight: 600, formatter: function(p) { return p.data[2].toFixed(1); } } }]
+      legend: { top: 0, left: 0, itemWidth: 10, itemHeight: 10, textStyle: { color: C.textDim, fontSize: 11 }, data: ['Added', 'Removed'] },
+      title: { text: diffFiles.length + ' files · +' + totalAdd + ' \u2212' + totalDel, left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
+      grid: { left: 8, right: 72, top: 28, bottom: 28, containLabel: true },
+      xAxis: { type: 'value', minInterval: 1, axisLabel: { color: C.textDim, fontSize: 10 }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
+      yAxis: { type: 'category', data: dsRows.map(function(f){ return shortN(f.path); }), axisLabel: { color: C.textDim, fontSize: 10, width: 140, overflow: 'truncate' } },
+      series: [
+        { name: 'Added', type: 'bar', stack: 'diff', barMaxWidth: 14, data: dsRows.map(function(f){ return f.added; }), itemStyle: { color: C.green } },
+        { name: 'Removed', type: 'bar', stack: 'diff', barMaxWidth: 14, data: dsRows.map(function(f){ return f.removed; }), itemStyle: { color: C.red, borderRadius: [0, 3, 3, 0] },
+          label: { show: true, position: 'right', fontSize: 10, color: C.textDim,
+            formatter: function(p){ var f = dsRows[p.dataIndex]; return f ? '+' + f.added + ' \u2212' + f.removed : ''; } } }
+      ]
     });
   }
 
-  // ── 区块2：调查覆盖图 ──
-  var coverageEl = document.getElementById('chart-coverage');
-  if (coverageEl && evCount) {
-    var normP = function(p){ return String(p || '').replace(/\\\\/g, '/').replace(/^\\.\\//, '').replace(/^[ab]\\//, '').toLowerCase(); };
-    var shortN = function(p){ var parts = String(p).split('/'); return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : String(p); };
+  // ── 区块2：证据核对 ──
+  var verifyEl = document.getElementById('chart-verify');
+  if (verifyEl && evCount) {
     var readList = []; var readSeen = {};
     filesRead.forEach(function(p){ var n = normP(p); if (n && !readSeen[n]) { readSeen[n] = true; readList.push(n); } });
+    var hasReadData = readList.length > 0;
+    var patchPaths = diffFiles.map(function(f){ return normP(f.path); });
     var byFile = {}; var order = [];
-    report.evidence.forEach(function(e){
+    (report.evidence || []).forEach(function(e){
       var n = normP(e.path || 'unknown');
-      if (!byFile[n]) { byFile[n] = { count: 0, raw: e.path || 'unknown' }; order.push(n); }
+      if (!byFile[n]) { byFile[n] = { path: e.path || 'unknown', count: 0 }; order.push(n); }
       byFile[n].count += 1;
     });
-    var isRead = function(n){
-      for (var i = 0; i < readList.length; i++) { var r0 = readList[i]; if (r0 === n || r0.endsWith('/' + n) || n.endsWith('/' + r0)) return true; }
-      return false;
-    };
-    var supportedRows = []; var phantomRows = [];
-    order.forEach(function(n){
+    var vRows = order.map(function(n){
       var it = byFile[n];
-      var row = { name: shortN(it.raw), count: it.count };
-      if (readList.length && !isRead(n)) { row.status = 'phantom'; phantomRows.push(row); }
-      else { row.status = 'supported'; supportedRows.push(row); }
+      var read = !hasReadData || readList.some(function(r0){ return sameFile(r0, n); });
+      var patched = patchPaths.some(function(p0){ return sameFile(p0, n); });
+      return { name: shortN(it.path), path: it.path, count: it.count, read: read, patched: patched };
     });
-    supportedRows.sort(function(a, b){ return a.count - b.count; });
-    var unusedRows = [];
-    readList.forEach(function(n){
-      var ref = order.some(function(ev){ return ev === n || ev.endsWith('/' + n) || n.endsWith('/' + ev); });
-      if (!ref) unusedRows.push({ name: shortN(n), count: 0, status: 'unused' });
-    });
-    var budget = Math.max(14 - phantomRows.length - supportedRows.length, 1);
-    var aggRow = null;
-    if (unusedRows.length > budget) {
-      var restN = unusedRows.length - (budget - 1);
-      unusedRows = unusedRows.slice(0, budget - 1);
-      aggRow = { name: '+' + restN + ' more files', count: 0, status: 'unused' };
-    }
-    var rows = [];
-    if (aggRow) rows.push(aggRow);
-    rows = rows.concat(unusedRows.slice().reverse(), supportedRows, phantomRows);
-    var colorOf = { supported: C.green, unused: C.gray, phantom: C.red };
-    var stText = { supported: 'Read & cited as evidence', unused: 'Read, not cited', phantom: 'Cited but never read' };
-    echarts.init(coverageEl).setOption({
+    vRows.sort(function(a, b){ return a.count - b.count; });
+    var readCnt = vRows.filter(function(r0){ return r0.read; }).length;
+    var patchedCnt = vRows.filter(function(r0){ return r0.patched; }).length;
+    echarts.init(verifyEl).setOption({
       animationDuration: 200,
       tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
-        formatter: function(p) {
-          var row = rows[p.dataIndex];
+        formatter: function(p){
+          var row = vRows[p.dataIndex];
           if (!row) return '';
-          return '<div style="font-weight:600">' + row.name + '</div>' +
-            '<div style="color:' + colorOf[row.status] + ';font-size:11px;font-weight:600">' + stText[row.status] + '</div>' +
-            (row.count > 0 ? '<div style="color:' + C.textDim + ';font-size:11px">Evidence: <b>' + row.count + '</b></div>' : '');
+          return '<div style="font-weight:600">' + row.path + '</div>' +
+            '<div style="color:' + C.textDim + ';font-size:11px">Citations: <b style="color:' + C.text + '">' + row.count + '</b></div>' +
+            '<div style="color:' + (row.read ? C.green : C.red) + ';font-size:11px;font-weight:600">' + (row.read ? 'Read' : 'Not read') + '</div>' +
+            '<div style="color:' + C.textDim + ';font-size:11px">Patch: ' + (row.patched ? 'patched' : 'not patched') + '</div>';
         }
       },
-      grid: { left: 8, right: 56, top: 16, bottom: 16, containLabel: true },
+      title: { text: readCnt + '/' + vRows.length + ' read · ' + patchedCnt + '/' + vRows.length + ' patched', left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
+      grid: { left: 8, right: 88, top: 16, bottom: 28, containLabel: true },
       xAxis: { type: 'value', minInterval: 1, axisLabel: { color: C.textDim, fontSize: 10 }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
-      yAxis: { type: 'category', data: rows.map(function(r0){ return r0.name; }), axisLabel: { color: C.textDim, fontSize: 10, width: 140, overflow: 'truncate' } },
+      yAxis: { type: 'category', data: vRows.map(function(r0){ return r0.name; }), axisLabel: { color: C.textDim, fontSize: 10, width: 140, overflow: 'truncate' } },
       series: [{ type: 'bar', barMaxWidth: 14,
-        data: rows.map(function(r0){ return { value: r0.count, itemStyle: { color: colorOf[r0.status], borderRadius: [0, 3, 3, 0], opacity: r0.status === 'unused' ? 0.55 : 1 } }; }),
+        data: vRows.map(function(r0){ return { value: r0.count, itemStyle: { color: r0.read ? C.blue : C.red, borderRadius: [0, 3, 3, 0] } }; }),
         label: { show: true, position: 'right', fontSize: 10, color: C.textDim,
-          formatter: function(p) { var row = rows[p.dataIndex]; return row && row.count > 0 ? String(row.count) + (row.status === 'phantom' ? ' !' : '') : stText.unused; } } }]
+          formatter: function(p){ var r0 = vRows[p.dataIndex]; return r0 ? String(r0.count) + (r0.patched ? ' · patched' : '') : ''; } } }]
     });
-  }
-
-  // ── 区块3：调查阶段耗时（无阶段事件时回退为活动量概览）──
-  var timelineEl = document.getElementById('chart-timeline');
-  if (timelineEl) {
-    var evts = session.events || [];
-    var stamps = [];
-    evts.forEach(function(ev){ var ts = Date.parse(ev.created_at || ''); if (!isNaN(ts)) stamps.push({ type: ev.type, phase: ev.data && ev.data.phase, ts: ts }); });
-    var phaseEvts = stamps.filter(function(s){ return s.type === 'phase' && s.phase; });
-    var PHASE_EN = { fetching: 'Fetching', preloading: 'Preloading', exploring: 'Exploring', verifying: 'Verifying', reviewing: 'Reviewing' };
-    var fmtS = function(sec){ return sec < 1 ? '<1s' : (sec >= 60 ? Math.floor(sec / 60) + 'm ' + Math.round(sec % 60) + 's' : Math.round(sec) + 's'); };
-    if (phaseEvts.length) {
-      var endTs = stamps.reduce(function(m, s){ return Math.max(m, s.ts); }, phaseEvts[phaseEvts.length - 1].ts);
-      var segs = phaseEvts.map(function(p, i){
-        var start = p.ts; var end = i + 1 < phaseEvts.length ? phaseEvts[i + 1].ts : endTs;
-        var tools = 0;
-        stamps.forEach(function(s){ if (s.type === 'tool_call' && s.ts >= start && (i + 1 < phaseEvts.length ? s.ts < end : s.ts <= end)) tools += 1; });
-        return { label: PHASE_EN[p.phase] || p.phase, seconds: Math.max(0, (end - start) / 1000), tools: tools };
-      });
-      var totalS = Math.max(0, (endTs - phaseEvts[0].ts) / 1000);
-      var maxI = -1; var maxS = 0;
-      segs.forEach(function(s, i){ if (s.seconds > maxS) { maxS = s.seconds; maxI = i; } });
-      var disp = segs.slice().reverse();
-      var maxDisp = maxI >= 0 ? segs.length - 1 - maxI : -1;
-      echarts.init(timelineEl).setOption({
-        animationDuration: 200,
-        tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
-          formatter: function(p) {
-            var s = disp[p.dataIndex];
-            if (!s) return '';
-            var pct = totalS > 0 ? Math.round((s.seconds / totalS) * 100) : 0;
-            return '<div style="font-weight:600">' + s.label + '</div><div>' + fmtS(s.seconds) + ' · ' + pct + '%</div>' +
-              '<div style="color:' + C.textDim + ';font-size:11px">' + s.tools + ' tool calls</div>';
-          }
-        },
-        title: { text: 'Total: ' + fmtS(totalS), left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
-        grid: { left: 8, right: 96, top: 16, bottom: 28, containLabel: true },
-        xAxis: { type: 'value', axisLabel: { color: C.textDim, fontSize: 10, formatter: function(v){ return v + 's'; } }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
-        yAxis: { type: 'category', data: disp.map(function(s){ return s.label; }), axisLabel: { color: C.textDim, fontSize: 11 } },
-        series: [{ type: 'bar', barMaxWidth: 16,
-          data: disp.map(function(s, i){ return { value: Math.round(s.seconds * 10) / 10, itemStyle: { color: i === maxDisp ? C.orange : C.blue, borderRadius: [0, 3, 3, 0] } }; }),
-          label: { show: true, position: 'right', fontSize: 10, color: C.textDim,
-            formatter: function(p) { var s = disp[p.dataIndex]; return s ? fmtS(s.seconds) + (s.tools > 0 ? ' · ' + s.tools + ' tools' : '') : ''; } } }]
-      });
-    } else {
-      var bars = [
-        { label: 'Evidence', value: evCount, color: C.green },
-        { label: 'Files read', value: parseInt(metrics.files_read, 10) || filesRead.length || 0, color: C.gray },
-        { label: 'Tool calls', value: parseInt(metrics.tool_calls, 10) || 0, color: C.orange },
-        { label: 'Model calls', value: parseInt(metrics.model_calls, 10) || 0, color: C.blue },
-      ];
-      if (bars.some(function(b){ return b.value > 0; })) {
-        echarts.init(timelineEl).setOption({
-          animationDuration: 200,
-          tooltip: { confine: true, backgroundColor: C.bg, borderWidth: 0, padding: [10, 14], textStyle: { color: C.text, fontSize: 12 },
-            formatter: function(p){ return '<div style="font-weight:600">' + p.name + ': ' + p.value + '</div>'; } },
-          title: { text: 'No phase timing data · showing activity totals', left: 'center', bottom: 0, textStyle: { color: C.textDim, fontSize: 11 } },
-          grid: { left: 8, right: 48, top: 16, bottom: 28, containLabel: true },
-          xAxis: { type: 'value', minInterval: 1, axisLabel: { color: C.textDim, fontSize: 10 }, splitLine: { lineStyle: { color: C.line, opacity: 0.4 } } },
-          yAxis: { type: 'category', data: bars.map(function(b){ return b.label; }), axisLabel: { color: C.textDim, fontSize: 11 } },
-          series: [{ type: 'bar', barMaxWidth: 16,
-            data: bars.map(function(b){ return { value: b.value, itemStyle: { color: b.color, borderRadius: [0, 3, 3, 0] } }; }),
-            label: { show: true, position: 'right', fontSize: 10, color: C.textDim } }]
-        });
-      } else {
-        timelineEl.innerHTML = '<div style="text-align:center;color:' + C.textDim + ';font-size:11px;padding:48px 0;">No activity data</div>';
-      }
-    }
   }
 
   // 窗口 resize 同步
   window.addEventListener('resize', function(){
-    ['chart-matrix','chart-coverage','chart-timeline'].forEach(function(id){
+    ['chart-diffstat','chart-verify'].forEach(function(id){
       var el = document.getElementById(id);
       if (el) { var inst = echarts.getInstanceByDom(el); if (inst) inst.resize(); }
     });

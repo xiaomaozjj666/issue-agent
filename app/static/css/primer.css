@@ -1071,7 +1071,6 @@ a:hover {
   /* 卡片/结论/指标区域移除暗色背景，确保对比度 */
   .report-metric-card,
   .report-conclusion,
-  .matrix-stat,
   .evidence-item,
   .risk-item {
     background: #f8fafc !important;
@@ -1083,7 +1082,6 @@ a:hover {
   .hero-example::after,
   .report-metric-card::after,
   .report-conclusion::after,
-  .matrix-stat::after,
   .hero-net-canvas {
     display: none !important;
   }
@@ -1868,8 +1866,7 @@ a:hover {
 .hero-step,
 .hero-example,
 .report-metric-card,
-.report-conclusion,
-.matrix-stat {
+.report-conclusion {
   --spot-x: 50%;
   --spot-y: 50%;
   --spot-o: 0;
@@ -1879,8 +1876,7 @@ a:hover {
 .hero-step::after,
 .hero-example::after,
 .report-metric-card::after,
-.report-conclusion::after,
-.matrix-stat::after {
+.report-conclusion::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -1901,8 +1897,7 @@ a:hover {
 [data-theme="light"] .hero-step::after,
 [data-theme="light"] .hero-example::after,
 [data-theme="light"] .report-metric-card::after,
-[data-theme="light"] .report-conclusion::after,
-[data-theme="light"] .matrix-stat::after {
+[data-theme="light"] .report-conclusion::after {
   background: radial-gradient(
     var(--spot-size) circle at var(--spot-x) var(--spot-y),
     rgba(30, 41, 59, calc(var(--spot-o) * 0.5)),
@@ -1915,8 +1910,7 @@ a:hover {
 .hero-step > *,
 .hero-example > *,
 .report-metric-card > *,
-.report-conclusion > *,
-.matrix-stat > * {
+.report-conclusion > * {
   position: relative;
   z-index: 2;
 }
@@ -2234,7 +2228,7 @@ a:hover {
   grid-column: 1 / -1;
 }
 
-/* 矩阵图和覆盖图需要更高画布以容纳标签 */
+/* 并排双图需要更高画布以容纳文件名标签 */
 .report-chart-canvas-tall {
   height: 300px;
   min-height: 300px;
@@ -2287,64 +2281,6 @@ a:hover {
   font-size: var(--text-xs);
   line-height: 1.6;
   text-align: center;
-}
-
-/* 证据可信度矩阵：汇总统计卡片 */
-.matrix-summary {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.matrix-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--canvas-subtle);
-  min-width: 80px;
-}
-
-.matrix-stat-value {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--fg-strong);
-  line-height: 1.2;
-}
-
-.matrix-stat-label {
-  font-size: var(--text-xs);
-  color: var(--muted);
-  font-weight: 600;
-}
-
-.matrix-stat-warn .matrix-stat-value {
-  color: #F53F3F;
-}
-
-.matrix-stat-risk {
-  flex: 1;
-  min-width: 160px;
-}
-
-.matrix-stat-risk-list {
-  font-size: var(--text-xs);
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.matrix-stat-risk-list code {
-  background: rgba(245, 63, 63, 0.12);
-  color: #F53F3F;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
-  margin-right: 4px;
 }
 
 /* 报告元信息 */
@@ -4326,9 +4262,8 @@ dialog::backdrop {
 }
 
 /* 确保图表容器是定位上下文 */
-#report-evidence-chart,
-#report-coverage-chart,
-#report-timeline-chart {
+#report-diffstat-chart,
+#report-verify-chart {
   position: relative;
 }
 
