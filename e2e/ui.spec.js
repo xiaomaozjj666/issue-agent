@@ -79,8 +79,8 @@ test("renders real-data report charts without console errors", async ({ page }) 
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
 
-  // 三个图表都是懒加载：滚动进入视口后应渲染出真实 canvas
-  for (const id of ["report-evidence-chart", "report-coverage-chart", "report-timeline-chart"]) {
+  // 两个图表都是懒加载：滚动进入视口后应渲染出真实 canvas
+  for (const id of ["report-diffstat-chart", "report-verify-chart"]) {
     const el = page.locator(`#${id}`);
     await el.scrollIntoViewIfNeeded();
     await expect(el.locator("canvas").first(), `${id} 应渲染出 canvas`).toBeVisible({ timeout: 10_000 });
