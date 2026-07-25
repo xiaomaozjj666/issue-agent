@@ -48,27 +48,41 @@
       `<div class="timeline-steps" data-collapsed="${hasMore ? "1" : "0"}">${allStepsHtml}</div>` +
       (hasMore ? `<button type="button" class="timeline-expand-btn" aria-expanded="false">${IA.escapeHtml(t("timeline_expand"))} (${collapsedCount})</button>` : "");
     container.appendChild(card);
-    // 展开/折叠交互
+    // 展开/折叠交互：用 max-height + opacity 过渡实现平滑动画
     if (hasMore) {
       const stepsEl = card.querySelector(".timeline-steps");
       const btn = card.querySelector(".timeline-expand-btn");
       if (btn && stepsEl) {
-        // 初始折叠：隐藏前 collapsedCount 个 step
+        // 初始折叠：前 collapsedCount 个 step 收起
         const stepEls = stepsEl.querySelectorAll(".timeline-step");
-        for (let i = 0; i < collapsedCount; i++) {
-          stepEls[i].style.display = "none";
-        }
+        const collapsedEls = Array.prototype.slice.call(stepEls, 0, collapsedCount);
+        // 测量单个 step 高度作为折叠基准
+        const stepHeight = stepEls.length ? stepEls[0].offsetHeight + 4 : 28;
+        collapsedEls.forEach(function (el) {
+          el.style.maxHeight = "0px";
+          el.style.opacity = "0";
+          el.style.overflow = "hidden";
+          el.style.margin = "0";
+          el.style.padding = "0";
+          el.style.transition = "max-height 240ms cubic-bezier(0.16,1,0.3,1), opacity 200ms ease-out";
+        });
         btn.addEventListener("click", function () {
           const expanded = btn.getAttribute("aria-expanded") === "true";
           if (expanded) {
             // 折叠
-            for (let i = 0; i < collapsedCount; i++) stepEls[i].style.display = "none";
+            collapsedEls.forEach(function (el) {
+              el.style.maxHeight = "0px";
+              el.style.opacity = "0";
+            });
             btn.setAttribute("aria-expanded", "false");
             btn.textContent = `${t("timeline_expand")} (${collapsedCount})`;
             stepsEl.dataset.collapsed = "1";
           } else {
             // 展开
-            stepEls.forEach(function (el) { el.style.display = ""; });
+            collapsedEls.forEach(function (el) {
+              el.style.maxHeight = stepHeight + "px";
+              el.style.opacity = "1";
+            });
             btn.setAttribute("aria-expanded", "true");
             btn.textContent = t("timeline_collapse");
             stepsEl.dataset.collapsed = "0";

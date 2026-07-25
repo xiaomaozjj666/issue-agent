@@ -146,6 +146,16 @@ class GitHubError(RuntimeError):
     pass
 
 
+class GitHubResourceError(GitHubError):
+    """Raised when the target resource is unavailable (404/410/451).
+
+    This indicates a client-side issue (bad URL, disabled feature, etc.)
+    rather than a server or network failure.
+    """
+
+    pass
+
+
 class GitHubRateLimitError(GitHubError):
     pass
 
@@ -262,6 +272,9 @@ class GitHubClient:
                     message = payload.get("message", response.text) if isinstance(payload, dict) else response.text
                 except ValueError:
                     message = response.text
+                # 4xx 客户端错误中，404/410/451 属于"资源不可用"——用户输入问题而非网关故障
+                if response.status_code in (404, 410, 451):
+                    raise GitHubResourceError(f"GitHub API returned {response.status_code}: {message}")
                 raise GitHubError(f"GitHub API returned {response.status_code}: {message}")
             return response
 
@@ -274,9 +287,22 @@ class GitHubClient:
 
     async def get_issue(self, owner: str, repo: str, number: int) -> IssueData:
         repo_segment = self._repo_segment(owner, repo)
-        issue = (await self._get(f"/repos/{repo_segment}/issues/{number}")).json()
+        try:
+            issue = (await self._get(f"/repos/{repo_segment}/issues/{number}")).json()
+        except GitHubResourceError as exc:
+            # 410 = Issues disabled; 404 = repo/issue not found
+            msg = str(exc)
+            if "410" in msg:
+                raise GitHubResourceError(
+                    f"Issues are disabled for {owner}/{repo}. "
+                    f"The repository owner needs to enable Issues in Settings → General → Features."
+                ) from exc
+            raise GitHubResourceError(
+                f"Issue #{number} not found in {owner}/{repo}. "
+                f"Please verify the URL is correct and the repository is accessible."
+            ) from exc
         if "pull_request" in issue:
-            raise GitHubError(
+            raise GitHubResourceError(
                 f"The supplied URL (https://github.com/{owner}/{repo}/issues/{number}) "
                 f"points to a pull request, not an issue. "
                 f"Use https://github.com/{owner}/{repo}/pull/{number} to view the PR, "

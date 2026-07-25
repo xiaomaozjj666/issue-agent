@@ -643,6 +643,15 @@ a:hover {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* ReactBits Card Hover 复刻：会话卡片悬停微光，克制幅度
+   仅桌面端（hover: hover）启用，触屏端避免误触上浮 */
+@media (hover: hover) {
+  .session-row:not(.active):hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
 .session-card {
   display: block;
   width: 100%;
@@ -959,8 +968,40 @@ a:hover {
   margin: 0 auto;
 }
 
-/* 打印样式：隐藏侧边栏和交互元素，仅打印报告内容 */
+/* 打印样式：隐藏侧边栏和交互元素，仅打印报告内容；
+   重映射暗色令牌为浅色，确保白纸可读、省墨 */
 @media print {
+  :root {
+    --bg: #ffffff !important;
+    --card: #ffffff !important;
+    --canvas-subtle: #f8fafc !important;
+    --canvas-inset: #ffffff !important;
+    --fg: #1e293b !important;
+    --fg-strong: #0f172a !important;
+    --muted: #475569 !important;
+    --faint: #64748b !important;
+    --border: #e2e8f0 !important;
+    --border-muted: #f1f5f9 !important;
+    --accent: #2563eb !important;
+    --accent-emphasis: #1d4ed8 !important;
+    --accent-subtle: #eff6ff !important;
+    --green: #059669 !important;
+    --green-emphasis: #047857 !important;
+    --green-subtle: #ecfdf5 !important;
+    --yellow: #d97706 !important;
+    --yellow-emphasis: #b45309 !important;
+    --yellow-subtle: #fffbeb !important;
+    --red: #dc2626 !important;
+    --red-emphasis: #b91c1c !important;
+    --red-subtle: #fef2f2 !important;
+    --neutral-emphasis: #64748b !important;
+    --neutral-subtle: #f1f5f9 !important;
+    --control-bg: #ffffff !important;
+    --shadow-sm: none !important;
+    --shadow-medium: none !important;
+    --shadow-large: none !important;
+    --shadow-xl: none !important;
+  }
   #sidebar,
   #conversation,
   .report-header-actions,
@@ -969,7 +1010,9 @@ a:hover {
   #input-bar,
   #progress,
   .report-toc summary,
-  .timeline-expand-btn {
+  .timeline-expand-btn,
+  .back-top-btn,
+  .pulse-ring {
     display: none !important;
   }
   #main {
@@ -981,9 +1024,39 @@ a:hover {
     width: 100% !important;
     max-width: 100% !important;
     border: none !important;
+    background: white !important;
+  }
+  #report {
+    overflow: visible !important;
+    max-height: none !important;
   }
   body {
     background: white !important;
+    color: #1e293b !important;
+  }
+  /* 卡片/结论/指标区域移除暗色背景，确保对比度 */
+  .report-metric-card,
+  .report-conclusion,
+  .matrix-stat,
+  .evidence-item,
+  .risk-item {
+    background: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+  }
+  /* 移除所有动效伪元素避免打印干扰 */
+  .hero-step::after,
+  .hero-example::after,
+  .report-metric-card::after,
+  .report-conclusion::after,
+  .matrix-stat::after,
+  .msg.hero::after {
+    display: none !important;
+  }
+  /* 图表容器确保可见 */
+  .report-chart {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }
 
@@ -1083,9 +1156,7 @@ a:hover {
   border: 0;
   border-radius: 0;
   background:
-    radial-gradient(900px 480px at 18% -10%, var(--accent-muted) 0%, transparent 60%),
-    radial-gradient(720px 420px at 95% 0%, rgba(16, 185, 129, 0.16) 0%, transparent 55%),
-    radial-gradient(640px 360px at 50% 120%, rgba(245, 158, 11, 0.10) 0%, transparent 60%),
+    radial-gradient(900px 480px at 50% -10%, var(--accent-subtle) 0%, transparent 65%),
     var(--bg);
   color: var(--fg);
   text-align: left;
@@ -1116,18 +1187,22 @@ a:hover {
   pointer-events: none;
 }
 
-/* 顶部辉光：模拟聚光灯，强化标题区视觉焦点 */
+/* 网格单元高亮（ReactBits Squares 思路）：光标吸附到 48px 工程网格的
+   当前单元格，位置由 motion.js attachGridGlow 通过 --grid-x / --grid-y /
+   --grid-o 驱动，与 ::before 的网格纸背景对齐，工具感而非科幻感 */
 .msg.hero::after {
   content: "";
   position: absolute;
-  top: -120px;
-  left: 50%;
-  width: 640px;
-  height: 240px;
-  transform: translateX(-50%);
-  background: radial-gradient(ellipse at center, var(--accent-muted) 0%, transparent 70%);
-  filter: blur(40px);
-  opacity: 0.6;
+  top: var(--grid-y, -100px);
+  left: var(--grid-x, -100px);
+  width: 49px;
+  height: 49px;
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent-muted);
+  opacity: var(--grid-o, 0);
+  transition: top 140ms var(--ease-out),
+              left 140ms var(--ease-out),
+              opacity 320ms var(--ease-out);
   z-index: -1;
   pointer-events: none;
 }
@@ -1168,8 +1243,7 @@ a:hover {
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-  animation: heroPulse 2s ease-in-out infinite;
+  animation: heroPulse 2.4s ease-in-out infinite;
 }
 
 @keyframes heroPulse {
@@ -1189,11 +1263,7 @@ a:hover {
 .hero-title-accent {
   display: block;
   margin-top: 4px;
-  background: linear-gradient(120deg, var(--accent) 0%, var(--green) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
+  color: var(--accent);
 }
 
 .hero-subtitle {
@@ -1235,6 +1305,8 @@ a:hover {
   background: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
   opacity: 0;
   transition: opacity var(--dur-base) var(--ease-out);
+  /* 浮于 SpotlightCard ::after 聚光灯层之上，确保 hover 顶部渐变流光可见 */
+  z-index: 3;
 }
 
 .hero-step:hover {
@@ -1425,18 +1497,12 @@ a:hover {
 /* 浅色主题下 Hero 配色微调 */
 [data-theme="light"] .msg.hero {
   background:
-    radial-gradient(900px 480px at 18% -10%, rgba(59, 130, 246, 0.18) 0%, transparent 60%),
-    radial-gradient(720px 420px at 95% 0%, rgba(16, 185, 129, 0.14) 0%, transparent 55%),
-    radial-gradient(640px 360px at 50% 120%, rgba(245, 158, 11, 0.08) 0%, transparent 60%),
+    radial-gradient(900px 480px at 50% -10%, rgba(59, 130, 246, 0.08) 0%, transparent 65%),
     var(--bg);
 }
 
 [data-theme="light"] .msg.hero::before {
   opacity: 0.5;
-}
-
-[data-theme="light"] .msg.hero::after {
-  opacity: 0.4;
 }
 
 /* 响应式：窄屏下压缩间距 */
@@ -1786,15 +1852,89 @@ a:hover {
   line-height: 1.6;
 }
 
+/* ── ReactBits SpotlightCard ──────────────────────────── */
+/* 鼠标跟随聚光灯：通过 --spot-x / --spot-y / --spot-o / --spot-size 驱动 ::after 伪元素，
+   形成径向渐变光晕跟随鼠标，强化交互指向感。JS 仅更新 CSS 变量，不直接操作样式，
+   避免与现有 box-shadow / border-color 过渡规则冲突。触屏端由 JS 跳过挂载。 */
+.hero-step,
+.hero-example,
+.report-metric-card,
+.report-conclusion,
+.matrix-stat {
+  --spot-x: 50%;
+  --spot-y: 50%;
+  --spot-o: 0;
+  --spot-size: 380px;
+}
+
+.hero-step::after,
+.hero-example::after,
+.report-metric-card::after,
+.report-conclusion::after,
+.matrix-stat::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(
+    var(--spot-size) circle at var(--spot-x) var(--spot-y),
+    rgba(255, 255, 255, var(--spot-o)),
+    transparent 55%
+  );
+  mix-blend-mode: screen;
+  transition: --spot-o 220ms ease-out;
+  opacity: 1;
+}
+
+/* 浅色主题下聚光灯改用深色柔光，避免白色在浅底上不可见 */
+[data-theme="light"] .hero-step::after,
+[data-theme="light"] .hero-example::after,
+[data-theme="light"] .report-metric-card::after,
+[data-theme="light"] .report-conclusion::after,
+[data-theme="light"] .matrix-stat::after {
+  background: radial-gradient(
+    var(--spot-size) circle at var(--spot-x) var(--spot-y),
+    rgba(30, 41, 59, calc(var(--spot-o) * 0.5)),
+    transparent 55%
+  );
+  mix-blend-mode: multiply;
+}
+
+/* 确保 SpotlightCard 内部内容浮于聚光灯之上 */
+.hero-step > *,
+.hero-example > *,
+.report-metric-card > *,
+.report-conclusion > *,
+.matrix-stat > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* 尊重减少动效偏好：关闭 hero 网格高亮 */
+@media (prefers-reduced-motion: reduce) {
+  .msg.hero::after {
+    display: none;
+  }
+}
+
+/* ── Hero CTA 定位上下文 ─────────────────────────────── */
+/* CTA 按钮保留定位上下文，供涟漪与磁吸效果使用 */
+.hero-cta-button {
+  position: relative;
+  isolation: isolate;
+}
+
 
 /* ── 报告面板 ──────────────────────────────────────────── */
-/* 宽度策略：最大 720px，但不超过 calc(100vw - 320px - 400px)，
-   确保 sidebar 320px + conversation 至少 400px + report-panel 剩余空间 */
+/* 宽度策略：最大 720px，但不超过 calc(100vw - 320px - 520px)，
+   确保 sidebar 320px + conversation 至少 520px（对话可读宽度）+ report-panel 剩余空间 */
 #report-panel {
   display: none;
-  flex: 0 0 min(720px, calc(100vw - 320px - 400px));
+  flex: 0 0 min(720px, calc(100vw - 320px - 520px));
   flex-direction: column;
-  width: min(720px, calc(100vw - 320px - 400px));
+  width: min(720px, calc(100vw - 320px - 520px));
   min-width: 480px;
   min-height: 0;
   border-left: 1px solid var(--border-muted);
@@ -1880,12 +2020,63 @@ a:hover {
 
 /* 金字塔结构：核心结论卡 */
 .report-conclusion {
+  position: relative;
   margin-bottom: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--accent-muted);
   border-radius: var(--radius-lg);
   background: linear-gradient(135deg, var(--accent-subtle) 0%, var(--card) 100%);
   box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out);
+  overflow: hidden;
+}
+
+/* ReactBits Card Hover 复刻：核心结论区 hover 边框增强 + 轻微上浮 */
+@media (hover: hover) {
+  .report-conclusion:hover {
+    border-color: var(--accent);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.15), var(--shadow-sm);
+    transform: translateY(-2px);
+  }
+}
+
+/* 左侧装饰条：渐变流光，强调"核心结论"的视觉权重 */
+.report-conclusion::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-emphasis) 100%);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  transform: scaleY(0.6);
+  transform-origin: center;
+  opacity: 0.7;
+  transition: transform var(--dur-slow) var(--ease-out), opacity var(--dur-base) var(--ease-standard);
+  /* 浮于 SpotlightCard ::after 聚光灯层之上，确保装饰条始终可见 */
+  z-index: 3;
+}
+
+.report-conclusion:hover::before {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+.report-conclusion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.report-conclusion-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .report-conclusion-label {
@@ -1896,6 +2087,48 @@ a:hover {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/* 复制结论按钮：默认透明，hover 结论区时浮现 */
+.report-conclusion-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out),
+              color var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .report-conclusion:hover .report-conclusion-copy {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.report-conclusion-copy:hover {
+  color: var(--accent);
+  border-color: var(--accent-muted);
+}
+
+.report-conclusion-copy.copied {
+  color: var(--green);
+  border-color: var(--green-muted);
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .report-conclusion-text {
@@ -1964,6 +2197,23 @@ a:hover {
   background: var(--card);
   box-shadow: var(--shadow-sm);
   min-width: 0;
+  /* ReactBits Card Hover 复刻：悬停时边框微亮 + 阴影加深 + 轻微上浮 */
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              box-shadow var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+}
+
+.report-chart:hover {
+  border-color: var(--accent-muted);
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.12), var(--shadow-sm);
+  transform: translateY(-2px);
+}
+
+/* 触屏设备禁用 hover 上浮（无悬停态，避免误触闪烁） */
+@media (hover: none) {
+  .report-chart:hover {
+    transform: none;
+  }
 }
 
 .report-chart + .report-chart {
@@ -2093,32 +2343,6 @@ a:hover {
   margin-right: 4px;
 }
 
-/* 漏斗图下方损耗饼图容器 */
-.funnel-pie-container {
-  width: 100%;
-  height: 160px;
-  margin-top: var(--space-2);
-}
-
-/* 漏斗图层级间隙损耗原因文本块 */
-.funnel-loss-notes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-top: var(--space-2);
-  padding: 6px 10px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  background: var(--canvas-subtle);
-}
-
-.funnel-loss-item {
-  font-size: var(--text-xs);
-  color: var(--muted);
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
 /* 报告元信息 */
 .report-meta {
   display: flex;
@@ -2134,6 +2358,7 @@ a:hover {
   margin-top: var(--space-5);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-muted);
+  transition: border-color var(--dur-base) var(--ease-out);
 }
 
 .report-section:first-of-type {
@@ -2145,6 +2370,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  transition: color var(--dur-fast) var(--ease-standard);
 }
 
 .report-section h4::before {
@@ -2154,6 +2380,17 @@ a:hover {
   height: 16px;
   background: var(--accent);
   border-radius: var(--radius-pill);
+  transition: height var(--dur-base) var(--ease-out), background var(--dur-fast) var(--ease-standard);
+}
+
+/* ReactBits 微交互：章节标题 hover 时装饰条增长 + 颜色加深，引导阅读节奏 */
+.report-section h4:hover::before {
+  height: 20px;
+  background: var(--accent-emphasis);
+}
+
+.report-section h4:hover {
+  color: var(--accent);
 }
 
 /* 报告工具栏 */
@@ -2205,6 +2442,13 @@ a:hover {
   border-radius: var(--radius);
   padding: 10px 16px;
   background: var(--card);
+  transition: border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+
+.report-toc:hover {
+  border-color: var(--accent-muted);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.08);
 }
 
 .report-toc summary {
@@ -2214,6 +2458,32 @@ a:hover {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+/* 折叠图标：CSS 三角形，展开时旋转 90deg */
+.report-toc summary::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--dur-base) var(--ease-out);
+  opacity: 0.6;
+}
+
+.report-toc[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.report-toc summary::-webkit-details-marker {
+  display: none;
 }
 
 .report-toc summary:hover {
@@ -2221,10 +2491,29 @@ a:hover {
 }
 
 .report-toc ol {
+  position: relative;
   display: grid;
   gap: var(--space-2);
   margin-top: var(--space-3);
   padding-left: var(--space-5);
+}
+
+/* ReactBits Sliding Indicator 复刻：跟随当前章节滑动的左侧指示条 */
+.toc-indicator {
+  position: absolute;
+  left: var(--space-5);
+  top: 0;
+  width: 2px;
+  height: 18px;
+  background: var(--blue, var(--accent));
+  border-radius: 1px;
+  opacity: 0;
+  transition: transform 280ms cubic-bezier(0.16,1,0.3,1), opacity 200ms ease;
+  pointer-events: none;
+}
+
+.toc-indicator.visible {
+  opacity: 1;
 }
 
 .report-toc a {
@@ -2233,12 +2522,26 @@ a:hover {
   font-size: var(--text-sm);
   line-height: 1.5;
   text-decoration: none;
-  padding-left: 4px;
+  padding: 2px 6px 2px 4px;
   text-indent: -4px;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-out);
 }
 
+/* ReactBits Card Hover 复刻：TOC 项 hover 微光 + 轻微缩进 */
 .report-toc a:hover {
-  text-decoration: underline;
+  text-decoration: none;
+  background: var(--accent-subtle);
+  transform: translateX(2px);
+}
+
+/* TOC scrollspy 高亮当前章节 */
+.report-toc ol a.toc-active {
+  color: var(--accent-emphasis);
+  font-weight: 600;
+  background: var(--accent-subtle);
 }
 
 /* 证据列表 */
@@ -2617,15 +2920,6 @@ a:hover {
   border-radius: 2px;
   background: var(--blue);
   transition: width 0.5s var(--ease-standard);
-}
-
-/* TOC scrollspy 高亮当前章节（左边缘与非高亮项对齐） */
-.report-toc ol a.toc-active {
-  color: var(--blue);
-  font-weight: 600;
-  border-left: 2px solid var(--blue);
-  padding-left: 2px;
-  text-indent: -6px;
 }
 
 /* M11 修复：URL 输入校验失败时的视觉提示，2s 后由 JS 移除 */
@@ -3319,6 +3613,26 @@ dialog::backdrop {
   width: min(80%, 480px);
 }
 
+/* 报告整体渲染骨架屏：大报告 DOM 构建期间占位，构建完成后被 innerHTML 替换 */
+.report-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+}
+
+.skeleton-report-title { width: 60%; height: 28px; }
+.skeleton-report-meta { width: 40%; height: 14px; }
+.skeleton-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+.skeleton-section { width: 30%; height: 18px; margin-top: var(--space-4); }
+.skeleton-line { width: 90%; height: 12px; }
+.skeleton-line.short { width: 60%; }
+
 /* Thinking 三点动画（progress 用） */
 .thinking-dots {
   display: inline-flex;
@@ -3674,22 +3988,13 @@ dialog::backdrop {
    ============================================================ */
 
 /* ── #12 结论卡置信度 badge ──────────────────────────────── */
-.report-conclusion-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
+/* 换行时 badge 独占第二行左对齐，避免 space-between 导致 badge 换行后错位 */
+.report-conclusion-header > .report-conclusion-actions {
   flex-wrap: wrap;
 }
 
-/* 换行时 label 独占第一行，badge 独占第二行左对齐，避免 space-between 导致 badge 换行后错位 */
-.report-conclusion-header > .confidence-badge {
+.report-conclusion-actions > .confidence-badge {
   white-space: nowrap;
-}
-
-.report-conclusion-header .report-conclusion-label {
-  margin-bottom: 0;
 }
 
 .confidence-badge {
@@ -3731,6 +4036,60 @@ dialog::backdrop {
   background: var(--red-subtle);
   color: var(--red-emphasis);
   border-color: var(--red-muted);
+}
+
+/* ReactBits GradientText 复刻：置信度标签文字渐变流光
+   用伪元素承载背景色，主元素 background-clip:text 做文字渐变，互不干扰
+   仅在非 reduced-motion 下启用，保证无障碍 */
+@keyframes confidence-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.confidence-badge {
+  position: relative;
+  isolation: isolate; /* 隔离 z-index，让伪元素背景位于文字下方 */
+}
+
+/* 伪元素承载 subtle 背景色，与主元素的渐变文字 background-image 互不干扰 */
+.confidence-badge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+}
+.confidence-high::after { background: var(--green-subtle); }
+.confidence-medium::after { background: var(--yellow-subtle); }
+.confidence-low::after { background: var(--red-subtle); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .confidence-badge {
+    background-size: 200% 100%;
+    background-image: linear-gradient(90deg,
+      var(--green-emphasis) 0%, var(--green) 25%,
+      var(--green-emphasis) 50%, var(--green) 75%,
+      var(--green-emphasis) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: confidence-shimmer 4s linear infinite;
+  }
+  .confidence-badge::before {
+    -webkit-text-fill-color: initial; /* 圆点不受 text 渐变影响 */
+  }
+  .confidence-medium {
+    background-image: linear-gradient(90deg,
+      var(--yellow-emphasis) 0%, var(--yellow) 25%,
+      var(--yellow-emphasis) 50%, var(--yellow) 75%,
+      var(--yellow-emphasis) 100%);
+  }
+  .confidence-low {
+    background-image: linear-gradient(90deg,
+      var(--red-emphasis) 0%, var(--red) 25%,
+      var(--red-emphasis) 50%, var(--red) 75%,
+      var(--red-emphasis) 100%);
+  }
 }
 
 [data-theme="light"] .confidence-high { color: var(--green); }
@@ -3792,6 +4151,19 @@ dialog::backdrop {
   20%, 60% {
     box-shadow: 0 0 0 3px var(--accent-muted);
     border-radius: var(--radius);
+  }
+}
+
+/* 证据条目临时高亮：图表点击下钻后 1.6s 淡出，比 section-highlight 更醒目 */
+.evidence-highlight {
+  animation: evidence-flash 1.6s var(--ease-standard);
+}
+
+@keyframes evidence-flash {
+  0%, 100% { box-shadow: none; border-color: var(--border); }
+  15%, 65% {
+    box-shadow: 0 0 0 3px var(--accent-muted), var(--shadow-medium);
+    border-color: var(--accent);
   }
 }
 
@@ -3914,7 +4286,7 @@ dialog::backdrop {
 .chart-zoom-btn {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   display: inline-grid;
   place-items: center;
   width: 26px;
@@ -3951,8 +4323,8 @@ dialog::backdrop {
 
 /* 确保图表容器是定位上下文 */
 #report-evidence-chart,
-#report-confidence-chart,
-#report-funnel-chart {
+#report-coverage-chart,
+#report-timeline-chart {
   position: relative;
 }
 
@@ -4821,6 +5193,26 @@ body.modal-open {
   transform-style: preserve-3d;
 }
 
+/* 矩阵图容器层脉冲：替代 echarts setOption 周期更新，避免与 toolbox 冲突。
+   只给容器外边框做微弱呼吸，完全不碰 echarts 内部状态，杜绝变白问题。
+   用外阴影确保不被 canvas 盖住；仅在含低分单元格时由 charts.js 添加 .pulse-ring 类。 */
+@keyframes pulse-ring-breath {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 2px var(--red-muted); }
+}
+
+.pulse-ring {
+  animation: pulse-ring-breath 2.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ECharts tooltip 智能定位后的视觉强化：圆角 + 阴影 + 主题适配 */
+.ia-chart-tooltip {
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow-medium) !important;
+  border: 1px solid var(--border) !important;
+}
+
 /* prefers-reduced-motion：禁用所有 motion.js 动效，
    确保无障碍用户不受动画干扰 */
 @media (prefers-reduced-motion: reduce) {
@@ -4836,5 +5228,8 @@ body.modal-open {
   }
   .motion-ripple {
     display: none !important;
+  }
+  .pulse-ring {
+    animation: none !important;
   }
 }
