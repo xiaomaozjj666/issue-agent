@@ -395,29 +395,45 @@
   // ── 7. SplitText：标题逐字入场 ─────────────────────────
   // ReactBits Text Animations/SplitText 复刻
   // 将标题文字按字符拆分，逐字 fadeInUp 入场，营造"打字机"式精致感
-  // 仅对短标题（≤60 字符）启用，长标题退化为整体 fadeIn 避免卡顿
+  // 仅对短标题（≤60 字符）启用，长标题退化为整体 fadeIn 避免卡顿。
+  // 按文本节点递归拆分而非重写 textContent，保留子元素结构
+  // （如 .hero-title-accent 的块级换行与强调色）不被破坏
   function applySplitText(el) {
     if (!el || prefersReducedMotion()) return;
-    const text = el.textContent;
-    if (!text || text.length > 60) return; // 长标题跳过，避免逐字过多
-    const chars = Array.from(text);
-    el.textContent = "";
+    const total = (el.textContent || "").length;
+    if (!total || total > 60) return; // 长标题跳过，避免逐字过多
+    const spans = [];
+    let charIdx = 0;
+
+    function splitNode(node) {
+      const children = Array.prototype.slice.call(node.childNodes);
+      children.forEach(function (child) {
+        if (child.nodeType === 3) {
+          const frag = document.createDocumentFragment();
+          Array.from(child.textContent || "").forEach(function (ch) {
+            const span = document.createElement("span");
+            span.textContent = ch === " " ? "\u00A0" : ch;
+            span.style.display = "inline-block";
+            span.style.opacity = "0";
+            span.style.transform = "translateY(8px)";
+            span.style.transition = "opacity 240ms cubic-bezier(0.16,1,0.3,1), transform 240ms cubic-bezier(0.16,1,0.3,1)";
+            span.style.transitionDelay = (charIdx * 18) + "ms";
+            charIdx++;
+            spans.push(span);
+            frag.appendChild(span);
+          });
+          node.replaceChild(frag, child);
+        } else if (child.nodeType === 1) {
+          splitNode(child); // 元素子节点保留结构，递归拆分内部文本
+        }
+      });
+    }
+
+    splitNode(el);
     el.style.opacity = "1";
-    const frag = document.createDocumentFragment();
-    chars.forEach(function (ch, i) {
-      const span = document.createElement("span");
-      span.textContent = ch === " " ? "\u00A0" : ch;
-      span.style.display = "inline-block";
-      span.style.opacity = "0";
-      span.style.transform = "translateY(8px)";
-      span.style.transition = "opacity 240ms cubic-bezier(0.16,1,0.3,1), transform 240ms cubic-bezier(0.16,1,0.3,1)";
-      span.style.transitionDelay = (i * 18) + "ms";
-      frag.appendChild(span);
-    });
-    el.appendChild(frag);
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
-        el.querySelectorAll("span").forEach(function (span) {
+        spans.forEach(function (span) {
           span.style.opacity = "1";
           span.style.transform = "translateY(0)";
         });
@@ -425,11 +441,11 @@
     });
     // 动画结束后清理 inline 样式，避免影响后续布局
     setTimeout(function () {
-      el.querySelectorAll("span").forEach(function (span) {
+      spans.forEach(function (span) {
         span.style.transition = "";
         span.style.transitionDelay = "";
       });
-    }, chars.length * 18 + 320);
+    }, total * 18 + 320);
   }
 
   // ── 8. SpotlightCard：鼠标跟随聚光灯 ────────────────────
@@ -517,30 +533,158 @@
     };
   }
 
-  // ── 10. GridGlow：Hero 网格单元高亮 ───────────────
-  // ReactBits Backgrounds/Squares 思路的轻量实现
-  // 光标在 hero 区移动时，吸附到 48px 工程网格并高亮当前单元格，
-  // 呼应 .msg.hero::before 的网格纸背景——工具感而非星空/科幻感。
-  // 仅更新 CSS 变量，渲染由 .msg.hero::after 承担；触屏端跳过
-  function attachGridGlow(heroEl) {
-    if (!heroEl || prefersReducedMotion()) return;
-    if (window.matchMedia("(hover: none)").matches) return;
-    const CELL = 48; // 与 .msg.hero::before 的 background-size 保持一致
+  // ── 10. DotGrid：Hero 全屏交互点阵背景 ───────────────
+  // ReactBits Backgrounds/DotGrid 复刻（canvas 版）
+  // 点阵铺满整个 hero 区：光标经过时邻近的点被轻微推开并染上主题色，
+  // 离开后弹性回位——全屏可感知的物理反馈，工具感而非科幻感。
+  // 触屏端与 prefers-reduced-motion 只绘静态点阵；点位回稳后停帧省 CPU；
+  // hero 被移除后自动停止并释放监听
+  function attachDotGrid(heroEl) {
+    if (!heroEl) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = "hero-dot-canvas";
+    canvas.setAttribute("aria-hidden", "true");
+    heroEl.insertBefore(canvas, heroEl.firstChild);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const SPACING = 26;     // 点间距
+    const BASE_R = 1.1;     // 静态点半径
+    const INFLUENCE = 150;  // 光标影响半径
+    const PUSH = 16;        // 最大推开距离
+    const interactive = !prefersReducedMotion() && !window.matchMedia("(hover: none)").matches;
+    let dots = [];
+    let dpr = 1;
+    let pointerX = -1e4;
+    let pointerY = -1e4;
+    let rafId = null;
+    let baseColor = "148,163,184";
+    let baseAlpha = 0.22;
+    let accentColor = "59,130,246";
+
+    // 从主题 CSS 变量取色，亮色主题用更深的底点保证对比度
+    function readColors() {
+      const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+      const m = /^#([0-9a-f]{6})$/i.exec(accent);
+      if (m) {
+        accentColor =
+          parseInt(m[1].slice(0, 2), 16) + "," +
+          parseInt(m[1].slice(2, 4), 16) + "," +
+          parseInt(m[1].slice(4, 6), 16);
+      }
+      const light = document.documentElement.getAttribute("data-theme") === "light";
+      baseColor = light ? "100,116,139" : "148,163,184";
+      baseAlpha = light ? 0.3 : 0.22;
+    }
+
+    function rebuild() {
+      const w = heroEl.clientWidth;
+      const h = heroEl.clientHeight;
+      if (!w || !h) return;
+      dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      dots = [];
+      // 居中对齐：余数均分到两侧，避免边缘半截点
+      const offX = ((w % SPACING) + SPACING) / 2;
+      const offY = ((h % SPACING) + SPACING) / 2;
+      for (let y = offY; y < h; y += SPACING) {
+        for (let x = offX; x < w; x += SPACING) {
+          dots.push({ ox: x, oy: y, x: x, y: y });
+        }
+      }
+      draw();
+    }
+
+    // 绘制一帧；返回本帧最大位移差，用于判断是否可以停帧
+    function draw() {
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+      ctx.clearRect(0, 0, w, h);
+      let maxDelta = 0;
+      for (let i = 0; i < dots.length; i++) {
+        const d = dots[i];
+        const dx = d.ox - pointerX;
+        const dy = d.oy - pointerY;
+        const dist = Math.hypot(dx, dy);
+        let tx = d.ox;
+        let ty = d.oy;
+        let heat = 0;
+        if (dist < INFLUENCE && dist > 0.001) {
+          heat = 1 - dist / INFLUENCE;
+          const push = PUSH * heat;
+          tx = d.ox + (dx / dist) * push;
+          ty = d.oy + (dy / dist) * push;
+        }
+        d.x += (tx - d.x) * 0.14;
+        d.y += (ty - d.y) * 0.14;
+        const delta = Math.abs(tx - d.x) + Math.abs(ty - d.y);
+        if (delta > maxDelta) maxDelta = delta;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, BASE_R + heat * 1.3, 0, Math.PI * 2);
+        ctx.fillStyle = heat > 0.02
+          ? "rgba(" + accentColor + "," + (baseAlpha + heat * 0.5).toFixed(3) + ")"
+          : "rgba(" + baseColor + "," + baseAlpha + ")";
+        ctx.fill();
+      }
+      return maxDelta;
+    }
+
+    function tick() {
+      rafId = null;
+      if (!canvas.isConnected) { teardown(); return; }
+      // 所有点回稳后停帧；光标再动时由 onMove 唤醒
+      if (draw() > 0.08) rafId = requestAnimationFrame(tick);
+    }
+
+    function wake() {
+      if (rafId === null) rafId = requestAnimationFrame(tick);
+    }
 
     function onMove(e) {
-      const rect = heroEl.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      // 吸附到网格单元左上角（-1px 与背景网格线对齐）
-      heroEl.style.setProperty("--grid-x", (Math.floor(x / CELL) * CELL - 1) + "px");
-      heroEl.style.setProperty("--grid-y", (Math.floor(y / CELL) * CELL - 1) + "px");
-      heroEl.style.setProperty("--grid-o", "1");
+      const rect = canvas.getBoundingClientRect();
+      pointerX = e.clientX - rect.left;
+      pointerY = e.clientY - rect.top;
+      wake();
     }
+
     function onLeave() {
-      heroEl.style.setProperty("--grid-o", "0");
+      pointerX = -1e4;
+      pointerY = -1e4;
+      wake();
     }
-    heroEl.addEventListener("mousemove", onMove);
-    heroEl.addEventListener("mouseleave", onLeave);
+
+    let ro = null;
+    let mo = null;
+    function teardown() {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = null;
+      if (ro) ro.disconnect();
+      if (mo) mo.disconnect();
+      heroEl.removeEventListener("pointermove", onMove);
+      heroEl.removeEventListener("pointerleave", onLeave);
+    }
+
+    readColors();
+    rebuild();
+    if ("ResizeObserver" in window) {
+      ro = new ResizeObserver(function () { rebuild(); });
+      ro.observe(heroEl);
+    }
+    // 主题切换（data-theme 挂在 <html>）后重取配色重绘
+    if ("MutationObserver" in window) {
+      mo = new MutationObserver(function () {
+        if (!canvas.isConnected) { teardown(); return; }
+        readColors();
+        draw();
+      });
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    }
+    if (interactive) {
+      heroEl.addEventListener("pointermove", onMove);
+      heroEl.addEventListener("pointerleave", onLeave);
+    }
   }
 
   // ── 11. ClickSpark：关键动作点击火花 ─────────────────────
@@ -685,11 +829,11 @@
   }
 
   // ── Hero 区动效一键应用 ────────────────────────────────
-  // 在 renderHero 完成后调用：网格单元高亮 + 标题逐字入场 + 卡片聚光灯 + CTA 磁吸
+  // 在 renderHero 完成后调用：全屏点阵背景 + 标题逐字入场 + 卡片聚光灯 + CTA 磁吸
   function applyHeroMotion(heroEl) {
     if (!heroEl) return;
-    // 网格单元高亮（呼应工程网格纸背景）
-    attachGridGlow(heroEl);
+    // 全屏交互点阵背景（ReactBits DotGrid）
+    attachDotGrid(heroEl);
     // 标题 SplitText 逐字入场（仅主标题，克制不炫技）
     const titleEl = heroEl.querySelector(".hero-title");
     if (titleEl) {
@@ -731,7 +875,7 @@
     attachSpotlight: attachSpotlight,
     applySpotlights: applySpotlights,
     attachMagnet: attachMagnet,
-    attachGridGlow: attachGridGlow,
+    attachDotGrid: attachDotGrid,
     initClickSpark: initClickSpark,
     applyBlurText: applyBlurText,
     applyScrollReveal: applyScrollReveal,

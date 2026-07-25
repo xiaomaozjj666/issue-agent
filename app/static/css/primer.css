@@ -1078,7 +1078,7 @@ a:hover {
   .report-metric-card::after,
   .report-conclusion::after,
   .matrix-stat::after,
-  .msg.hero::after {
+  .hero-dot-canvas {
     display: none !important;
   }
   /* 图表容器确保可见 */
@@ -1198,41 +1198,18 @@ a:hover {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* 装饰性网格：用两层渐变模拟细密网格，营造工程师工具感 */
-.msg.hero::before {
-  content: "";
+/* 全屏交互点阵背景（ReactBits DotGrid）：由 motion.js attachDotGrid
+   创建 canvas 铺满整个 hero 区，光标经过时邻近的点被推开并染色，
+   离开弹性回位——工具感而非科幻感；边缘用柔和遮罩淡出避免生硬截断 */
+.hero-dot-canvas {
   position: absolute;
   inset: 0;
-  z-index: -1;
-  background-image:
-    linear-gradient(var(--border-muted) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border-muted) 1px, transparent 1px);
-  background-size: 48px 48px;
-  background-position: -1px -1px;
-  opacity: 0.35;
-  mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 0%, transparent 75%);
-  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 0%, transparent 75%);
+  z-index: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-}
-
-/* 网格单元高亮（ReactBits Squares 思路）：光标吸附到 48px 工程网格的
-   当前单元格，位置由 motion.js attachGridGlow 通过 --grid-x / --grid-y /
-   --grid-o 驱动，与 ::before 的网格纸背景对齐，工具感而非科幻感 */
-.msg.hero::after {
-  content: "";
-  position: absolute;
-  top: var(--grid-y, -100px);
-  left: var(--grid-x, -100px);
-  width: 49px;
-  height: 49px;
-  background: var(--accent-subtle);
-  border: 1px solid var(--accent-muted);
-  opacity: var(--grid-o, 0);
-  transition: top 140ms var(--ease-out),
-              left 140ms var(--ease-out),
-              opacity 320ms var(--ease-out);
-  z-index: -1;
-  pointer-events: none;
+  mask-image: radial-gradient(ellipse 110% 95% at 50% 40%, #000 45%, transparent 92%);
+  -webkit-mask-image: radial-gradient(ellipse 110% 95% at 50% 40%, #000 45%, transparent 92%);
 }
 
 .hero-inner {
@@ -1529,8 +1506,8 @@ a:hover {
     var(--bg);
 }
 
-[data-theme="light"] .msg.hero::before {
-  opacity: 0.5;
+[data-theme="light"] .hero-dot-canvas {
+  opacity: 0.75;
 }
 
 /* 响应式：窄屏下压缩间距 */
@@ -1940,12 +1917,7 @@ a:hover {
   z-index: 2;
 }
 
-/* 尊重减少动效偏好：关闭 hero 网格高亮 */
-@media (prefers-reduced-motion: reduce) {
-  .msg.hero::after {
-    display: none;
-  }
-}
+/* 尊重减少动效偏好：点阵背景保留静态绘制（JS 端已禁用交互），不额外隐藏 */
 
 /* ── Hero CTA 定位上下文 ─────────────────────────────── */
 /* CTA 按钮保留定位上下文，供涟漪与磁吸效果使用 */
