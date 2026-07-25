@@ -396,8 +396,7 @@
   // ReactBits Text Animations/SplitText 复刻
   // 将标题文字按字符拆分，逐字 fadeInUp 入场，营造"打字机"式精致感
   // 仅对短标题（≤60 字符）启用，长标题退化为整体 fadeIn 避免卡顿。
-  // 按文本节点递归拆分而非重写 textContent，保留子元素结构
-  // （如 .hero-title-accent 的块级换行与强调色）不被破坏
+  // 按文本节点递归拆分而非重写 textContent，保留子元素结构不被破坏
   function applySplitText(el) {
     if (!el || prefersReducedMotion()) return;
     const total = (el.textContent || "").length;
@@ -550,7 +549,9 @@
     if (!ctx) return;
 
     const LINK = 130;        // 粒子间连线的距离上限
-    const CURSOR_LINK = 150; // 光标与粒子连线的距离上限
+    const CURSOR_LINK = 160; // 光标与粒子连线的距离上限
+    const REPEL = 120;       // 光标避让半径：范围内粒子被缓慢推开
+    const PUSH = 0.9;        // 避让最大推力（px/帧，随距离衰减，保持缓慢）
     const SPEED = 0.24;      // 最大漂移速度（px/帧，30fps 下约 7px/s）
     const FRAME_MS = 33;     // 30fps 限帧：氛围背景不需要满帧，省 CPU
     const animated = !prefersReducedMotion() && !window.matchMedia("(hover: none)").matches;
@@ -561,8 +562,8 @@
     let rafId = null;
     let lastTs = 0;
     let baseColor = "148,163,184";
-    let nodeAlpha = 0.2;
-    let linkAlpha = 0.08;
+    let nodeAlpha = 0.4;
+    let linkAlpha = 0.16;
     let accentColor = "59,130,246";
 
     // 从主题 CSS 变量取色，亮色主题用更深的灰保证可见但不抢眼
@@ -577,8 +578,8 @@
       }
       const light = document.documentElement.getAttribute("data-theme") === "light";
       baseColor = light ? "100,116,139" : "148,163,184";
-      nodeAlpha = light ? 0.28 : 0.2;
-      linkAlpha = light ? 0.1 : 0.08;
+      nodeAlpha = light ? 0.5 : 0.4;
+      linkAlpha = light ? 0.2 : 0.16;
     }
 
     function rebuild() {
@@ -606,10 +607,23 @@
     function step() {
       const w = canvas.width / dpr;
       const h = canvas.height / dpr;
+      const hasPointer = pointerX > -1e3;
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i];
         p.x += p.vx;
         p.y += p.vy;
+        // 光标靠近时缓慢避让：推力随距离线性衰减，只改位置不改速度，
+        // 光标离开后粒子按原速度继续漂移，不会被永久“吹散”
+        if (hasPointer) {
+          const rx = p.x - pointerX;
+          const ry = p.y - pointerY;
+          const rd = Math.hypot(rx, ry);
+          if (rd < REPEL && rd > 0.5) {
+            const f = PUSH * (1 - rd / REPEL);
+            p.x += (rx / rd) * f;
+            p.y += (ry / rd) * f;
+          }
+        }
         // 出界从对侧回来，避免粒子在边缘堆积
         if (p.x < -8) p.x = w + 8;
         else if (p.x > w + 8) p.x = -8;
@@ -639,12 +653,12 @@
           ctx.stroke();
         }
       }
-      // 光标连线用主题色但依旧低透明度：轻微的“追踪”反馈而非高亮特效
+      // 光标连线用主题色但依旧克制透明度：轻微的“追踪”反馈而非高亮特效
       if (pointerX > -1e3) {
         for (let i = 0; i < parts.length; i++) {
           const dist = Math.hypot(parts[i].x - pointerX, parts[i].y - pointerY);
           if (dist >= CURSOR_LINK) continue;
-          const a = 0.14 * (1 - dist / CURSOR_LINK);
+          const a = 0.32 * (1 - dist / CURSOR_LINK);
           ctx.strokeStyle = "rgba(" + accentColor + "," + a.toFixed(3) + ")";
           ctx.beginPath();
           ctx.moveTo(parts[i].x, parts[i].y);
@@ -654,7 +668,7 @@
       }
       for (let i = 0; i < parts.length; i++) {
         ctx.beginPath();
-        ctx.arc(parts[i].x, parts[i].y, 1.4, 0, Math.PI * 2);
+        ctx.arc(parts[i].x, parts[i].y, 1.6, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(" + baseColor + "," + nodeAlpha + ")";
         ctx.fill();
       }
