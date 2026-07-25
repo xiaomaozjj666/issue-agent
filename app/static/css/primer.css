@@ -339,6 +339,12 @@ a:hover {
   box-shadow: var(--shadow-sm), var(--btn-inset-shadow), 0 0 0 3px var(--green-muted);
 }
 
+/* 新建排查主按钮：hover 叠一层极淡绿色光晕，冷静的工具感反馈而非闪光 */
+.primary-action:hover {
+  box-shadow: var(--shadow-sm), var(--btn-inset-shadow), 0 0 0 3px var(--green-muted),
+              0 0 14px rgba(63, 185, 80, 0.18);
+}
+
 .primary-action:active,
 #input-bar button:active {
   transform: translateY(0);
@@ -1078,7 +1084,7 @@ a:hover {
   .report-metric-card::after,
   .report-conclusion::after,
   .matrix-stat::after,
-  .hero-dot-canvas {
+  .hero-net-canvas {
     display: none !important;
   }
   /* 图表容器确保可见 */
@@ -1198,10 +1204,11 @@ a:hover {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* 全屏交互点阵背景（ReactBits DotGrid）：由 motion.js attachDotGrid
-   创建 canvas 铺满整个 hero 区，光标经过时邻近的点被推开并染色，
-   离开弹性回位——工具感而非科幻感；边缘用柔和遮罩淡出避免生硬截断 */
-.hero-dot-canvas {
+/* 粒子连线拓扑背景（ReactBits Particles）：由 motion.js attachParticleNet
+   创建 canvas 铺满整个 hero 区，少量粒子低速漂移、近邻之间淡线相连，
+   呼应调用链/链路追踪意象；只做氛围衬托，z-index 压在最底层，
+   边缘用柔和遮罩淡出避免生硬截断 */
+.hero-net-canvas {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -1294,9 +1301,9 @@ a:hover {
   border-radius: var(--radius-lg);
   background: linear-gradient(180deg, var(--card) 0%, var(--canvas-inset) 100%);
   box-shadow: var(--shadow-sm);
-  transition: transform var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out),
-              box-shadow var(--dur-base) var(--ease-out);
+  transition: transform 320ms var(--ease-out),
+              border-color 320ms var(--ease-out),
+              box-shadow 320ms var(--ease-out);
   overflow: hidden;
 }
 
@@ -1322,6 +1329,12 @@ a:hover {
 
 .hero-step:hover::before {
   opacity: 1;
+}
+
+/* 点击按压反馈：轻微回落，不做弹跳 */
+.hero-step:active {
+  transform: translateY(-1px) scale(0.995);
+  transition-duration: var(--dur-fast);
 }
 
 .hero-step-label {
@@ -1398,10 +1411,10 @@ a:hover {
   color: inherit;
   text-align: left;
   cursor: pointer;
-  transition: transform var(--dur-base) var(--ease-out),
-              border-color var(--dur-fast) var(--ease-standard),
-              background var(--dur-fast) var(--ease-standard),
-              box-shadow var(--dur-base) var(--ease-out);
+  transition: transform 280ms var(--ease-out),
+              border-color 280ms var(--ease-out),
+              background 280ms var(--ease-out),
+              box-shadow 280ms var(--ease-out);
 }
 
 .hero-example:hover {
@@ -1506,7 +1519,7 @@ a:hover {
     var(--bg);
 }
 
-[data-theme="light"] .hero-dot-canvas {
+[data-theme="light"] .hero-net-canvas {
   opacity: 0.75;
 }
 
