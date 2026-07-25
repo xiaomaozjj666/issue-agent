@@ -5241,6 +5241,132 @@ body.modal-open {
   border: 1px solid var(--border) !important;
 }
 
+/* ── ReactBits ClickSpark：主 CTA 点击火花 ─────────────── */
+/* 8 根短线从点击点向外迸发后淡出，与涟漪（面反馈）互补。
+   burst 固定定位到视口点击坐标，避免被按钮 overflow:hidden 裁剪 */
+.motion-spark-burst {
+  position: fixed;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.motion-spark-line {
+  position: absolute;
+  left: -1px;
+  top: -5px;
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform-origin: 1px 5px;
+  animation: motion-spark-fly 440ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes motion-spark-fly {
+  0% {
+    transform: rotate(var(--spark-angle)) translateY(-8px) scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(var(--spark-angle)) translateY(-28px) scaleY(0.35);
+    opacity: 0;
+  }
+}
+
+/* ── ReactBits ShinyText：hero 徽章光泽扫过 ────────────── */
+/* 高光带周期性扫过 eyebrow 徽章，提示"这里是入口态"，
+   3.6s 一轮且大部分时间静止，避免持续晃动分散注意力 */
+.hero-eyebrow {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-eyebrow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: motion-shine-sweep 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes motion-shine-sweep {
+  0% { transform: translateX(-100%); }
+  45%, 100% { transform: translateX(100%); }
+}
+
+/* 浅色主题下白色高光在浅底不可见，改用 accent 淡色高光带 */
+[data-theme="light"] .hero-eyebrow::after {
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(59, 130, 246, 0.16) 50%,
+    transparent 70%
+  );
+}
+
+/* ── ReactBits GlareHover：悬停斜向光泽扫过 ────────────── */
+/* 悬停时一道斜向高光从左扫到右，强化"可点击"暗示；
+   离开时无过渡直接复位，避免反向回扫的怪异感 */
+.hero-example,
+.hero-cta-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-example::before,
+.hero-cta-button::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -75%;
+  width: 50%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    transparent 100%
+  );
+  transform: skewX(-18deg);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* CTA 绿色实底可承受更亮的高光 */
+.hero-cta-button::before {
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 100%
+  );
+}
+
+.hero-example:hover::before,
+.hero-cta-button:hover::before {
+  left: 125%;
+  transition: left 600ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 浅色主题下示例卡浅底改用 accent 淡色高光带 */
+[data-theme="light"] .hero-example::before {
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(59, 130, 246, 0.1) 50%,
+    transparent 100%
+  );
+}
+
 /* prefers-reduced-motion：禁用所有 motion.js 动效，
    确保无障碍用户不受动画干扰 */
 @media (prefers-reduced-motion: reduce) {
@@ -5255,6 +5381,16 @@ body.modal-open {
     opacity: 1 !important;
   }
   .motion-ripple {
+    display: none !important;
+  }
+  .motion-spark-burst {
+    display: none !important;
+  }
+  .hero-eyebrow::after,
+  .hero-example::before,
+  .hero-cta-button::before {
+    animation: none !important;
+    transition: none !important;
     display: none !important;
   }
   .pulse-ring {
