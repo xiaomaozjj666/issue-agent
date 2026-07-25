@@ -2230,7 +2230,7 @@ a:hover {
   grid-column: 1 / -1;
 }
 
-/* 矩阵图和桑基图需要更高画布以容纳标签 */
+/* 矩阵图和覆盖图需要更高画布以容纳标签 */
 .report-chart-canvas-tall {
   height: 300px;
   min-height: 300px;

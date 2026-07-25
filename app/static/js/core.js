@@ -553,7 +553,7 @@
   }
 
   // 跳转到指定索引的证据条目并临时高亮 1.6s
-  // 给图表点击下钻用：用户在矩阵/桑基图点击数据元素后，自动滚到对应证据
+  // 给图表点击下钻用：用户在矩阵/覆盖图点击数据元素后，自动滚到对应证据
   function jumpToEvidence(idx) {
     if (typeof idx !== "number" || idx < 0) return;
     const item = document.querySelector('.evidence-item[data-evidence-idx="' + idx + '"]');
