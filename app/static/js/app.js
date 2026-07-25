@@ -1986,10 +1986,13 @@
     const review = r.review_audit || { status: "not_run" };
     const reviewLabel =
       review.status === "not_run" ? t("report_review_pending") : enumLabel("review_status", review.status);
+    // 图表仅在有证据时渲染；已读文件/可信度卡片的下钻目标是图表区，
+    // 无图表时保持不可点击，避免指向不存在的锚点
+    const hasEvidence = r.evidence && r.evidence.length;
     const metrics = [
       { label: t("report_metric_evidence_count"), value: String((r.evidence || []).length), href: "#report-evidence" },
-      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length), href: null },
-      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence), href: null },
+      { label: t("report_metric_files_examined"), value: String((r.files_examined || []).length), href: hasEvidence ? "#report-coverage-section" : null },
+      { label: t("report_metric_confidence"), value: enumLabel("confidence", r.confidence), href: hasEvidence ? "#report-matrix-section" : null },
       { label: t("report_metric_review"), value: reviewLabel, href: review.status !== "not_run" ? ".review-section" : null },
       { label: t("report_metric_proposed_changes"), value: String((r.proposed_changes || []).length), href: "#report-changes" },
       { label: t("report_metric_risks"), value: String((r.risks || []).length), href: "#report-risks" },
@@ -2009,18 +2012,17 @@
 
     // 3. ECharts 三图表：证据可信度矩阵 + 调查覆盖图 + 调查阶段耗时
     // 每个图表回答一个用户真正会问的问题，全部基于真实调查数据
-    const hasEvidence = r.evidence && r.evidence.length;
     const sessionData = activeSession || {};
     if (hasEvidence) {
-      // 图表 1 + 图表 2 并排
+      // 图表 1 + 图表 2 并排；容器 id 供指标卡片（可信度/已读文件）下钻锚点
       const matrixHtml =
-        `<div class="report-chart report-chart-half">` +
+        `<div id="report-matrix-section" class="report-chart report-chart-half">` +
         `<div class="report-chart-title">${IA.escapeHtml(t("matrix_chart_title"))}</div>` +
         `<div id="report-evidence-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("matrix_chart_title"))}"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("matrix_chart_caption"))}</div>` +
         `</div>`;
       const coverageHtml =
-        `<div class="report-chart report-chart-half">` +
+        `<div id="report-coverage-section" class="report-chart report-chart-half">` +
         `<div class="report-chart-title">${IA.escapeHtml(t("coverage_chart_title"))}</div>` +
         `<div id="report-coverage-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("coverage_chart_title"))}"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("coverage_chart_caption"))}</div>` +
