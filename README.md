@@ -199,6 +199,9 @@ events and a final `report` event; `cancelled` or `error` events are emitted whe
 
 ### `POST /chat`
 
+Blocking (non-streaming) chat endpoint. The Web UI uses `POST /chat/stream` instead; keep using
+this one only when a simple request/response integration is enough.
+
 Start a new session:
 ```json
 {
@@ -214,6 +217,21 @@ Continue an existing session:
   "message": "问题出现在哪个函数？"
 }
 ```
+
+### `POST /chat/stream`
+
+Streams the chat reply token-by-token as Server-Sent Events (recommended for interactive UIs;
+this is what the bundled Web UI uses). Requires an existing `session_id`:
+
+```json
+{
+  "session_id": "a1b2c3d4e5f6",
+  "message": "问题出现在哪个函数？"
+}
+```
+
+SSE events: `delta` (content chunk), `tool_call` / `tool_result` (tool activity),
+`done` (final reply + tools used), `error`.
 
 ### `GET /health`
 

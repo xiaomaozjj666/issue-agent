@@ -2014,13 +2014,13 @@
       const matrixHtml =
         `<div class="report-chart report-chart-half">` +
         `<div class="report-chart-title">${IA.escapeHtml(t("matrix_chart_title"))}</div>` +
-        `<div id="report-evidence-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
+        `<div id="report-evidence-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("matrix_chart_title"))}"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("matrix_chart_caption"))}</div>` +
         `</div>`;
       const coverageHtml =
         `<div class="report-chart report-chart-half">` +
         `<div class="report-chart-title">${IA.escapeHtml(t("coverage_chart_title"))}</div>` +
-        `<div id="report-coverage-chart" class="report-chart-canvas report-chart-canvas-tall"></div>` +
+        `<div id="report-coverage-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("coverage_chart_title"))}"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("coverage_chart_caption"))}</div>` +
         `</div>`;
       parts.push(`<div class="report-charts-row">${matrixHtml}${coverageHtml}</div>`);
@@ -2028,7 +2028,7 @@
       const timelineHtml =
         `<div class="report-chart report-chart-full">` +
         `<div class="report-chart-title">${IA.escapeHtml(t("timeline_chart_title"))}</div>` +
-        `<div id="report-timeline-chart" class="report-chart-canvas"></div>` +
+        `<div id="report-timeline-chart" class="report-chart-canvas" role="img" aria-label="${IA.escapeHtml(t("timeline_chart_title"))}"></div>` +
         `<div class="report-chart-caption">${IA.escapeHtml(t("timeline_chart_caption"))}</div>` +
         `</div>`;
       parts.push(`<div class="report-charts-row">${timelineHtml}</div>`);

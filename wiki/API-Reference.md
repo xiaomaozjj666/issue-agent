@@ -117,6 +117,8 @@ data: {"type": "done", "data": {}}
 
 ### `POST /chat`
 
+阻塞式（非流式）对话接口。Web UI 已改用 `POST /chat/stream`；仅在简单请求/响应集成场景下使用本接口。
+
 新建会话（需要 `issue_url`）或继续已有会话（需要 `session_id`）。
 
 **新建会话:**
@@ -153,6 +155,35 @@ data: {"type": "done", "data": {}}
 | 422 | 缺少 issue_url（新会话）/ 输入无效 |
 | 429 | GitHub rate limit |
 | 502 | LLM / GitHub 错误 |
+
+### `POST /chat/stream`
+
+流式对话接口（Web UI 默认使用），逐 token 返回回复。返回 `text/event-stream`，仅支持继续已有会话。
+
+**Request:**
+```json
+{
+  "session_id": "a1b2c3d4e5f6",
+  "message": "问题出现在哪个函数？"
+}
+```
+
+**SSE 事件序列:**
+
+| 事件类型 | 说明 | 字段 |
+|----------|------|------|
+| `delta` | 增量内容块 | `{content}` |
+| `tool_call` | 工具调用 | `{name, args}` |
+| `tool_result` | 工具结果摘要 | `{name, preview}` |
+| `done` | 完成 | `{reply, tools_used}` |
+| `error` | 错误 | `{message}` |
+
+**Errors:**
+| Code | 条件 |
+|------|------|
+| 404 | session_id 不存在 |
+| 409 | session 已归档 |
+| 422 | 缺少 session_id |
 
 ---
 
@@ -311,7 +342,7 @@ data: {"type": "done", "data": {}}
 当配置了 `API_KEY` 环境变量时，以下端点需要 `X-API-Key` 请求头：
 
 - 所有 `/session*` 端点
-- `/analyze`、`/stream`、`/chat`
+- `/analyze`、`/stream`、`/chat`、`/chat/stream`
 
 公开端点（无需认证）：
 - `GET /health`

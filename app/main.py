@@ -11,7 +11,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
@@ -92,6 +92,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("Session purge on startup failed; continuing", exc_info=True)
 
+    # 后台定期清理：长期运行的进程每 6 小时重复一次过期会话清理，
+    # 避免只依赖启动时的一次性 purge 导致数据库无限增长
+    async def periodic_purge() -> None:
+        while True:
+            await asyncio.sleep(6 * 3600)
+            try:
+                count = await manager.purge_old_sessions(settings.session_retention_days)
+                if count:
+                    logger.info("Periodic purge removed %d expired session(s)", count)
+            except Exception:
+                logger.warning("Periodic session purge failed; will retry next cycle", exc_info=True)
+
+    purge_task = asyncio.create_task(periodic_purge())
+
     # 批量分析任务队列：纯 asyncio 实现，无需外部 broker
     task_queue = TaskQueue(
         settings,
@@ -105,6 +119,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        purge_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await purge_task
         _app.state.task_queue = None
         await task_queue.stop()
         _app.state.session_manager = None
