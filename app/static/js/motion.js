@@ -533,36 +533,39 @@
     };
   }
 
-  // ── 10. DotGrid：Hero 全屏交互点阵背景 ───────────────
-  // ReactBits Backgrounds/DotGrid 复刻（canvas 版）
-  // 点阵铺满整个 hero 区：光标经过时邻近的点被轻微推开并染上主题色，
-  // 离开后弹性回位——全屏可感知的物理反馈，工具感而非科幻感。
-  // 触屏端与 prefers-reduced-motion 只绘静态点阵；点位回稳后停帧省 CPU；
+  // ── 10. ParticleNet：Hero 粒子连线拓扑背景 ───────────────
+  // ReactBits Backgrounds/Particles 复刻（canvas 版，追加近邻连线成拓扑网）
+  // 少量粒子低速漂移，近距离粒子间以极淡细线相连，光标附近的粒子
+  // 会与光标轻微连线——贴合代码调用链/链路追踪的意象。
+  // 30fps 限帧 + 低对比半透明配色，只做氛围衬托不抢主体视线；
+  // 触屏端与 prefers-reduced-motion 仅绘制一帧静态拓扑；
   // hero 被移除后自动停止并释放监听
-  function attachDotGrid(heroEl) {
+  function attachParticleNet(heroEl) {
     if (!heroEl) return;
     const canvas = document.createElement("canvas");
-    canvas.className = "hero-dot-canvas";
+    canvas.className = "hero-net-canvas";
     canvas.setAttribute("aria-hidden", "true");
     heroEl.insertBefore(canvas, heroEl.firstChild);
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const SPACING = 26;     // 点间距
-    const BASE_R = 1.1;     // 静态点半径
-    const INFLUENCE = 150;  // 光标影响半径
-    const PUSH = 16;        // 最大推开距离
-    const interactive = !prefersReducedMotion() && !window.matchMedia("(hover: none)").matches;
-    let dots = [];
+    const LINK = 130;        // 粒子间连线的距离上限
+    const CURSOR_LINK = 150; // 光标与粒子连线的距离上限
+    const SPEED = 0.24;      // 最大漂移速度（px/帧，30fps 下约 7px/s）
+    const FRAME_MS = 33;     // 30fps 限帧：氛围背景不需要满帧，省 CPU
+    const animated = !prefersReducedMotion() && !window.matchMedia("(hover: none)").matches;
+    let parts = [];
     let dpr = 1;
     let pointerX = -1e4;
     let pointerY = -1e4;
     let rafId = null;
+    let lastTs = 0;
     let baseColor = "148,163,184";
-    let baseAlpha = 0.22;
+    let nodeAlpha = 0.2;
+    let linkAlpha = 0.08;
     let accentColor = "59,130,246";
 
-    // 从主题 CSS 变量取色，亮色主题用更深的底点保证对比度
+    // 从主题 CSS 变量取色，亮色主题用更深的灰保证可见但不抢眼
     function readColors() {
       const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
       const m = /^#([0-9a-f]{6})$/i.exec(accent);
@@ -574,7 +577,8 @@
       }
       const light = document.documentElement.getAttribute("data-theme") === "light";
       baseColor = light ? "100,116,139" : "148,163,184";
-      baseAlpha = light ? 0.3 : 0.22;
+      nodeAlpha = light ? 0.28 : 0.2;
+      linkAlpha = light ? 0.1 : 0.08;
     }
 
     function rebuild() {
@@ -585,74 +589,98 @@
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      dots = [];
-      // 居中对齐：余数均分到两侧，避免边缘半截点
-      const offX = ((w % SPACING) + SPACING) / 2;
-      const offY = ((h % SPACING) + SPACING) / 2;
-      for (let y = offY; y < h; y += SPACING) {
-        for (let x = offX; x < w; x += SPACING) {
-          dots.push({ ox: x, oy: y, x: x, y: y });
-        }
+      // 粒子密度随面积走，限制上限避免连线 O(n²) 撑大开销
+      const count = Math.max(24, Math.min(64, Math.round((w * h) / 26000)));
+      parts = [];
+      for (let i = 0; i < count; i++) {
+        parts.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          vx: (Math.random() - 0.5) * 2 * SPEED,
+          vy: (Math.random() - 0.5) * 2 * SPEED,
+        });
       }
       draw();
     }
 
-    // 绘制一帧；返回本帧最大位移差，用于判断是否可以停帧
+    function step() {
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        // 出界从对侧回来，避免粒子在边缘堆积
+        if (p.x < -8) p.x = w + 8;
+        else if (p.x > w + 8) p.x = -8;
+        if (p.y < -8) p.y = h + 8;
+        else if (p.y > h + 8) p.y = -8;
+      }
+    }
+
     function draw() {
       const w = canvas.width / dpr;
       const h = canvas.height / dpr;
       ctx.clearRect(0, 0, w, h);
-      let maxDelta = 0;
-      for (let i = 0; i < dots.length; i++) {
-        const d = dots[i];
-        const dx = d.ox - pointerX;
-        const dy = d.oy - pointerY;
-        const dist = Math.hypot(dx, dy);
-        let tx = d.ox;
-        let ty = d.oy;
-        let heat = 0;
-        if (dist < INFLUENCE && dist > 0.001) {
-          heat = 1 - dist / INFLUENCE;
-          const push = PUSH * heat;
-          tx = d.ox + (dx / dist) * push;
-          ty = d.oy + (dy / dist) * push;
+      ctx.lineWidth = 1;
+      // 近邻粒子连线：越近越实，淡到看不见的直接跳过省绘制
+      for (let i = 0; i < parts.length; i++) {
+        for (let j = i + 1; j < parts.length; j++) {
+          const dx = parts[i].x - parts[j].x;
+          const dy = parts[i].y - parts[j].y;
+          const dist = Math.hypot(dx, dy);
+          if (dist >= LINK) continue;
+          const a = linkAlpha * (1 - dist / LINK);
+          if (a < 0.01) continue;
+          ctx.strokeStyle = "rgba(" + baseColor + "," + a.toFixed(3) + ")";
+          ctx.beginPath();
+          ctx.moveTo(parts[i].x, parts[i].y);
+          ctx.lineTo(parts[j].x, parts[j].y);
+          ctx.stroke();
         }
-        d.x += (tx - d.x) * 0.14;
-        d.y += (ty - d.y) * 0.14;
-        const delta = Math.abs(tx - d.x) + Math.abs(ty - d.y);
-        if (delta > maxDelta) maxDelta = delta;
+      }
+      // 光标连线用主题色但依旧低透明度：轻微的“追踪”反馈而非高亮特效
+      if (pointerX > -1e3) {
+        for (let i = 0; i < parts.length; i++) {
+          const dist = Math.hypot(parts[i].x - pointerX, parts[i].y - pointerY);
+          if (dist >= CURSOR_LINK) continue;
+          const a = 0.14 * (1 - dist / CURSOR_LINK);
+          ctx.strokeStyle = "rgba(" + accentColor + "," + a.toFixed(3) + ")";
+          ctx.beginPath();
+          ctx.moveTo(parts[i].x, parts[i].y);
+          ctx.lineTo(pointerX, pointerY);
+          ctx.stroke();
+        }
+      }
+      for (let i = 0; i < parts.length; i++) {
         ctx.beginPath();
-        ctx.arc(d.x, d.y, BASE_R + heat * 1.3, 0, Math.PI * 2);
-        ctx.fillStyle = heat > 0.02
-          ? "rgba(" + accentColor + "," + (baseAlpha + heat * 0.5).toFixed(3) + ")"
-          : "rgba(" + baseColor + "," + baseAlpha + ")";
+        ctx.arc(parts[i].x, parts[i].y, 1.4, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(" + baseColor + "," + nodeAlpha + ")";
         ctx.fill();
       }
-      return maxDelta;
     }
 
-    function tick() {
+    function tick(ts) {
       rafId = null;
       if (!canvas.isConnected) { teardown(); return; }
-      // 所有点回稳后停帧；光标再动时由 onMove 唤醒
-      if (draw() > 0.08) rafId = requestAnimationFrame(tick);
-    }
-
-    function wake() {
-      if (rafId === null) rafId = requestAnimationFrame(tick);
+      // 30fps 限帧：不到间隔只续帧不重绘
+      if (ts - lastTs >= FRAME_MS) {
+        lastTs = ts;
+        step();
+        draw();
+      }
+      rafId = requestAnimationFrame(tick);
     }
 
     function onMove(e) {
       const rect = canvas.getBoundingClientRect();
       pointerX = e.clientX - rect.left;
       pointerY = e.clientY - rect.top;
-      wake();
     }
 
     function onLeave() {
       pointerX = -1e4;
       pointerY = -1e4;
-      wake();
     }
 
     let ro = null;
@@ -681,9 +709,10 @@
       });
       mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     }
-    if (interactive) {
+    if (animated) {
       heroEl.addEventListener("pointermove", onMove);
       heroEl.addEventListener("pointerleave", onLeave);
+      rafId = requestAnimationFrame(tick);
     }
   }
 
@@ -832,8 +861,8 @@
   // 在 renderHero 完成后调用：全屏点阵背景 + 标题逐字入场 + 卡片聚光灯 + CTA 磁吸
   function applyHeroMotion(heroEl) {
     if (!heroEl) return;
-    // 全屏交互点阵背景（ReactBits DotGrid）
-    attachDotGrid(heroEl);
+    // 全屏粒子连线拓扑背景（ReactBits Particles）
+    attachParticleNet(heroEl);
     // 标题 SplitText 逐字入场（仅主标题，克制不炫技）
     const titleEl = heroEl.querySelector(".hero-title");
     if (titleEl) {
@@ -875,7 +904,7 @@
     attachSpotlight: attachSpotlight,
     applySpotlights: applySpotlights,
     attachMagnet: attachMagnet,
-    attachDotGrid: attachDotGrid,
+    attachParticleNet: attachParticleNet,
     initClickSpark: initClickSpark,
     applyBlurText: applyBlurText,
     applyScrollReveal: applyScrollReveal,
