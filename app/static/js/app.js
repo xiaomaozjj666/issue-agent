@@ -1000,8 +1000,7 @@
       // 标题区
       `<header class="hero-head">` +
       `<span class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>${IA.escapeHtml(t("hero_eyebrow_text"))}</span>` +
-      `<h1 class="hero-title">${IA.escapeHtml(t("hero_title"))}` +
-      `<span class="hero-title-accent">${IA.escapeHtml(t("hero_title_accent"))}</span></h1>` +
+      `<h1 class="hero-title">${IA.escapeHtml(t("hero_title"))}</h1>` +
       `<p class="hero-subtitle">${IA.escapeHtml(t("hero_subtitle"))}</p>` +
       `</header>` +
       // 三步流程卡片
