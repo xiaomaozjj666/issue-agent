@@ -155,6 +155,7 @@
     batch_select_all: "Select all",
     batch_select_none: "Clear selection",
     batch_selected_count: "{count} selected",
+    session_select_aria: "Select session: {title}",
     batch_archive_selected: "Archive selected",
     batch_restore_selected: "Restore selected",
     batch_delete_selected: "Delete selected",
@@ -227,6 +228,7 @@
     hero_start_button: "Start analysis",
     // ── 证据矩阵详情（charts.js 矩阵 tooltip） ─────────────────
     matrix_detail_review_pass: "Review approved",
+    matrix_detail_review_revised: "Revised and verified by review",
     matrix_detail_review_fail: "Review not approved",
     matrix_detail_no_reason: "No reason provided",
     matrix_detail_lines: "Lines",
