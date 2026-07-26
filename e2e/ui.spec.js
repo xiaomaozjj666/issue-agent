@@ -61,6 +61,12 @@ function historyCard(page, issueNumber) {
 
 test("renders responsive decision charts without overlaps or console errors", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ds-theme", "light"));
+  const optionalVendorRequests = [];
+  page.on("request", (request) => {
+    if (/\/static\/vendor\/(echarts|highlight)\.min\.js/.test(request.url())) {
+      optionalVendorRequests.push(request.url());
+    }
+  });
   // 带完整调查数据的会话：已读文件 + 阶段事件时间戳，驱动覆盖图与阶段耗时图
   const base = Date.parse("2026-07-20T10:00:00Z");
   const at = (sec) => new Date(base + sec * 1000).toISOString();
@@ -85,6 +91,7 @@ test("renders responsive decision charts without overlaps or console errors", as
   });
 
   await page.goto("/");
+  expect(optionalVendorRequests, "首页不应提前加载图表或代码高亮库").toEqual([]);
   await expect(page.getByRole("heading", { level: 1 })).toHaveAccessibleName("Issue 溯源・自动生成修复补丁");
   const heroStep = page.locator(".hero-step").first();
   await heroStep.hover();
@@ -138,6 +145,8 @@ test("renders responsive decision charts without overlaps or console errors", as
     await expect(el).toHaveAttribute("aria-describedby", `${id}-data`);
     await expect(page.locator(`#${id}-data`)).toHaveCount(1);
   }
+  expect(optionalVendorRequests.filter((url) => url.includes("echarts.min.js"))).toHaveLength(1);
+  expect(optionalVendorRequests.filter((url) => url.includes("highlight.min.js"))).toHaveLength(0);
 
   const minorOpacity = await page.locator("#report-diffstat-section").evaluate((card) => getComputedStyle(card).opacity);
   expect(minorOpacity).toBe("1");

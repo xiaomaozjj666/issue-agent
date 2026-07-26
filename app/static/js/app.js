@@ -1156,13 +1156,24 @@
       });
       pre.appendChild(copyBtn);
 
-      // 语法高亮（库加载失败则跳过，code 块仍可读）
-      if (window.hljs) {
-        try {
-          window.hljs.highlightElement(codeEl);
-        } catch (e) { /* ignore */ }
-      }
     });
+
+    if (!blocks.length) return;
+    const applyHighlight = function () {
+      if (!window.hljs) return;
+      blocks.forEach(function (codeEl) {
+        if (!document.documentElement.contains(codeEl) || codeEl.dataset.highlighted) return;
+        try { window.hljs.highlightElement(codeEl); } catch (e) { /* readable without highlighting */ }
+      });
+    };
+    if (window.hljs) {
+      applyHighlight();
+    } else if (IA.ensureVendor) {
+      IA.ensureVendor("highlight").then(function (loaded) {
+        if (loaded) applyHighlight();
+        else checkCdnFailures();
+      });
+    }
   }
 
   // textarea 自适应高度：内容增长时撑高，删除时收缩，限制最大高度避免撑满屏幕
@@ -2557,13 +2568,31 @@
         zoomBtn.addEventListener("click", function () { openChartModal(el, spec, r, sessionData); });
         host.appendChild(zoomBtn);
       }
+      function renderWhenReady() {
+        const ready = window.echarts
+          ? Promise.resolve(true)
+          : (IA.ensureVendor ? IA.ensureVendor("echarts") : Promise.resolve(false));
+        ready.then(function (loaded) {
+          // 报告被切换或重绘后，旧容器可能已经离开文档。
+          if (!document.documentElement.contains(el)) return;
+          const skeleton = el.querySelector(".chart-skeleton");
+          if (skeleton) {
+            skeleton.style.transition = "opacity 200ms ease";
+            skeleton.style.opacity = "0";
+            setTimeout(function () { if (skeleton.parentNode) skeleton.remove(); }, 220);
+          }
+          const chart = spec.render(el, r, sessionData);
+          if (chart) {
+            reportChartInstances.push(chart);
+            addZoomBtn();
+          } else if (!loaded) {
+            checkCdnFailures();
+          }
+        });
+      }
       // 无 IntersectionObserver 时立即初始化（降级兼容）
       if (!("IntersectionObserver" in window)) {
-        const chart = spec.render(el, r, sessionData);
-        if (chart) {
-          reportChartInstances.push(chart);
-          addZoomBtn();
-        }
+        renderWhenReady();
         return;
       }
       const observer = new IntersectionObserver(function (entries, obs) {
@@ -2572,18 +2601,7 @@
             obs.disconnect();
             const idx = chartLazyObservers.indexOf(obs);
             if (idx >= 0) chartLazyObservers.splice(idx, 1);
-            // 骨架屏淡出：先 opacity→0 过渡，再移除，避免硬切
-            const skeleton = el.querySelector(".chart-skeleton");
-            if (skeleton) {
-              skeleton.style.transition = "opacity 200ms ease";
-              skeleton.style.opacity = "0";
-              setTimeout(function () { if (skeleton.parentNode) skeleton.remove(); }, 220);
-            }
-            const chart = spec.render(el, r, sessionData);
-            if (chart) {
-              reportChartInstances.push(chart);
-              addZoomBtn();
-            }
+            renderWhenReady();
           }
         });
       }, { rootMargin: "200px 0px", threshold: 0 });
@@ -2799,18 +2817,25 @@
       scrollToBottomIfNear(messagesEl, 80);
     }
 
-    // H3 修复：rAF 节流 — 多个 delta 在同一帧内合并为一次 markdown 渲染，
-    // 避免高频 delta 下 marked.parse + DOMPurify.sanitize + innerHTML 的 O(N²) 开销
+    // 多个 delta 合并为最高约 12fps 的 Markdown 渲染。长回复仍需重解析累计文本，
+    // 固定时间片比逐动画帧刷新显著降低 CPU 与 DOM 重建次数，同时保持流式反馈。
     let pendingRender = false;
+    let renderTimer = null;
+    let lastRenderAt = 0;
+    const STREAM_RENDER_INTERVAL_MS = 80;
     function scheduleRender() {
       if (pendingRender) return;
       pendingRender = true;
-      requestAnimationFrame(function () {
+      const elapsed = performance.now() - lastRenderAt;
+      const delay = Math.max(0, STREAM_RENDER_INTERVAL_MS - elapsed);
+      renderTimer = setTimeout(function () {
+        renderTimer = null;
         pendingRender = false;
         // H1 守卫：会话已切换时不渲染
         if (chatSessionId !== sessionId) return;
+        lastRenderAt = performance.now();
         renderAssistantContent();
-      });
+      }, delay);
     }
 
     function appendDelta(text) {
@@ -2824,6 +2849,8 @@
       finalized = true;
       // 刷新尚未渲染的 delta
       if (pendingRender) {
+        if (renderTimer !== null) clearTimeout(renderTimer);
+        renderTimer = null;
         pendingRender = false;
         renderAssistantContent();
       }
