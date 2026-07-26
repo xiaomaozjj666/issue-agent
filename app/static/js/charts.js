@@ -649,9 +649,30 @@
     medium: BRAND.blue,
     low: BRAND.gray,
   };
+  const GENERIC_ROOTS = {
+    src: 1, lib: 1, libs: 1, app: 1, apps: 1, pkg: 1, pkgs: 1, package: 1, packages: 1,
+    tests: 1, test: 1, testing: 1, docs: 1, doc: 1, documentation: 1,
+    bin: 1, scripts: 1, tools: 1, tool: 1, examples: 1, example: 1, demo: 1, demos: 1,
+    benchmark: 1, benchmarks: 1,
+  };
   function moduleOf(path) {
-    const parts = String(path || "").replace(/\\/g, "/").split("/");
-    return parts.length > 1 ? parts[0] : "root";
+    const p = String(path || "").replace(/\\/g, "/").trim();
+    if (!p) return "root";
+    // 已是模块/组件名（无斜杠、无扩展名）
+    if (p.indexOf("/") === -1 && p.indexOf(".") === -1) return p;
+    const parts = p.split("/").filter(function (s) { return s; });
+    if (!parts.length) return p;
+    const originalDirs = parts.slice();
+    // 去掉文件名
+    if (parts[parts.length - 1].indexOf(".") !== -1) parts.pop();
+    const dirParts = parts.length ? parts : originalDirs.slice(0, -1);
+    // 去掉常见无意义根目录
+    while (dirParts.length && GENERIC_ROOTS[dirParts[0].toLowerCase()]) {
+      dirParts.shift();
+    }
+    if (dirParts.length) return dirParts.slice(0, 2).join("/");
+    if (originalDirs.length > 1) return originalDirs[0];
+    return originalDirs[0] || "root";
   }
   function renderBlastRadius(container, report, sessionData) {
     if (!container) return null;
@@ -665,26 +686,29 @@
       return null;
     }
     const palette = getPalette();
-    let candidates = (impact.blast_radius || []).slice();
     const patchFiles = parseDiffstat(report.patch);
-    if (!candidates.length) candidates = patchFiles.map(function (f) { return f.path; });
-    if (!candidates.length) {
+    let rawModules = (impact.blast_radius || []).slice();
+    if (!rawModules.length) rawModules = patchFiles.map(function (f) { return f.path; });
+    if (!rawModules.length) {
       container.innerHTML = '<div class="report-chart-empty">' + IA.escapeHtml(t("chart_blast_radius_empty")) + "</div>";
       return null;
     }
+
+    // 归一化模块名，并汇总每个模块下的改动行数
+    const moduleSet = {};
+    rawModules.forEach(function (p) { moduleSet[moduleOf(p)] = true; });
+    const moduleChanges = {};
+    Object.keys(moduleSet).forEach(function (mod) { moduleChanges[mod] = 0; });
+    patchFiles.forEach(function (f) {
+      const mod = moduleOf(f.path);
+      if (mod in moduleChanges) moduleChanges[mod] += f.added + f.removed;
+    });
+
     const sev = impact.severity || "medium";
     const sevColor = SEVERITY_COLOR[sev] || palette.muted;
-    const changeByPath = {};
-    patchFiles.forEach(function (f) { changeByPath[normPath(f.path)] = f.added + f.removed; });
-    const modules = {};
-    candidates.forEach(function (path) {
-      const mod = moduleOf(path);
-      if (!modules[mod]) modules[mod] = [];
-      const changed = changeByPath[normPath(path)] || 1;
-      modules[mod].push({ name: shortName(path), value: changed, path: path, itemStyle: { color: sevColor } });
-    });
-    const treeData = Object.keys(modules).map(function (mod) {
-      return { name: mod, itemStyle: { color: sevColor }, children: modules[mod] };
+    const treeData = Object.keys(moduleSet).map(function (mod) {
+      const changed = moduleChanges[mod] || 1;
+      return { name: mod, value: changed, itemStyle: { color: sevColor } };
     });
 
     fadeIn(container);
@@ -699,8 +723,11 @@
         position: smartTooltipPosition,
         formatter: function (info) {
           const d = info.data || {};
+          const changed = d.value > 1 ? d.value : 0;
           return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
-            IA.escapeHtml(d.path || d.name) + "</div>" +
+            IA.escapeHtml(d.name) + "</div>" +
+            (changed ? '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("diffstat_total_changes")) +
+              ': <b>' + changed + "</b></div>" : "") +
             '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
             ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
         },
@@ -711,12 +738,8 @@
         roam: false,
         nodeClick: false,
         breadcrumb: { show: false },
-        label: { color: "#ffffff", fontSize: 11, formatter: function (p) { return p.name; } },
-        upperLabel: { show: true, height: 18, color: palette.text, fontSize: 10 },
-        levels: [
-          { itemStyle: { borderColor: palette.tooltipBg, borderWidth: 2, gapWidth: 2 } },
-          { itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 1 }, colorSaturation: [0.35, 0.6] },
-        ],
+        label: { color: "#ffffff", fontSize: 12, fontWeight: 600, formatter: function (p) { return p.name; } },
+        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 1, borderRadius: 2 },
         data: treeData,
       }],
     });
