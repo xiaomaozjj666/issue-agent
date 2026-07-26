@@ -563,6 +563,7 @@
     let pointerY = -1e4;
     let rafId = null;
     let lastTs = 0;
+    let heroVisible = true;
     let baseColor = "203,213,225";
     let nodeAlpha = 0.5;
     let linkAlpha = 0.22;
@@ -680,6 +681,7 @@
     function tick(ts) {
       rafId = null;
       if (!canvas.isConnected) { teardown(); return; }
+      if (document.hidden || !heroVisible) return;
       // 30fps 限帧：不到间隔只续帧不重绘
       if (ts - lastTs >= FRAME_MS) {
         lastTs = ts;
@@ -687,6 +689,17 @@
         draw();
       }
       rafId = requestAnimationFrame(tick);
+    }
+
+    function syncAnimation() {
+      const shouldRun = animated && heroVisible && !document.hidden && canvas.isConnected;
+      if (shouldRun && rafId === null) {
+        lastTs = 0;
+        rafId = requestAnimationFrame(tick);
+      } else if (!shouldRun && rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
     }
 
     function onMove(e) {
@@ -702,13 +715,16 @@
 
     let ro = null;
     let mo = null;
+    let io = null;
     function teardown() {
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = null;
       if (ro) ro.disconnect();
       if (mo) mo.disconnect();
+      if (io) io.disconnect();
       heroEl.removeEventListener("pointermove", onMove);
       heroEl.removeEventListener("pointerleave", onLeave);
+      document.removeEventListener("visibilitychange", syncAnimation);
     }
 
     readColors();
@@ -729,7 +745,15 @@
     if (animated) {
       heroEl.addEventListener("pointermove", onMove);
       heroEl.addEventListener("pointerleave", onLeave);
-      rafId = requestAnimationFrame(tick);
+      document.addEventListener("visibilitychange", syncAnimation);
+      if ("IntersectionObserver" in window) {
+        io = new IntersectionObserver(function (entries) {
+          heroVisible = entries.some(function (entry) { return entry.isIntersecting; });
+          syncAnimation();
+        }, { threshold: 0 });
+        io.observe(heroEl);
+      }
+      syncAnimation();
     }
   }
 

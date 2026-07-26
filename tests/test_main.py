@@ -51,6 +51,9 @@ def test_web_ui_renders() -> None:
     assert "/static/js/core.js" in response.text
     assert "/static/js/app.js" in response.text
     assert f"?v={BUILD_ID}" in response.text
+    assert 'meta name="issue-agent-build"' in response.text
+    assert '<script src="/static/vendor/echarts.min.js' not in response.text
+    assert '<script src="/static/vendor/highlight.min.js' not in response.text
 
 
 def test_static_frontend_modules_are_served() -> None:
@@ -73,6 +76,18 @@ def test_static_frontend_modules_are_served() -> None:
     assert ".review-chip" in stylesheet.text
     assert "--canvas-inset" in stylesheet.text
     assert ".brand-identity" in stylesheet.text
+
+
+def test_compression_and_versioned_static_cache_headers() -> None:
+    client = TestClient(app)
+    page = client.get("/", headers={"Accept-Encoding": "gzip"})
+    versioned = client.get(f"/static/js/app.js?v={BUILD_ID}", headers={"Accept-Encoding": "gzip"})
+    unversioned = client.get("/static/js/app.js")
+
+    assert page.headers.get("Content-Encoding") == "gzip"
+    assert versioned.headers.get("Content-Encoding") == "gzip"
+    assert versioned.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert unversioned.headers["Cache-Control"] == "public, max-age=0, must-revalidate"
 
 
 def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None:
