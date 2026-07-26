@@ -2057,7 +2057,6 @@
           `<div id="report-blast-radius-section" class="report-chart report-chart-half">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("chart_blast_radius"))}</div>` +
           `<div id="report-blast-radius-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_blast_radius"))}"></div>` +
-          `<div class="report-chart-caption">${IA.escapeHtml(t("report_blast_radius"))}</div>` +
           `</div>`,
         );
       }
