@@ -2540,16 +2540,18 @@
       // #17 放大按钮：必须在 spec.render 之后添加——echarts.init 会清空容器
       // 已有子元素，提前挂的按钮会被后续初始化直接吞掉
       function addZoomBtn() {
-        if (el.querySelector(".chart-zoom-btn")) return;
+        const host = el.closest(".report-chart") || el;
+        if (host.querySelector('.chart-zoom-btn[data-chart-id="' + spec.id + '"]')) return;
         const zoomBtn = document.createElement("button");
         zoomBtn.type = "button";
         zoomBtn.className = "chart-zoom-btn";
+        zoomBtn.dataset.chartId = spec.id;
         zoomBtn.setAttribute("aria-label", t("chart_zoom"));
         zoomBtn.title = t("chart_zoom");
         zoomBtn.innerHTML = IA.svgIcon("external") ||
           '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3.75 2h3.5a.75.75 0 0 1 0 1.5H4.5v7h7v-2.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-8.5a.75.75 0 0 1-.75-.75v-8.5A.75.75 0 0 1 3.75 2Z"/></svg>';
         zoomBtn.addEventListener("click", function () { openChartModal(el, spec, r, sessionData); });
-        el.appendChild(zoomBtn);
+        host.appendChild(zoomBtn);
       }
       // 无 IntersectionObserver 时立即初始化（降级兼容）
       if (!("IntersectionObserver" in window)) {
@@ -2589,51 +2591,69 @@
   // #17 图表放大模态框：克隆当前图表到一个全屏 modal 中重新渲染，更清晰的查看细节
   function openChartModal(sourceEl, spec, r, sessionData) {
     let modal = document.getElementById("chart-modal");
-    if (modal) modal.remove();
+    if (modal && typeof modal.__closeChartModal === "function") modal.__closeChartModal(false);
+    else if (modal) modal.remove();
+    const sourceCard = sourceEl.closest(".report-chart");
+    const sourceTitle = sourceCard && sourceCard.querySelector(".report-chart-title");
+    const modalTitle = sourceTitle && sourceTitle.textContent.trim()
+      ? sourceTitle.textContent.trim()
+      : t("chart_zoom_title");
+    const activeElement = document.activeElement;
+    const opener = activeElement instanceof HTMLElement && activeElement.classList.contains("chart-zoom-btn")
+      ? activeElement
+      : sourceCard && sourceCard.querySelector('.chart-zoom-btn[data-chart-id="' + spec.id + '"]');
     modal = document.createElement("div");
     modal.id = "chart-modal";
     modal.className = "chart-modal";
     modal.setAttribute("role", "dialog");
     modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "chart-modal-title");
     modal.innerHTML =
       `<div class="chart-modal-backdrop"></div>` +
       `<div class="chart-modal-content">` +
         `<div class="chart-modal-header">` +
-          `<h3>${IA.escapeHtml(t("chart_zoom_title"))}</h3>` +
+          `<h3 id="chart-modal-title">${IA.escapeHtml(modalTitle)}</h3>` +
           `<button type="button" class="chart-modal-close" aria-label="${IA.escapeHtml(t("report_close"))}">${IA.svgIcon("close")}</button>` +
         `</div>` +
-        `<div id="chart-modal-canvas" class="chart-modal-canvas"></div>` +
+        `<div id="chart-modal-canvas" class="chart-modal-canvas" role="img" aria-label="${IA.escapeHtml(modalTitle)}"></div>` +
       `</div>`;
     document.body.appendChild(modal);
     document.body.classList.add("modal-open");
-    const close = function () {
-      const inst = echarts.getInstanceByDom(document.getElementById("chart-modal-canvas"));
-      if (inst) inst.dispose();
+    let modalChart = null;
+    let closed = false;
+    const closeButton = modal.querySelector(".chart-modal-close");
+    const close = function (restoreFocus) {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener("keydown", modalKeyHandler, true);
+      if (modalChart && !modalChart.isDisposed()) modalChart.dispose();
       modal.remove();
       document.body.classList.remove("modal-open");
+      if (restoreFocus !== false && opener && opener.isConnected) opener.focus();
     };
-    modal.querySelector(".chart-modal-backdrop").addEventListener("click", close);
-    modal.querySelector(".chart-modal-close").addEventListener("click", close);
-    document.addEventListener("keydown", function escHandler(e) {
+    const modalKeyHandler = function (e) {
       if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
         close();
-        document.removeEventListener("keydown", escHandler);
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeButton.focus();
       }
-    });
+    };
+    modal.__closeChartModal = close;
+    modal.querySelector(".chart-modal-backdrop").addEventListener("click", function () { close(); });
+    closeButton.addEventListener("click", function () { close(); });
+    // 捕获阶段消费弹窗按键，避免 Escape 继续触发背景的“关闭报告”。
+    document.addEventListener("keydown", modalKeyHandler, true);
+    closeButton.focus();
     // 延迟一帧让 modal 进入 DOM 后再初始化，确保尺寸正确
     requestAnimationFrame(function () {
+      if (closed || !modal.isConnected) return;
       const canvas = document.getElementById("chart-modal-canvas");
       if (canvas) {
-        const chart = spec.render(canvas, r, sessionData);
-        if (chart) {
-          // 关闭时自动 dispose
-          const origDispose = chart.dispose.bind(chart);
-          chart.dispose = function () {
-            origDispose();
-            if (modal.parentNode) modal.remove();
-            document.body.classList.remove("modal-open");
-          };
-        }
+        modalChart = spec.render(canvas, r, sessionData);
       }
     });
   }

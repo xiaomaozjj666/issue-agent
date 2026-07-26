@@ -5,11 +5,16 @@ const report = {
   summary: "修复特殊路径中的解析错误",
   root_cause: "路径未经过编码。",
   confidence: "high",
-  evidence: [{ path: "src/a #1.py", lines: "L10-L12", reason: "这里会触发问题。" }],
+  evidence: [
+    { path: "src/a #1.py", lines: "L10-L12", reason: "这里会触发问题。", strength: "strong", kind: "code" },
+    { path: "src/a #1.py", lines: "L20-L24", reason: "调用链将错误值传到这里。", strength: "moderate", kind: "code" },
+    { path: "tests/test_a.py", lines: "L5-L18", reason: "回归用例可以稳定复现。", strength: "strong", kind: "test" },
+  ],
   proposed_changes: ["规范化行号并编码路径。"],
   patch: "--- a/src/a #1.py\n+++ b/src/a #1.py\n@@ -10 +10 @@\n-old\n+new",
   tests: ["验证源码链接。"],
   risks: ["无已知风险。"],
+  impact: { severity: "high", likelihood: "medium", blast_radius: ["src/a #1.py"] },
   review_audit: { status: "approved", summary: "证据充分。", findings: [] },
 };
 
@@ -50,7 +55,11 @@ async function mockCompletedSessions(page, sessions = [summary("session-1", "路
   });
 }
 
-test("renders real-data report charts without console errors", async ({ page }) => {
+function historyCard(page, issueNumber) {
+  return page.locator(".session-card", { hasText: `acme/widget #${issueNumber}` });
+}
+
+test("renders responsive decision charts without overlaps or console errors", async ({ page }) => {
   // 带完整调查数据的会话：已读文件 + 阶段事件时间戳，驱动覆盖图与阶段耗时图
   const base = Date.parse("2026-07-20T10:00:00Z");
   const at = (sec) => new Date(base + sec * 1000).toISOString();
@@ -75,16 +84,79 @@ test("renders real-data report charts without console errors", async ({ page }) 
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: /acme\/widget #1/ }).click();
+  await historyCard(page, 1).click();
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
 
-  // 两个图表都是懒加载：滚动进入视口后应渲染出真实 canvas
-  for (const id of ["report-diffstat-chart", "report-verify-chart"]) {
+  await expect(page.locator("#report-evidence-map-section .report-chart-title")).toHaveText("根因证据链");
+  await expect(page.locator("#report-risk-matrix-section .report-chart-title")).toHaveText("风险矩阵");
+  await expect(page.getByRole("button", { name: "在报告中搜索…" })).toBeVisible();
+
+  const chartIds = [
+    "report-evidence-map-chart",
+    "report-risk-matrix-chart",
+    "report-blast-radius-chart",
+    "report-diffstat-chart",
+    "report-verify-chart",
+  ];
+  // 所有图表都是懒加载：滚动进入视口后应渲染出有效像素。
+  for (const id of chartIds) {
     const el = page.locator(`#${id}`);
     await el.scrollIntoViewIfNeeded();
     await expect(el.locator("canvas").first(), `${id} 应渲染出 canvas`).toBeVisible({ timeout: 10_000 });
+    const paintedPixels = await el.locator("canvas").first().evaluate((canvas) => {
+      const context = canvas.getContext("2d");
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] > 0) count += 1;
+      }
+      return count;
+    });
+    expect(paintedPixels, `${id} 不应是空白画布`).toBeGreaterThan(100);
+    await expect(el.locator(".chart-zoom-btn"), "放大按钮不应覆盖 ECharts 工具栏").toHaveCount(0);
+    const zoomButton = el.locator("xpath=..").locator(`.chart-zoom-btn[data-chart-id="${id}"]`);
+    await expect(zoomButton).toHaveCount(1);
+    const zoomSize = await zoomButton.evaluate((button) => button.getBoundingClientRect().width);
+    expect(zoomSize).toBeGreaterThanOrEqual(32);
+    await expect(el).toHaveAttribute("aria-describedby", `${id}-data`);
+    await expect(page.locator(`#${id}-data`)).toHaveCount(1);
   }
+
+  const minorOpacity = await page.locator("#report-diffstat-section").evaluate((card) => getComputedStyle(card).opacity);
+  expect(minorOpacity).toBe("1");
+  await page.locator("#report-risk-matrix-section").hover();
+  const hoverTransform = await page.locator("#report-risk-matrix-section").evaluate((card) => getComputedStyle(card).transform);
+  expect(hoverTransform).toBe("none");
+
+  // 普通报告侧栏宽度不足时单列排布。
+  const sidePanelTops = await page.evaluate(() => ({
+    risk: document.getElementById("report-risk-matrix-section").getBoundingClientRect().top,
+    blast: document.getElementById("report-blast-radius-section").getBoundingClientRect().top,
+  }));
+  expect(sidePanelTops.blast).toBeGreaterThan(sidePanelTops.risk + 100);
+
+  // 全屏报告有足够宽度时恢复双列，两张次主图顶部对齐。
+  await page.getByRole("button", { name: "全屏", exact: true }).click();
+  await page.waitForTimeout(150);
+  const fullscreenTops = await page.evaluate(() => ({
+    risk: document.getElementById("report-risk-matrix-section").getBoundingClientRect().top,
+    blast: document.getElementById("report-blast-radius-section").getBoundingClientRect().top,
+  }));
+  expect(Math.abs(fullscreenTops.blast - fullscreenTops.risk)).toBeLessThan(2);
+
+  // 放大交互应能创建有内容的模态图表，Escape 可正常关闭。
+  const riskZoom = page.locator('.chart-zoom-btn[data-chart-id="report-risk-matrix-chart"]');
+  await riskZoom.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName("风险矩阵");
+  await expect(page.locator("#chart-modal-canvas canvas").first()).toBeVisible();
+  await expect(page.locator(".chart-modal-close")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".chart-modal-close")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(riskZoom).toBeFocused();
 
   // CDN 资源加载失败不算应用错误（离线环境降级路径另有兼容）
   const appErrors = consoleErrors.filter((text) => !/net::|Failed to load resource/i.test(text));
@@ -107,14 +179,14 @@ test("localizes interface chrome, relative time, and untrusted session text", as
 test("opens reports without hiding the conversation and builds valid GitHub links", async ({ page }) => {
   await mockCompletedSessions(page);
   await page.goto("/");
-  await page.getByRole("button", { name: /acme\/widget #1/ }).click();
+  await historyCard(page, 1).click();
   await page.getByRole("button", { name: "查看完整报告" }).click();
 
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
   await expect(page.getByLabel("对话消息")).toBeVisible();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("可信度高");
   await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("独立审查 · 已通过");
-  await expect(page.getByRole("link", { name: "查看源码" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "查看源码" }).first()).toHaveAttribute(
     "href",
     "https://github.com/acme/widget/blob/HEAD/src/a%20%231.py#L10-L12",
   );
@@ -155,8 +227,8 @@ test("restores the back button after a failed history request", async ({ page })
     return route.fulfill({ json: detail("session-2", "第二条会话") });
   });
   await page.goto("/");
-  await page.getByRole("button", { name: /acme\/widget #1/ }).click();
-  await page.getByRole("button", { name: /acme\/widget #2/ }).click();
+  await historyCard(page, 1).click();
+  await historyCard(page, 2).click();
   const back = page.getByRole("button", { name: "返回上一步" });
   await back.click();
 
@@ -176,7 +248,7 @@ test("clears follow-up input after sending", async ({ page }) => {
     }),
   );
   await page.goto("/");
-  await page.getByRole("button", { name: /acme\/widget #1/ }).click();
+  await historyCard(page, 1).click();
   const input = page.getByRole("textbox", { name: "继续提问…" });
   await input.fill("请继续解释");
   await page.getByRole("button", { name: "发送" }).click();
@@ -188,12 +260,35 @@ test("clears follow-up input after sending", async ({ page }) => {
   ).toBe('"你"');
 });
 
+test("keeps large investigation histories collapsed and report actions stable", async ({ page }) => {
+  const manyEvents = Array.from({ length: 585 }, (_, index) => ({
+    type: "tool_call",
+    data: { name: `read_file_${index}` },
+    created_at: new Date(Date.now() + index * 1000).toISOString(),
+  }));
+  await page.route("**/sessions?**", (route) => route.fulfill({ json: [summary("session-1", "大型调查记录")] }));
+  await page.route(/\/session\/session-1$/, (route) => route.fulfill({
+    json: { ...detail("session-1", "大型调查记录"), events: manyEvents },
+  }));
+
+  await page.goto("/");
+  await historyCard(page, 1).click();
+  await expect(page.locator(".timeline-step")).toHaveCount(20);
+  await page.getByRole("button", { name: "展开全部 (565)" }).click();
+  await expect(page.locator(".timeline-step")).toHaveCount(585);
+  await page.getByRole("button", { name: "收起" }).click();
+  await expect(page.locator(".timeline-step")).toHaveCount(20);
+
+  await page.getByRole("button", { name: "查看完整报告" }).click();
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
+});
+
 test("@mobile keeps history and report flows inside the viewport", async ({ page }) => {
   await mockCompletedSessions(page);
   await page.goto("/");
   await page.getByRole("button", { name: "会话历史" }).click();
   await expect(page.getByLabel("会话列表")).toBeVisible();
-  await page.getByRole("button", { name: /acme\/widget #1/ }).click();
+  await historyCard(page, 1).click();
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
 

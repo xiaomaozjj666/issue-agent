@@ -37,8 +37,8 @@ dev = [
   "httpx2>=2,<3",
   "mypy>=1.15,<2",
   "pip-audit>=2.7,<3",
-  "pytest>=8.3,<9",
-  "pytest-asyncio>=0.25,<1",
+  "pytest>=9.0.3,<10",
+  "pytest-asyncio>=1.4,<2",
   "pytest-cov>=6,<8",
   "ruff>=0.8,<1",
 ]
@@ -61,6 +61,11 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Prompt JSON examples are intentionally kept on one logical line so the model
+# receives valid copy-pasteable schemas without formatting artifacts.
+"app/i18n.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
