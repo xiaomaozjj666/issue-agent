@@ -28,6 +28,40 @@ import re
 _CJK = re.compile(r"[一-鿿]")
 _CONFIG_EXT = (".yml", ".yaml", ".toml", ".ini", ".cfg", ".env", ".conf", ".properties")
 
+# 路径中常见的无意义顶层目录，提取模块名时跳过
+_GENERIC_ROOTS = {
+    "src", "lib", "libs", "app", "apps", "pkg", "pkgs", "package", "packages",
+    "tests", "test", "testing", "docs", "doc", "documentation",
+    "bin", "scripts", "tools", "tool", "examples", "example", "demo", "demos",
+    "benchmark", "benchmarks",
+}
+
+
+def _module_of(path: str) -> str:
+    """把文件路径归约为有意义的模块/目录名，用于 blast_radius。"""
+    p = (path or "").replace("\\", "/").strip()
+    if not p:
+        return "root"
+    # 已经是简单模块名（无斜杠、无扩展名）
+    if "/" not in p and "." not in p:
+        return p
+    parts = [s for s in p.split("/") if s]
+    if not parts:
+        return p
+    original_dirs = parts[:]
+    # 去掉文件名
+    if "." in parts[-1]:
+        parts.pop()
+    dir_parts = parts if parts else original_dirs[:-1]
+    # 去掉常见无意义根目录
+    while dir_parts and dir_parts[0].lower() in _GENERIC_ROOTS:
+        dir_parts.pop(0)
+    if dir_parts:
+        return "/".join(dir_parts[:2])
+    if len(original_dirs) > 1:
+        return original_dirs[0]
+    return original_dirs[0] if original_dirs else "root"
+
 
 def detect_lang(rep: dict) -> str:
     text = " ".join(
@@ -88,20 +122,22 @@ def parse_diffstat(patch: str) -> list[dict]:
 
 
 def _blast_radius(rep: dict, fixed_files: set[str]) -> list[str]:
-    br: list[str] = []
+    """从历史数据派生受影响的模块/目录列表（不是原始文件路径）。"""
+    paths: list[str] = []
     if rep.get("patch"):
-        br = [f["path"] for f in parse_diffstat(rep["patch"])]
-    if not br:
-        br = [e.get("path") for e in (rep.get("evidence") or []) if e.get("path")]
-    if not br:
-        br = list(rep.get("files_examined") or [])
+        paths = [f["path"] for f in parse_diffstat(rep["patch"])]
+    if not paths:
+        paths = [e.get("path") for e in (rep.get("evidence") or []) if e.get("path")]
+    if not paths:
+        paths = list(rep.get("files_examined") or [])
+    modules: list[str] = []
     seen: set[str] = set()
-    out: list[str] = []
-    for p in br:
-        if p and p not in seen:
-            seen.add(p)
-            out.append(p)
-    return out[:15]
+    for p in paths:
+        mod = _module_of(p)
+        if mod and mod not in seen:
+            seen.add(mod)
+            modules.append(mod)
+    return modules[:15]
 
 
 def enrich_report(rep: dict) -> dict:
@@ -138,6 +174,22 @@ def enrich_report(rep: dict) -> dict:
             "likelihood": "medium",
             "blast_radius": br,
         }
+    else:
+        # 已存在 impact 时，把 blast_radius 里的文件路径归一成模块名（幂等）
+        impact = rep["impact"]
+        if isinstance(impact, dict):
+            old_br = impact.get("blast_radius") or []
+            seen: set[str] = set()
+            new_br: list[str] = []
+            for p in old_br:
+                mod = _module_of(p)
+                if mod and mod not in seen:
+                    seen.add(mod)
+                    new_br.append(mod)
+            if not new_br:
+                new_br = _blast_radius(rep, fixed_files)
+            if new_br != old_br:
+                impact["blast_radius"] = new_br
 
     # ── confidence rationale ──
     if not rep.get("confidence_rationale"):
