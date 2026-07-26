@@ -19,3 +19,4 @@ reports/
 data/
 .qoder/
 *.tmp_*.json
+_ui_charts_*.png
