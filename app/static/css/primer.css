@@ -9,51 +9,51 @@
   color-scheme: dark;
 
   /* 画布层级 */
-  --bg: #0f172a;
-  --card: #1e293b;
-  --canvas-subtle: #1e293b;
-  --canvas-inset: #0f172a;
+  --bg: #0d1117;
+  --card: #161b22;
+  --canvas-subtle: #161b22;
+  --canvas-inset: #0d1117;
 
   /* 文本 */
-  --fg: #f1f5f9;
-  --fg-strong: #ffffff;
-  --muted: #94a3b8;
-  --faint: #64748b;
+  --fg: #e6edf3;
+  --fg-strong: #f0f6fc;
+  --muted: #8b949e;
+  --faint: #6e7681;
 
   /* 分割线 */
-  --border: #334155;
-  --border-muted: #1e293b;
+  --border: #30363d;
+  --border-muted: #21262d;
 
   /* 主色（蓝） */
-  --accent: #3b82f6;
-  --accent-emphasis: #2563eb;
-  --accent-subtle: rgba(59, 130, 246, 0.16);
-  --accent-muted: rgba(59, 130, 246, 0.4);
-  --ring: rgba(59, 130, 246, 0.45);
+  --accent: #58a6ff;
+  --accent-emphasis: #79c0ff;
+  --accent-subtle: rgba(56, 139, 253, 0.15);
+  --accent-muted: rgba(56, 139, 253, 0.4);
+  --ring: rgba(56, 139, 253, 0.45);
 
   /* 语义色 */
-  --green: #10b981;
-  --green-emphasis: #059669;
-  --green-hover: #047857;
-  --green-subtle: rgba(16, 185, 129, 0.16);
-  --green-muted: rgba(16, 185, 129, 0.4);
-  --yellow: #f59e0b;
-  --yellow-emphasis: #d97706;
-  --yellow-subtle: rgba(245, 158, 11, 0.16);
-  --yellow-muted: rgba(245, 158, 11, 0.4);
-  --red: #ef4444;
-  --red-emphasis: #dc2626;
-  --red-subtle: rgba(239, 68, 68, 0.16);
-  --red-muted: rgba(239, 68, 68, 0.4);
-  --neutral-emphasis: #64748b;
-  --neutral-subtle: rgba(100, 116, 139, 0.14);
+  --green: #3fb950;
+  --green-emphasis: #56d364;
+  --green-hover: #2ea043;
+  --green-subtle: rgba(46, 160, 67, 0.15);
+  --green-muted: rgba(46, 160, 67, 0.4);
+  --yellow: #d29922;
+  --yellow-emphasis: #e3b341;
+  --yellow-subtle: rgba(187, 128, 9, 0.15);
+  --yellow-muted: rgba(187, 128, 9, 0.4);
+  --red: #f85149;
+  --red-emphasis: #ff7b72;
+  --red-subtle: rgba(248, 81, 73, 0.15);
+  --red-muted: rgba(248, 81, 73, 0.4);
+  --neutral-emphasis: #8b949e;
+  --neutral-subtle: rgba(110, 118, 129, 0.14);
 
   /* 控件背景 */
-  --control-bg: #1e293b;
-  --control-hover: #334155;
-  --control-active: #0f172a;
-  --control-border: rgba(241, 245, 249, 0.12);
-  --control-hover-border: #475569;
+  --control-bg: #21262d;
+  --control-hover: #30363d;
+  --control-active: #161b22;
+  --control-border: rgba(240, 246, 252, 0.12);
+  --control-hover-border: #8b949e;
   --btn-shadow: 0 1px 2px rgba(15, 23, 42, 0.4);
   --btn-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   --input-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.4);
@@ -108,45 +108,45 @@
   color-scheme: light;
 
   --bg: #ffffff;
-  --card: #f8fafc;
-  --canvas-subtle: #f1f5f9;
-  --canvas-inset: #f8fafc;
+  --card: #f6f8fa;
+  --canvas-subtle: #f6f8fa;
+  --canvas-inset: #ffffff;
 
-  --fg: #0f172a;
-  --fg-strong: #0f172a;
-  --muted: #64748b;
-  --faint: #94a3b8;
+  --fg: #1f2328;
+  --fg-strong: #1f2328;
+  --muted: #656d76;
+  --faint: #8c959f;
 
-  --border: #e2e8f0;
-  --border-muted: #f1f5f9;
+  --border: #d0d7de;
+  --border-muted: #d8dee4;
 
-  --accent: #2563eb;
-  --accent-emphasis: #1d4ed8;
-  --accent-subtle: #eff6ff;
-  --accent-muted: rgba(59, 130, 246, 0.32);
-  --ring: rgba(37, 99, 235, 0.4);
+  --accent: #0969da;
+  --accent-emphasis: #0550ae;
+  --accent-subtle: #ddf4ff;
+  --accent-muted: rgba(9, 105, 218, 0.32);
+  --ring: rgba(9, 105, 218, 0.4);
 
-  --green: #059669;
-  --green-emphasis: #047857;
-  --green-hover: #065f46;
-  --green-subtle: #ecfdf5;
-  --green-muted: rgba(16, 185, 129, 0.32);
-  --yellow: #d97706;
-  --yellow-emphasis: #b45309;
-  --yellow-subtle: #fffbeb;
-  --yellow-muted: rgba(245, 158, 11, 0.32);
-  --red: #dc2626;
-  --red-emphasis: #b91c1c;
-  --red-subtle: #fef2f2;
-  --red-muted: rgba(239, 68, 68, 0.32);
-  --neutral-emphasis: #64748b;
-  --neutral-subtle: rgba(241, 245, 249, 0.7);
+  --green: #1a7f37;
+  --green-emphasis: #116329;
+  --green-hover: #1a7f37;
+  --green-subtle: #dafbe1;
+  --green-muted: rgba(26, 127, 55, 0.32);
+  --yellow: #9a6700;
+  --yellow-emphasis: #7d4e00;
+  --yellow-subtle: #fff8c5;
+  --yellow-muted: rgba(154, 103, 0, 0.32);
+  --red: #cf222e;
+  --red-emphasis: #a40e26;
+  --red-subtle: #ffebe9;
+  --red-muted: rgba(207, 34, 46, 0.32);
+  --neutral-emphasis: #656d76;
+  --neutral-subtle: rgba(208, 215, 222, 0.4);
 
   --control-bg: #ffffff;
-  --control-hover: #f1f5f9;
-  --control-active: #e2e8f0;
-  --control-border: rgba(15, 23, 42, 0.12);
-  --control-hover-border: rgba(15, 23, 42, 0.2);
+  --control-hover: #f3f4f6;
+  --control-active: #ebf0f4;
+  --control-border: rgba(31, 35, 40, 0.15);
+  --control-hover-border: rgba(31, 35, 40, 0.25);
   --btn-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   --btn-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   --input-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.4);
@@ -2677,7 +2677,8 @@ a:hover {
   gap: 4px;
   border-radius: var(--radius-pill);
   padding: 2px 10px;
-  color: #ffffff;
+  border: 1px solid transparent;
+  color: var(--muted);
   font-size: var(--text-xs);
   font-weight: 600;
   line-height: 18px;
@@ -2691,34 +2692,44 @@ a:hover {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.9);
+  background: currentColor;
+  opacity: 0.8;
 }
 
 .badge.high {
-  background: linear-gradient(135deg, var(--green) 0%, var(--green-emphasis) 100%);
-  box-shadow: 0 1px 3px var(--green-muted);
+  color: var(--green-emphasis);
+  background: var(--green-subtle);
+  border-color: var(--green-muted);
 }
 
 .badge.medium {
-  background: linear-gradient(135deg, var(--yellow) 0%, var(--yellow-emphasis) 100%);
-  box-shadow: 0 1px 3px var(--yellow-muted);
+  color: var(--yellow-emphasis);
+  background: var(--yellow-subtle);
+  border-color: var(--yellow-muted);
 }
 
 .badge.low {
-  background: linear-gradient(135deg, var(--red) 0%, var(--red-emphasis) 100%);
-  box-shadow: 0 1px 3px var(--red-muted);
+  color: var(--red-emphasis);
+  background: var(--red-subtle);
+  border-color: var(--red-muted);
 }
 
 .review-chip.approved {
-  background: linear-gradient(135deg, var(--green) 0%, var(--green-emphasis) 100%);
+  color: var(--green-emphasis);
+  background: var(--green-subtle);
+  border-color: var(--green-muted);
 }
 
 .review-chip.revised {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-emphasis) 100%);
+  color: var(--accent-emphasis);
+  background: var(--accent-subtle);
+  border-color: var(--accent-muted);
 }
 
 .review-chip.unavailable {
-  background: linear-gradient(135deg, var(--neutral-emphasis) 0%, var(--faint) 100%);
+  color: var(--muted);
+  background: var(--neutral-subtle);
+  border-color: var(--border);
 }
 
 /* 独立审查块 */
@@ -4785,17 +4796,17 @@ body.modal-open {
 
 .risk-item.risk-high {
   border-left-color: var(--red);
-  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 40%);
+  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 28%);
 }
 
 .risk-item.risk-medium {
   border-left-color: var(--yellow);
-  background: linear-gradient(90deg, var(--yellow-subtle) 0%, var(--card) 40%);
+  background: linear-gradient(90deg, var(--yellow-subtle) 0%, var(--card) 28%);
 }
 
 .risk-item.risk-low {
   border-left-color: var(--green);
-  background: linear-gradient(90deg, var(--green-subtle) 0%, var(--card) 40%);
+  background: linear-gradient(90deg, var(--green-subtle) 0%, var(--card) 28%);
 }
 
 .risk-badge {
@@ -4808,20 +4819,26 @@ body.modal-open {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #ffffff;
+  border: 1px solid transparent;
   white-space: nowrap;
 }
 
 .risk-badge-high {
-  background: var(--red);
+  color: var(--red-emphasis);
+  background: var(--red-subtle);
+  border-color: var(--red-muted);
 }
 
 .risk-badge-medium {
-  background: var(--yellow-emphasis);
+  color: var(--yellow-emphasis);
+  background: var(--yellow-subtle);
+  border-color: var(--yellow-muted);
 }
 
 .risk-badge-low {
-  background: var(--green);
+  color: var(--green-emphasis);
+  background: var(--green-subtle);
+  border-color: var(--green-muted);
 }
 
 .risk-text {
@@ -4899,17 +4916,17 @@ body.modal-open {
 
 .change-item.change-p0 {
   border-left-color: var(--red);
-  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 40%);
+  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 28%);
 }
 
 .change-item.change-p1 {
   border-left-color: var(--accent);
-  background: linear-gradient(90deg, var(--accent-subtle) 0%, var(--card) 40%);
+  background: linear-gradient(90deg, var(--accent-subtle) 0%, var(--card) 28%);
 }
 
 .change-item.change-p2 {
   border-left-color: var(--neutral-emphasis);
-  background: linear-gradient(90deg, var(--neutral-subtle) 0%, var(--card) 40%);
+  background: linear-gradient(90deg, var(--neutral-subtle) 0%, var(--card) 28%);
 }
 
 .change-head {
@@ -4929,13 +4946,13 @@ body.modal-open {
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: #ffffff;
+  border: 1px solid transparent;
   white-space: nowrap;
 }
 
-.change-priority-p0 { background: var(--red); }
-.change-priority-p1 { background: var(--accent); }
-.change-priority-p2 { background: var(--neutral-emphasis); }
+.change-priority-p0 { color: var(--red-emphasis); background: var(--red-subtle); border-color: var(--red-muted); }
+.change-priority-p1 { color: var(--accent-emphasis); background: var(--accent-subtle); border-color: var(--accent-muted); }
+.change-priority-p2 { color: var(--muted); background: var(--neutral-subtle); border-color: var(--border); }
 
 .change-text {
   flex: 1 1 auto;
@@ -5495,6 +5512,11 @@ body.modal-open {
   .report-metric-card:hover {
     border-color: var(--accent-muted);
     background: var(--canvas-inset);
+  }
+
+  .report-metric-card.clickable:hover {
+    transform: none;
+    box-shadow: var(--shadow-sm);
   }
 
   .report-chart:hover {

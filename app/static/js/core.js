@@ -21,6 +21,7 @@
     import_session_invalid: "Invalid session file format",
     history_toggle: "Session history",
     theme_toggle: "Toggle theme",
+    report_theme_toggle: "Toggle report theme",
     history_search_placeholder: "Search issues and repositories",
     history_search_label: "Search sessions",
     session_list_label: "Session list",

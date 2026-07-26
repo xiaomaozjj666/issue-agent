@@ -26,6 +26,13 @@
   const enumLabel = IA.enumLabel;
 
   // 主题切换
+  function syncThemeButtons(theme) {
+    ["theme-toggle-btn", "report-theme-btn"].forEach(function (id) {
+      const button = document.getElementById(id);
+      if (button) button.setAttribute("aria-pressed", String(theme === "light"));
+    });
+  }
+
   function applyStoredTheme() {
     const stored = localStorage.getItem("ds-theme");
     if (stored) {
@@ -35,10 +42,7 @@
       const prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
       document.documentElement.dataset.theme = prefersLight ? "light" : "dark";
     }
-    const themeBtn = document.getElementById("theme-toggle-btn");
-    if (themeBtn) {
-      themeBtn.setAttribute("aria-pressed", String(document.documentElement.dataset.theme === "light"));
-    }
+    syncThemeButtons(document.documentElement.dataset.theme);
     // 监听系统主题变化：仅当用户未手动设置时自动跟随
     if (window.matchMedia) {
       const mql = window.matchMedia("(prefers-color-scheme: light)");
@@ -46,8 +50,7 @@
         if (!localStorage.getItem("ds-theme")) {
           const next = e.matches ? "light" : "dark";
           document.documentElement.dataset.theme = next;
-          const btn = document.getElementById("theme-toggle-btn");
-          if (btn) btn.setAttribute("aria-pressed", String(next === "light"));
+          syncThemeButtons(next);
           if (report && document.getElementById("main").classList.contains("report-open")) {
             refreshReportCharts();
           }
@@ -63,8 +66,7 @@
     const next = html.dataset.theme === "dark" ? "light" : "dark";
     html.dataset.theme = next;
     localStorage.setItem("ds-theme", next);
-    const themeBtn = document.getElementById("theme-toggle-btn");
-    if (themeBtn) themeBtn.setAttribute("aria-pressed", String(next === "light"));
+    syncThemeButtons(next);
     // 主题切换后，若报告面板已展开则仅刷新图表配色
     // 不重建报告 DOM（避免丢失滚动位置、焦点、hover 状态）
     if (report && document.getElementById("main").classList.contains("report-open")) {
@@ -72,39 +74,37 @@
     }
   }
 
-  // 仅刷新报告内 ECharts 图表实例，不重建整个 DOM
-  // #26+#27 主题切换用 setOption 合并替代 dispose+reinit：
-  // 只更新配色相关 option（textStyle/color/tooltip 背景），保留图表实例与用户交互状态
-  // 加淡入淡出过渡，避免硬切
+  // 仅重绘已加载的 ECharts，不重建报告 DOM，保留滚动位置与焦点。
+  // 系列节点与自定义 renderItem 都会缓存颜色，因此只更新公共字段会产生半新半旧的主题。
   function refreshReportCharts() {
-    const palette = IA.Charts.getPalette();
-    if (!reportChartInstances.length) return;
-    // 给图表容器加一个淡入过渡，掩盖 setOption 刷新的瞬间跳变
-    reportChartInstances.forEach(function (chart) {
+    const renderers = {
+      "report-evidence-map-chart": IA.Charts.renderEvidenceMap,
+      "report-risk-matrix-chart": IA.Charts.renderRiskMatrix,
+      "report-blast-radius-chart": IA.Charts.renderBlastRadius,
+      "report-diffstat-chart": IA.Charts.renderDiffstat,
+      "report-verify-chart": IA.Charts.renderVerify,
+    };
+    const current = reportChartInstances.slice();
+    const nextInstances = [];
+    current.forEach(function (chart) {
       const dom = chart.getDom();
-      if (dom) {
-        dom.style.transition = "opacity 200ms ease";
-        dom.style.opacity = "0.4";
+      const render = dom && renderers[dom.id];
+      if (!dom || !render) {
+        nextInstances.push(chart);
+        return;
       }
+      dom.style.transition = "opacity 200ms ease";
+      dom.style.opacity = "0.45";
+      if (chart.__iaResizeObserver) chart.__iaResizeObserver.disconnect();
+      if (chart.__iaClearResizeTimer) chart.__iaClearResizeTimer();
+      chart.dispose();
+      const replacement = render(dom, report, activeSession);
+      if (replacement) nextInstances.push(replacement);
+      requestAnimationFrame(function () { dom.style.opacity = "1"; });
     });
-    // 下一帧恢复 opacity + 用 setOption merge 更新配色
-    requestAnimationFrame(function () {
-      reportChartInstances.forEach(function (chart) {
-        const dom = chart.getDom();
-        if (dom) dom.style.opacity = "1";
-        // notMerge=false：合并更新，仅覆盖以下字段
-        chart.setOption({
-          color: [palette.primary, palette.success, palette.warning, palette.danger],
-          textStyle: { color: palette.text },
-          tooltip: {
-            backgroundColor: palette.tooltipBg,
-            borderColor: palette.tooltipBorder,
-            textStyle: { color: palette.text },
-          },
-        }, { notMerge: false });
-        try { chart.resize(); } catch (e) { /* ignore */ }
-      });
-    });
+    reportChartInstances = nextInstances;
+    const modal = document.getElementById("chart-modal");
+    if (modal && typeof modal.__refreshChartTheme === "function") modal.__refreshChartTheme();
   }
 
   // 移动端侧边栏切换
@@ -2524,7 +2524,7 @@
     // #16 图表懒加载 + #28 骨架屏：IntersectionObserver 触发初始化
     initLazyCharts(r, sessionData);
 
-    // ReactBits 动效复刻：指标数字滚动 + 列表逐项入场 + 卡片倾斜 + 涟漪 + 平滑展开
+    // ReactBits 风格的克制动效：指标滚动、列表入场与平滑展开。
     if (IA.Motion) IA.Motion.applyReportMotion(d);
   }
 
@@ -2664,6 +2664,17 @@
         modalChart = spec.render(canvas, r, sessionData);
       }
     });
+    modal.__refreshChartTheme = function () {
+      if (closed || !modal.isConnected) return;
+      const canvas = modal.querySelector("#chart-modal-canvas");
+      if (!canvas) return;
+      if (modalChart && !modalChart.isDisposed()) {
+        if (modalChart.__iaResizeObserver) modalChart.__iaResizeObserver.disconnect();
+        if (modalChart.__iaClearResizeTimer) modalChart.__iaClearResizeTimer();
+        modalChart.dispose();
+      }
+      modalChart = spec.render(canvas, r, sessionData);
+    };
   }
 
   function syncReportToggle(open) {
@@ -3301,8 +3312,8 @@
     const title = (sessionData && sessionData.issue_url) ? sessionData.issue_url : "Issue Agent Report";
     // 内联 CSS：与主应用 primer.css 设计令牌保持一致，支持亮/暗双主题
     const inlineCss = `
-      :root{color-scheme:dark;--bg:#0f172a;--card:#1e293b;--canvas-subtle:#1e293b;--canvas-inset:#0f172a;--fg:#f1f5f9;--fg-strong:#fff;--muted:#94a3b8;--faint:#64748b;--border:#334155;--border-muted:#1e293b;--accent:#3b82f6;--accent-subtle:rgba(59,130,246,0.16);--accent-muted:rgba(59,130,246,0.4);--green:#10b981;--green-subtle:rgba(16,185,129,0.16);--yellow:#f59e0b;--yellow-subtle:rgba(245,158,11,0.16);--red:#ef4444;--red-subtle:rgba(239,68,68,0.16);--neutral-emphasis:#64748b;--neutral-subtle:rgba(100,116,139,0.14)}
-      [data-theme="light"]{color-scheme:light;--bg:#fff;--card:#f8fafc;--canvas-subtle:#f1f5f9;--canvas-inset:#f8fafc;--fg:#0f172a;--fg-strong:#0f172a;--muted:#64748b;--faint:#94a3b8;--border:#e2e8f0;--border-muted:#f1f5f9;--accent:#2563eb;--accent-subtle:#eff6ff;--accent-muted:rgba(59,130,246,0.32);--green:#059669;--green-subtle:#ecfdf5;--yellow:#d97706;--yellow-subtle:#fffbeb;--red:#dc2626;--red-subtle:#fef2f2;--neutral-emphasis:#64748b;--neutral-subtle:rgba(241,245,249,0.7)}
+      :root{color-scheme:dark;--bg:#0d1117;--card:#161b22;--canvas-subtle:#161b22;--canvas-inset:#0d1117;--fg:#e6edf3;--fg-strong:#f0f6fc;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-muted:#21262d;--accent:#58a6ff;--accent-emphasis:#79c0ff;--accent-subtle:rgba(56,139,253,0.15);--accent-muted:rgba(56,139,253,0.4);--green:#3fb950;--green-emphasis:#56d364;--green-subtle:rgba(46,160,67,0.15);--green-muted:rgba(46,160,67,0.4);--yellow:#d29922;--yellow-emphasis:#e3b341;--yellow-subtle:rgba(187,128,9,0.15);--yellow-muted:rgba(187,128,9,0.4);--red:#f85149;--red-emphasis:#ff7b72;--red-subtle:rgba(248,81,73,0.15);--red-muted:rgba(248,81,73,0.4);--neutral-emphasis:#8b949e;--neutral-subtle:rgba(110,118,129,0.14)}
+      [data-theme="light"]{color-scheme:light;--bg:#fff;--card:#f6f8fa;--canvas-subtle:#f6f8fa;--canvas-inset:#fff;--fg:#1f2328;--fg-strong:#1f2328;--muted:#656d76;--faint:#8c959f;--border:#d0d7de;--border-muted:#d8dee4;--accent:#0969da;--accent-emphasis:#0550ae;--accent-subtle:#ddf4ff;--accent-muted:rgba(9,105,218,0.32);--green:#1a7f37;--green-emphasis:#116329;--green-subtle:#dafbe1;--green-muted:rgba(26,127,55,0.32);--yellow:#9a6700;--yellow-emphasis:#7d4e00;--yellow-subtle:#fff8c5;--yellow-muted:rgba(154,103,0,0.32);--red:#cf222e;--red-emphasis:#a40e26;--red-subtle:#ffebe9;--red-muted:rgba(207,34,46,0.32);--neutral-emphasis:#656d76;--neutral-subtle:rgba(208,215,222,0.4)}
       *{box-sizing:border-box;margin:0;padding:0}
       body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans','PingFang SC','Microsoft YaHei',sans-serif;padding:24px;background:var(--bg);color:var(--fg);line-height:1.6;font-size:14px;max-width:980px;margin:0 auto}
       h1{font-size:20px;border-bottom:1px solid var(--border);padding-bottom:8px;color:var(--accent);font-weight:700;letter-spacing:-0.01em}
@@ -3329,19 +3340,19 @@
       .evidence-lines{flex:0 0 auto;padding:1px 8px;border-radius:9999px;background:var(--accent-subtle);color:var(--accent);font-size:11px;font-weight:600;white-space:nowrap}
       .evidence-reason{color:var(--fg);font-size:14px;line-height:1.6}
       .risk-item{padding:10px 14px;border:1px solid var(--border);border-left-width:3px;border-radius:8px;background:var(--card);margin-bottom:6px;display:flex;align-items:flex-start;gap:8px}
-      .risk-high{border-left-color:var(--red);background:linear-gradient(90deg,var(--red-subtle) 0%,var(--card) 40%)}
-      .risk-medium{border-left-color:var(--yellow);background:linear-gradient(90deg,var(--yellow-subtle) 0%,var(--card) 40%)}
-      .risk-low{border-left-color:var(--green);background:linear-gradient(90deg,var(--green-subtle) 0%,var(--card) 40%)}
-      .risk-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:700;color:#fff;white-space:nowrap}
-      .risk-badge-high{background:var(--red)}.risk-badge-medium{background:var(--yellow)}.risk-badge-low{background:var(--green)}
+      .risk-high{border-left-color:var(--red);background:linear-gradient(90deg,var(--red-subtle) 0%,var(--card) 28%)}
+      .risk-medium{border-left-color:var(--yellow);background:linear-gradient(90deg,var(--yellow-subtle) 0%,var(--card) 28%)}
+      .risk-low{border-left-color:var(--green);background:linear-gradient(90deg,var(--green-subtle) 0%,var(--card) 28%)}
+      .risk-badge{display:inline-flex;align-items:center;padding:2px 8px;border:1px solid transparent;border-radius:9999px;font-size:12px;font-weight:700;white-space:nowrap}
+      .risk-badge-high{color:var(--red-emphasis);background:var(--red-subtle);border-color:var(--red-muted)}.risk-badge-medium{color:var(--yellow-emphasis);background:var(--yellow-subtle);border-color:var(--yellow-muted)}.risk-badge-low{color:var(--green-emphasis);background:var(--green-subtle);border-color:var(--green-muted)}
       .risk-text{flex:1 1 auto;overflow-wrap:anywhere}
       .change-item{padding:10px 14px;border:1px solid var(--border);border-left-width:3px;border-radius:8px;background:var(--card);margin-bottom:6px}
-      .change-p0{border-left-color:var(--red);background:linear-gradient(90deg,var(--red-subtle) 0%,var(--card) 40%)}
-      .change-p1{border-left-color:var(--accent);background:linear-gradient(90deg,var(--accent-subtle) 0%,var(--card) 40%)}
-      .change-p2{border-left-color:var(--neutral-emphasis);background:linear-gradient(90deg,var(--neutral-subtle) 0%,var(--card) 40%)}
+      .change-p0{border-left-color:var(--red);background:linear-gradient(90deg,var(--red-subtle) 0%,var(--card) 28%)}
+      .change-p1{border-left-color:var(--accent);background:linear-gradient(90deg,var(--accent-subtle) 0%,var(--card) 28%)}
+      .change-p2{border-left-color:var(--neutral-emphasis);background:linear-gradient(90deg,var(--neutral-subtle) 0%,var(--card) 28%)}
       .change-head{display:flex;align-items:flex-start;gap:8px}
-      .change-priority{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:28px;padding:2px 6px;border-radius:4px;font-size:12px;font-weight:700;color:#fff;white-space:nowrap}
-      .change-priority-p0{background:var(--red)}.change-priority-p1{background:var(--accent)}.change-priority-p2{background:var(--neutral-emphasis)}
+      .change-priority{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:28px;padding:2px 6px;border:1px solid transparent;border-radius:4px;font-size:12px;font-weight:700;white-space:nowrap}
+      .change-priority-p0{color:var(--red-emphasis);background:var(--red-subtle);border-color:var(--red-muted)}.change-priority-p1{color:var(--accent-emphasis);background:var(--accent-subtle);border-color:var(--accent-muted)}.change-priority-p2{color:var(--muted);background:var(--neutral-subtle);border-color:var(--border)}
       .change-text{flex:1 1 auto;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
       .change-meta{margin-top:4px;padding-left:36px;color:var(--muted);font-size:12px}
       .change-scope code{background:var(--canvas-subtle);padding:2px 6px;border-radius:4px;font-family:ui-monospace,monospace;font-size:11px;color:var(--accent)}
@@ -3352,8 +3363,8 @@
       .diff-hunk{background:var(--accent-subtle);display:block;padding:4px 8px;color:var(--accent);font-weight:600}
       ul,ol{line-height:1.6;padding-left:20px}
       li{margin-bottom:4px}
-      .review-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:9999px;font-size:12px;font-weight:600;color:#fff}
-      .review-chip.approved{background:var(--green)}.review-chip.revised{background:var(--accent)}.review-chip.unavailable{background:var(--neutral-emphasis)}
+      .review-chip{display:inline-flex;align-items:center;padding:3px 10px;border:1px solid transparent;border-radius:9999px;font-size:12px;font-weight:600}
+      .review-chip.approved{color:var(--green-emphasis);background:var(--green-subtle);border-color:var(--green-muted)}.review-chip.revised{color:var(--accent-emphasis);background:var(--accent-subtle);border-color:var(--accent-muted)}.review-chip.unavailable{color:var(--muted);background:var(--neutral-subtle);border-color:var(--border)}
       .review-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-bottom:12px}
       .review-head>.review-chip{flex-basis:100%}
       .review-meta-item{color:var(--muted);font-size:12px}
@@ -3376,7 +3387,7 @@
 <style>${inlineCss}</style>
 </head>
 <body>
-<button class="theme-toggle" type="button" onclick="var d=document.documentElement;d.setAttribute('data-theme',d.getAttribute('data-theme')==='dark'?'light':'dark');this.textContent=d.getAttribute('data-theme')==='dark'?'Light':'Dark'">Light</button>
+<button class="theme-toggle" type="button" onclick="var d=document.documentElement;d.setAttribute('data-theme',d.getAttribute('data-theme')==='dark'?'light':'dark');this.textContent=d.getAttribute('data-theme')==='dark'?'Light':'Dark';document.dispatchEvent(new CustomEvent('issue-agent:report-theme'))">Light</button>
 <h1>${IA.escapeHtml(title)}</h1>
 <div class="meta">Generated by Issue Agent · ${IA.escapeHtml(generatedAt)}</div>
 <div id="report-root">${buildExportBody(r, sessionData)}</div>
@@ -3403,10 +3414,14 @@
   // C15: HTML 结构已在生成阶段渲染（buildExportBody），这里只负责图表
   // 图表逻辑与 charts.js 保持一致：补丁改动分布 + 证据核对
   if (typeof echarts === 'undefined' || window.__echartsFailed) return;
-  var evCount = (report.evidence || []).length;
-  var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
-  // BRAND 配色（与主应用 charts.js 统一）
-  var C = { blue:'#165DFF', green:'#00B42A', red:'#F53F3F', orange:'#FF7D00', gray:'#86909C', text:'#f1f5f9', textDim:'#94a3b8', line:'#334155', bg:'#0f172a' };
+  function renderExportCharts() {
+    var evCount = (report.evidence || []).length;
+    var filesRead = (session.files_read && session.files_read.length) ? session.files_read : (report.files_examined || []);
+    var light = document.documentElement.getAttribute('data-theme') === 'light';
+    // 与主应用一致的 GitHub 语义色：状态可辨识，但不使用高饱和品牌色块。
+    var C = light
+      ? { blue:'#0969da', green:'#1a7f37', red:'#cf222e', orange:'#9a6700', gray:'#6e7781', text:'#1f2328', textDim:'#656d76', line:'#d0d7de', bg:'#ffffff' }
+      : { blue:'#58a6ff', green:'#3fb950', red:'#f85149', orange:'#d29922', gray:'#8b949e', text:'#e6edf3', textDim:'#8b949e', line:'#30363d', bg:'#161b22' };
 
   function normP(p) {
     var s = String(p || '').split('\\\\').join('/');
@@ -3445,6 +3460,8 @@
   // ── 区块1：补丁改动分布 ──
   var diffEl = document.getElementById('chart-diffstat');
   if (diffEl && diffFiles.length) {
+    var previousDiff = echarts.getInstanceByDom(diffEl);
+    if (previousDiff) previousDiff.dispose();
     var dsRows = diffFiles.slice().sort(function(a, b){ return (a.added + a.removed) - (b.added + b.removed); });
     var MAX_ROWS = 12;
     if (dsRows.length > MAX_ROWS) {
@@ -3482,6 +3499,8 @@
   // ── 区块2：证据核对 ──
   var verifyEl = document.getElementById('chart-verify');
   if (verifyEl && evCount) {
+    var previousVerify = echarts.getInstanceByDom(verifyEl);
+    if (previousVerify) previousVerify.dispose();
     var readList = []; var readSeen = {};
     filesRead.forEach(function(p){ var n = normP(p); if (n && !readSeen[n]) { readSeen[n] = true; readList.push(n); } });
     var hasReadData = readList.length > 0;
@@ -3524,6 +3543,10 @@
     });
   }
 
+  }
+  document.addEventListener('issue-agent:report-theme', renderExportCharts);
+  renderExportCharts();
+
   // 窗口 resize 同步
   window.addEventListener('resize', function(){
     ['chart-diffstat','chart-verify'].forEach(function(id){
@@ -3561,6 +3584,7 @@
   // ── 事件绑定 ────────────────────────────────────────
   function bindEvents() {
     document.getElementById("theme-toggle-btn").addEventListener("click", toggleTheme);
+    document.getElementById("report-theme-btn").addEventListener("click", toggleTheme);
     document.getElementById("toggle-history-btn").addEventListener("click", toggleMobileHistory);
     document.getElementById("analyze-btn").addEventListener("click", analyze);
     document.getElementById("archive-toggle").addEventListener("click", toggleArchiveView);

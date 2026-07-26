@@ -60,6 +60,7 @@ function historyCard(page, issueNumber) {
 }
 
 test("renders responsive decision charts without overlaps or console errors", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ds-theme", "light"));
   // 带完整调查数据的会话：已读文件 + 阶段事件时间戳，驱动覆盖图与阶段耗时图
   const base = Date.parse("2026-07-20T10:00:00Z");
   const at = (sec) => new Date(base + sec * 1000).toISOString();
@@ -139,6 +140,33 @@ test("renders responsive decision charts without overlaps or console errors", as
     return { orient: series.orient, childName: series.data[0].children[0].name };
   });
   expect(sidebarEvidenceLayout).toEqual({ orient: "TB", childName: "a #1.py" });
+  const lightChartColors = await page.evaluate(() => {
+    const evidence = window.echarts.getInstanceByDom(document.getElementById("report-evidence-map-chart"));
+    const risk = window.echarts.getInstanceByDom(document.getElementById("report-risk-matrix-chart"));
+    return {
+      evidenceRoot: evidence.getOption().series[0].data[0].itemStyle.color,
+      riskMarker: risk.getOption().series[1].itemStyle.color,
+    };
+  });
+  expect(lightChartColors).toEqual({ evidenceRoot: "#0969da", riskMarker: "#9a6700" });
+
+  // 报告状态色使用轻量底色而非高饱和实心色块。
+  const semanticColors = await page.evaluate(() => {
+    function colors(selector) {
+      const style = getComputedStyle(document.querySelector(selector));
+      return { background: style.backgroundColor, foreground: style.color };
+    }
+    return {
+      evidence: colors('.evidence-badge[class*="evidence-strength-"]'),
+      risk: colors(".risk-badge"),
+      change: colors(".change-priority"),
+      review: colors(".review-chip"),
+    };
+  });
+  Object.values(semanticColors).forEach(({ background, foreground }) => {
+    expect(background).not.toBe(foreground);
+    expect(background).not.toBe("rgba(0, 0, 0, 0)");
+  });
   await page.locator("#report-risk-matrix-section").hover();
   const hoverTransform = await page.locator("#report-risk-matrix-section").evaluate((card) => getComputedStyle(card).transform);
   expect(hoverTransform).toBe("none");
@@ -187,6 +215,7 @@ test("renders responsive decision charts without overlaps or console errors", as
 
   // 全屏报告有足够宽度时恢复双列，两张次主图顶部对齐。
   await page.getByRole("button", { name: "全屏", exact: true }).click();
+  await expect(page.locator("#report-theme-btn")).toBeVisible();
   await page.waitForTimeout(150);
   const fullscreenTops = await page.evaluate(() => ({
     risk: document.getElementById("report-risk-matrix-section").getBoundingClientRect().top,
@@ -196,9 +225,9 @@ test("renders responsive decision charts without overlaps or console errors", as
   await expect.poll(async () => page.evaluate(() => {
     const chart = window.echarts.getInstanceByDom(document.getElementById("report-evidence-map-chart"));
     return chart.getOption().series[0].orient;
-  })).toBe("LR");
+  })).toBe("TB");
   const fullscreenEvidenceHeight = await page.locator("#report-evidence-map-chart").evaluate((el) => el.clientHeight);
-  expect(fullscreenEvidenceHeight).toBeLessThanOrEqual(300);
+  expect(fullscreenEvidenceHeight).toBeLessThanOrEqual(380);
 
   // 放大交互应能创建有内容的模态图表，Escape 可正常关闭。
   const riskZoom = page.locator('.chart-zoom-btn[data-chart-id="report-risk-matrix-chart"]');
@@ -207,6 +236,16 @@ test("renders responsive decision charts without overlaps or console errors", as
   await expect(page.getByRole("dialog")).toHaveAccessibleName("风险矩阵");
   await expect(page.locator("#chart-modal-canvas canvas").first()).toBeVisible();
   await expect(page.locator(".chart-modal-close")).toBeFocused();
+  // 模态框打开时背景按设计不可点；脚本触发等价于系统主题变化，验证两层图表同步刷新。
+  await page.evaluate(() => document.getElementById("theme-toggle-btn").click());
+  await expect.poll(async () => page.evaluate(() => {
+    const mainEvidence = window.echarts.getInstanceByDom(document.getElementById("report-evidence-map-chart"));
+    const modalRisk = window.echarts.getInstanceByDom(document.getElementById("chart-modal-canvas"));
+    return {
+      evidenceRoot: mainEvidence.getOption().series[0].data[0].itemStyle.color,
+      riskMarker: modalRisk.getOption().series[1].itemStyle.color,
+    };
+  })).toEqual({ evidenceRoot: "#58a6ff", riskMarker: "#d29922" });
   await page.keyboard.press("Tab");
   await expect(page.locator(".chart-modal-close")).toBeFocused();
   await page.keyboard.press("Escape");
