@@ -4778,6 +4778,7 @@ body.modal-open {
 }
 
 .risk-item {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -4786,27 +4787,61 @@ body.modal-open {
   border-left-width: 3px;
   border-radius: var(--radius);
   background: var(--card);
-  transition: border-color var(--dur-fast) var(--ease-standard),
-              transform var(--dur-fast) var(--ease-standard);
+  overflow: hidden;
+  transition: border-color var(--dur-base) var(--ease-out),
+              background var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
 }
 
 .risk-item:hover {
-  transform: translateX(2px);
+  box-shadow: var(--shadow-sm);
 }
 
 .risk-item.risk-high {
   border-left-color: var(--red);
-  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 28%);
+  background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 38%);
 }
 
 .risk-item.risk-medium {
   border-left-color: var(--yellow);
-  background: linear-gradient(90deg, var(--yellow-subtle) 0%, var(--card) 28%);
+  background: linear-gradient(90deg, var(--yellow-subtle) 0%, var(--card) 38%);
 }
 
 .risk-item.risk-low {
   border-left-color: var(--green);
-  background: linear-gradient(90deg, var(--green-subtle) 0%, var(--card) 28%);
+  background: linear-gradient(90deg, var(--green-subtle) 0%, var(--card) 38%);
+}
+
+[data-theme="dark"] .risk-item.risk-high {
+  background: linear-gradient(90deg, rgba(248, 81, 73, 0.1) 0%, var(--card) 42%);
+}
+
+[data-theme="dark"] .risk-item.risk-medium {
+  background: linear-gradient(90deg, rgba(210, 153, 34, 0.09) 0%, var(--card) 42%);
+}
+
+[data-theme="dark"] .risk-item.risk-low {
+  background: linear-gradient(90deg, rgba(63, 185, 80, 0.08) 0%, var(--card) 42%);
+}
+
+@media (hover: hover) {
+  .risk-item.risk-high:hover {
+    border-color: var(--red-muted);
+    border-left-color: var(--red);
+    background: linear-gradient(90deg, var(--red-subtle) 0%, var(--card) 52%);
+  }
+
+  .risk-item.risk-medium:hover {
+    border-color: var(--yellow-muted);
+    border-left-color: var(--yellow);
+    background: linear-gradient(90deg, var(--yellow-subtle) 0%, var(--card) 52%);
+  }
+
+  .risk-item.risk-low:hover {
+    border-color: var(--green-muted);
+    border-left-color: var(--green);
+    background: linear-gradient(90deg, var(--green-subtle) 0%, var(--card) 52%);
+  }
 }
 
 .risk-badge {
@@ -4815,12 +4850,22 @@ body.modal-open {
   flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   border: 1px solid transparent;
   white-space: nowrap;
+}
+
+.risk-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent);
 }
 
 .risk-badge-high {
@@ -5472,13 +5517,13 @@ body.modal-open {
 
 @media (hover: hover) {
   .hero-step:hover {
-    transform: none;
-    border-color: var(--border);
-    box-shadow: var(--shadow-sm);
+    transform: translateY(-3px);
+    border-color: var(--accent-muted);
+    box-shadow: var(--shadow-medium);
   }
 
   .hero-step:hover::before {
-    opacity: 0;
+    opacity: 1;
   }
 
   .hero-example:hover {
@@ -5499,7 +5544,6 @@ body.modal-open {
   .report-conclusion:hover,
   .report-metric-card:hover,
   .evidence-item:hover,
-  .risk-item:hover,
   .change-item:hover {
     transform: none;
     box-shadow: var(--shadow-sm);
@@ -5550,6 +5594,9 @@ body.modal-open {
    确保无障碍用户不受动画干扰 */
 @media (prefers-reduced-motion: reduce) {
   #main.report-open #report-panel,
+  .hero-step,
+  .hero-example,
+  .hero-cta-button,
   .report-metric-card,
   .evidence-item,
   .change-item,

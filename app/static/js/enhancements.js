@@ -570,6 +570,9 @@
       }
       list.innerHTML = html;
       Array.prototype.forEach.call(list.querySelectorAll(".hero-example"), function (btn) {
+        if (IA.Motion && typeof IA.Motion.attachSpotlight === "function") {
+          IA.Motion.attachSpotlight(btn, { intensity: 0.16, size: 320 });
+        }
         btn.addEventListener("click", function () {
           const url = btn.dataset.heroUrl;
           if (!url) return;
