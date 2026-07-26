@@ -128,6 +128,28 @@ test("renders responsive decision charts without overlaps or console errors", as
   await page.locator("#report-risk-matrix-section").hover();
   const hoverTransform = await page.locator("#report-risk-matrix-section").evaluate((card) => getComputedStyle(card).transform);
   expect(hoverTransform).toBe("none");
+  const spotlight = await page.locator("#report-risk-matrix-section").evaluate((card) => ({
+    active: card.dataset.spotlightActive,
+    opacity: getComputedStyle(card).getPropertyValue("--spot-o").trim(),
+    borderLayer: getComputedStyle(card, "::after").backgroundImage,
+    borderLayerZIndex: getComputedStyle(card, "::after").zIndex,
+  }));
+  expect(spotlight.active).toBe("true");
+  expect(Number(spotlight.opacity)).toBeGreaterThan(0.5);
+  expect(spotlight.borderLayer).toContain("radial-gradient");
+  expect(spotlight.borderLayerZIndex).not.toBe("-1");
+
+  // 图表画布保留 ECharts tooltip，同时用 ClickSpark 确认点击已被接收。
+  await page.evaluate(() => {
+    const target = document.getElementById("report-risk-matrix-chart");
+    window.echarts.getInstanceByDom(target).dispatchAction({ type: "showTip", seriesIndex: 1, dataIndex: 0 });
+  });
+  await expect(page.locator(".ia-chart-tooltip").last()).toBeVisible();
+  const riskCanvas = page.locator("#report-risk-matrix-chart canvas").first();
+  await riskCanvas.click({ position: { x: 24, y: 24 } });
+  await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(1);
+  await expect(page.locator(".motion-spark-burst--chart")).toHaveCSS("pointer-events", "none");
+  await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0, { timeout: 1_000 });
 
   // 普通报告侧栏宽度不足时单列排布。
   const sidePanelTops = await page.evaluate(() => ({
@@ -157,6 +179,17 @@ test("renders responsive decision charts without overlaps or console errors", as
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(riskZoom).toBeFocused();
+
+  // 证据树在卡片中保持稳定，在放大模式下开放拖拽和滚轮缩放。
+  const evidenceZoom = page.locator('.chart-zoom-btn[data-chart-id="report-evidence-map-chart"]');
+  await evidenceZoom.click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName("根因证据链");
+  const evidenceModalRoam = await page.evaluate(() => {
+    const target = document.getElementById("chart-modal-canvas");
+    return window.echarts.getInstanceByDom(target).getOption().series[0].roam;
+  });
+  expect(evidenceModalRoam).toBe(true);
+  await page.keyboard.press("Escape");
 
   // CDN 资源加载失败不算应用错误（离线环境降级路径另有兼容）
   const appErrors = consoleErrors.filter((text) => !/net::|Failed to load resource/i.test(text));

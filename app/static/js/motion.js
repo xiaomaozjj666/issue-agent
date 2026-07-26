@@ -456,8 +456,8 @@
   function attachSpotlight(el, opts) {
     if (!el || prefersReducedMotion()) return;
     if (window.matchMedia("(hover: none)").matches) return; // 触屏禁用
-    var defaultIntensity = el.classList.contains("report-chart") ? 0.06 : 0.18;
-    const intensity = (opts && opts.intensity) || defaultIntensity;
+    var defaultIntensity = el.classList.contains("report-chart") ? 1 : 0.18;
+    const intensity = opts && typeof opts.intensity === "number" ? opts.intensity : defaultIntensity;
     const size = (opts && opts.size) || 380;
 
     function onMove(e) {
@@ -468,9 +468,11 @@
       el.style.setProperty("--spot-y", y + "px");
       el.style.setProperty("--spot-o", String(intensity));
       el.style.setProperty("--spot-size", size + "px");
+      el.dataset.spotlightActive = "true";
     }
     function onLeave() {
       el.style.setProperty("--spot-o", "0");
+      delete el.dataset.spotlightActive;
     }
     el.addEventListener("mousemove", onMove);
     el.addEventListener("mouseleave", onLeave);
@@ -735,10 +737,10 @@
 
   // ── 11. ClickSpark：关键动作点击火花 ─────────────────────
   // ReactBits Animations/ClickSpark 复刻（DOM 版，免 canvas）
-  // 仅用于"启动分析"类主 CTA：点击时 8 根短线从点击点向外迸发，
-  // 与 Ripple（面反馈）互补，强调"已触发关键动作"的确认感。
-  // 严格限定选择器范围，避免滥用导致视觉噪音
-  const SPARK_SELECTOR = ".primary-action, .hero-cta-button, .hero-example";
+  // 用于关键 CTA 与图表操作：点击时短线从点击点向外迸发，
+  // 与 Ripple（面反馈）互补，确认操作已被接收。图表使用更克制的 6 线版本，
+  // 且事件层始终 pointer-events:none，不干扰 ECharts 的 tooltip / click / toolbox。
+  const SPARK_SELECTOR = ".primary-action, .hero-cta-button, .hero-example, .report-chart-canvas, .chart-zoom-btn";
   let sparkDelegated = false;
   function initClickSpark() {
     if (sparkDelegated || prefersReducedMotion()) return;
@@ -747,15 +749,17 @@
       if (e.button !== 0 && e.pointerType !== "touch") return;
       const el = e.target.closest(SPARK_SELECTOR);
       if (!el || el.disabled) return;
+      const isChartInteraction = el.matches(".report-chart-canvas, .chart-zoom-btn");
       const burst = document.createElement("span");
-      burst.className = "motion-spark-burst";
+      burst.className = "motion-spark-burst" + (isChartInteraction ? " motion-spark-burst--chart" : "");
       // 固定定位到视口坐标，避免受按钮 overflow:hidden 裁剪
       burst.style.left = e.clientX + "px";
       burst.style.top = e.clientY + "px";
-      for (let i = 0; i < 8; i++) {
+      const rayCount = isChartInteraction ? 6 : 8;
+      for (let i = 0; i < rayCount; i++) {
         const line = document.createElement("span");
         line.className = "motion-spark-line";
-        line.style.setProperty("--spark-angle", (i * 45) + "deg");
+        line.style.setProperty("--spark-angle", (i * (360 / rayCount)) + "deg");
         burst.appendChild(line);
       }
       document.body.appendChild(burst);

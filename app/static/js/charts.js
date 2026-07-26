@@ -985,6 +985,7 @@
       toolbox: toolbox(palette),
       series: [{
         type: "tree",
+        roam: container.classList.contains("chart-modal-canvas"),
         data: treeData,
         orient: "LR",
         left: rootLabelW + horizontalPadding,
