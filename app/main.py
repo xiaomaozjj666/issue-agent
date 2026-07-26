@@ -30,7 +30,7 @@ from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
 from app.build import get_build_id
 from app.circuit_breaker import CircuitBreaker
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.errors import CircuitBreakerOpenError
 from app.events import cancelled_event, error_event, session_event
 from app.github import GitHubError, GitHubRateLimitError, GitHubResourceError
@@ -206,7 +206,7 @@ SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
 CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
 
 
-def resolve_override_settings(req: object) -> object:
+def resolve_override_settings(req: PydanticBaseModel) -> Settings:
     """Fork server settings, applying any per-request overrides from the request body.
 
     The global cached Settings object is never mutated; a deep copy is returned
@@ -228,13 +228,10 @@ def resolve_override_settings(req: object) -> object:
             overrides[field] = value
     if not overrides:
         return settings
-    forked = settings.model_copy(deep=True)
-    for field, value in overrides.items():
-        setattr(forked, field, value)
-    return forked
+    return settings.model_copy(update=overrides, deep=True)
 
 
-def apply_regenerate(session: object, request: object) -> None:
+def apply_regenerate(session: Session, request: ChatRequest) -> None:
     """Regeneration: drop trailing assistant message(s) and point the message at the last user turn.
 
     Mutates the in-memory session so the agent re-answers the most recent user
@@ -250,10 +247,7 @@ def apply_regenerate(session: object, request: object) -> None:
         return
     last_user_content = messages[last_user_idx].get("content", "")
     if last_user_content:
-        try:
-            setattr(request, "message", last_user_content)
-        except Exception:
-            pass
+        request.message = last_user_content
     session.messages = messages[:last_user_idx]
 
 

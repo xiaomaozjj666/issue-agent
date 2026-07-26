@@ -124,6 +124,10 @@
     diffstat_others: "+{n} more files",
     diffstat_no_evidence_hint: "No evidence entry points at this file — confirm manually",
     diffstat_empty: "No patch in this report",
+    chart_table_path: "File path",
+    chart_table_lines: "Lines",
+    chart_table_reason: "Reason",
+    chart_table_module: "Module or file",
     verify_chart_title: "Evidence cross-check",
     verify_chart_caption: "Citations per evidence file, read status, and patch coverage",
     verify_citations: "Citations",
@@ -185,6 +189,7 @@
     chart_risk_matrix_caption: "Severity \u00d7 likelihood \u2014 how urgent is this issue",
     chart_evidence_map_caption: "Root cause and supporting evidence nodes, colored by strength",
     risk_matrix_root_cause: "Root cause",
+    chart_changed_lines: "{count} lines",
     evidence_kind_legend: "Type",
     evidence_strength_legend: "Evidence strength (weak / medium / strong)",
     // #5 修复方案优先级 + 影响范围

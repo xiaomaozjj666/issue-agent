@@ -109,11 +109,14 @@
 
   // ── 公共工具栏：保存图片 + 刷新重绘 + 数据视图 ────────────
   function toolbox(palette) {
+    const mobile = isMobile();
     return {
-      right: 8,
-      top: 0,
+      right: 0,
+      top: 4,
+      itemSize: mobile ? 18 : 16,
+      itemGap: mobile ? 13 : 11,
       feature: {
-        saveAsImage: { title: t("chart_save_image"), pixelRatio: 2, backgroundColor: "transparent" },
+        saveAsImage: { title: t("chart_save_image"), pixelRatio: 2, backgroundColor: palette.bg },
         restore: { title: t("chart_restore") },
         dataView: {
           title: t("chart_data_view"),
@@ -210,6 +213,12 @@
     h = Math.max(lo, Math.min(h, hi));
     container.style.height = h + "px";
     container.style.minHeight = h + "px";
+  }
+
+  function setChartHeight(container, height) {
+    if (!container || container.classList.contains("chart-modal-canvas")) return;
+    container.style.height = height + "px";
+    container.style.minHeight = height + "px";
   }
 
   // ── unified diff 解析：按文件统计增删行数 ────────────────
@@ -648,17 +657,16 @@
     const sevColor = SEVERITY_COLOR[sev] || palette.muted;
     const modules = Object.keys(moduleSet);
     const useBar = modules.length <= 3;
-    const allDefault = modules.every(function (m) { return !moduleChanges[m]; });
 
-    // bar 模式按模块数压缩高度；treemap 模式保持大画布
-    if (useBar) fitChartHeight(container, modules.length, 42, allDefault ? 120 : 150);
+    // 与并排的风险矩阵保持一致高度，避免少量模块时卡片下方留下大块空白。
+    setChartHeight(container, 300);
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
 
     if (useBar) {
       // 少量模块时用横向条形图，避免单一大灰块，同时显示改动行数
       const rows = modules.map(function (mod) {
-        return { name: mod, value: moduleChanges[mod] || 1 };
+        return { name: mod, value: moduleChanges[mod] || 1, changed: moduleChanges[mod] || 0 };
       }).sort(function (a, b) { return b.value - a.value; });
       chart.setOption({
         animationDuration: 200,
@@ -678,7 +686,7 @@
               ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
           },
         }),
-        grid: { left: 90, right: 70, top: 16, bottom: 16 },
+        grid: { left: 12, right: 92, top: 52, bottom: 28, containLabel: true },
         xAxis: {
           type: "value",
           splitLine: { lineStyle: { color: palette.line, opacity: 0.4, type: "dashed" } },
@@ -689,19 +697,23 @@
           data: rows.map(function (r) { return r.name; }),
           axisLine: { show: false },
           axisTick: { show: false },
-          axisLabel: { color: palette.text, fontSize: 12, width: 80, overflow: "truncate" },
+          axisLabel: { color: palette.text, fontSize: 11, width: isMobile() ? 88 : 128, overflow: "truncate" },
         },
         toolbox: toolbox(palette),
         series: [{
           type: "bar",
-          data: rows.map(function (r) { return { value: r.value, name: r.name, itemStyle: { color: sevColor, borderRadius: [0, 3, 3, 0] } }; }),
+          data: rows.map(function (r) { return { value: r.value, name: r.name, changed: r.changed, itemStyle: { color: sevColor, borderRadius: [0, 3, 3, 0] } }; }),
           barMaxWidth: 28,
           label: {
             show: true,
             position: "right",
             color: palette.text,
             fontSize: 12,
-            formatter: function (p) { return p.value + " " + IA.escapeHtml(enumLabel("severity", sev)); },
+            formatter: function (p) {
+              return p.data.changed
+                ? t("chart_changed_lines", { count: p.data.changed })
+                : enumLabel("severity", sev);
+            },
           },
           emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
         }],
@@ -788,6 +800,7 @@
     const issueY = sevLevels.indexOf(sev);
     const markerColor = SEVERITY_COLOR[sev] || palette.muted;
 
+    setChartHeight(container, 300);
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
     chart.setOption({
@@ -806,13 +819,13 @@
             ': <b>' + IA.escapeHtml(enumLabel("likelihood", like)) + "</b></div>";
         },
       }),
-      grid: { left: 8, right: 20, top: 18, bottom: 34, containLabel: true },
+      grid: { left: 16, right: 28, top: 52, bottom: 42, containLabel: true },
       toolbox: toolbox(palette),
       xAxis: {
         type: "category",
         name: t("report_likelihood"),
         nameLocation: "middle",
-        nameGap: 24,
+        nameGap: 28,
         nameTextStyle: { color: palette.textDim, fontSize: 11 },
         data: likeLevels.map(function (l) { return enumLabel("likelihood", l); }),
         axisLine: { lineStyle: { color: palette.line } },
@@ -823,6 +836,8 @@
       yAxis: {
         type: "category",
         name: t("report_severity"),
+        nameLocation: "middle",
+        nameGap: 34,
         nameTextStyle: { color: palette.textDim, fontSize: 11 },
         data: sevLevels.map(function (s) { return enumLabel("severity", s); }),
         axisLine: { lineStyle: { color: palette.line } },
@@ -862,12 +877,14 @@
           },
           label: {
             show: true,
-            position: "right",
+            position: issueX === likeLevels.length - 1 ? "left" : "right",
             distance: 8,
-            formatter: "\u2190 " + t("risk_matrix_root_cause"),
+            formatter: t("risk_matrix_root_cause"),
             color: palette.text,
             fontWeight: 600,
             fontSize: 11,
+            width: 72,
+            overflow: "truncate",
           },
           z: 10,
         },
@@ -895,14 +912,23 @@
     }
     const palette = getPalette();
     const rootCause = String(report.root_cause || t("risk_matrix_root_cause")).trim();
-    // 根据证据数量动态调整标签截断宽度，避免 >6 条时标签拥挤重叠
-    const labelW = evidence.length > 8 ? 100 : evidence.length > 6 ? 120 : 150;
-    const rootMaxLen = evidence.length > 8 ? 22 : evidence.length > 6 ? 28 : 34;
-    const rootLabel = rootCause.length > rootMaxLen ? rootCause.slice(0, rootMaxLen) + "…" : rootCause;
+    const chartWidth = Math.max(320, container.clientWidth || 320);
+    const compact = chartWidth < 480;
+    const rootLabelW = compact ? 112 : Math.max(132, Math.min(280, Math.round(chartWidth * 0.3)));
+    const evidenceLabelW = compact ? 64 : Math.max(108, Math.min(220, Math.round(chartWidth * 0.24)));
+    const horizontalPadding = compact ? 20 : 28;
+    const rootMaxLength = compact ? 42 : chartWidth < 640 ? 68 : 84;
+    const rootLabel = rootCause.length > rootMaxLength ? rootCause.slice(0, rootMaxLength).trimEnd() + "…" : rootCause;
+    setChartHeight(container, Math.max(300, Math.min(500, 160 + evidence.length * 42)));
 
     const children = evidence.map(function (e, i) {
+      const pathParts = String(e.path).split("/");
+      const fileName = pathParts[pathParts.length - 1] || e.path;
+      const nodeLabel = compact
+        ? (e.lines || fileName)
+        : (e.lines ? e.lines + " · " + fileName : fileName);
       return {
-        name: shortName(e.path) + (e.lines ? " " + e.lines : ""),
+        name: nodeLabel,
         idx: i,
         fullPath: e.path,
         lines: e.lines || "",
@@ -919,7 +945,10 @@
         position: "left",
         color: palette.text,
         fontWeight: 700,
-        fontSize: 12,
+        fontSize: 11,
+        lineHeight: 17,
+        width: rootLabelW,
+        overflow: "break",
         backgroundColor: palette.tooltipBg,
         borderColor: palette.line,
         borderWidth: 1,
@@ -958,10 +987,10 @@
         type: "tree",
         data: treeData,
         orient: "LR",
-        left: "26%",
-        right: "24%",
-        top: "6%",
-        bottom: "6%",
+        left: rootLabelW + horizontalPadding,
+        right: evidenceLabelW + horizontalPadding,
+        top: 48,
+        bottom: 24,
         symbol: "circle",
         symbolSize: 13,
         edgeShape: "curve",
@@ -977,7 +1006,7 @@
           color: palette.text,
           fontSize: 11,
           overflow: "truncate",
-          width: labelW,
+          width: evidenceLabelW,
         },
         leaves: {
           label: {
@@ -987,7 +1016,7 @@
             color: palette.text,
             fontSize: 11,
             overflow: "truncate",
-            width: labelW,
+            width: evidenceLabelW,
           },
         },
         emphasis: { focus: "descendant", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },

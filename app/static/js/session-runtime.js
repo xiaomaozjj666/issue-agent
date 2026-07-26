@@ -27,7 +27,7 @@
     // 默认折叠：只显示最后 20 条，超出部分隐藏，点击"展开全部"显示完整轨迹
     const VISIBLE_LIMIT = 20;
     const total = meaningful.length;
-    const buildStepHtml = function (event) {
+    const buildStepHtml = function (event, extra) {
       let label = event.message || event.type;
       if (event.type === "phase" && event.data) {
         // 历史事件的 data.label 存的是英文原文，优先用 phase 枚举的 i18n 文案，
@@ -38,9 +38,8 @@
       }
       if (event.type === "tool_call" && event.data) label = `${t("tool_call_label")}: ${event.data.name}`;
       if (event.type === "review" && event.data) label = t("review_progress", { status: IA.enumLabel("review_status", event.data.status) });
-      return `<div class="timeline-step"><span>${IA.escapeHtml(label)}</span></div>`;
+      return `<div class="timeline-step${extra ? " timeline-step-extra" : ""}"><span>${IA.escapeHtml(label)}</span></div>`;
     };
-    const allStepsHtml = meaningful.map(buildStepHtml).join("");
     const metricHtml = metricItems
       .map(function (item) {
         return `<span class="timeline-metric">${IA.escapeHtml(item)}</span>`;
@@ -48,47 +47,32 @@
       .join("");
     const hasMore = total > VISIBLE_LIMIT;
     const collapsedCount = hasMore ? total - VISIBLE_LIMIT : 0;
+    const visibleEvents = hasMore ? meaningful.slice(collapsedCount) : meaningful;
+    const visibleStepsHtml = visibleEvents.map(function (event) { return buildStepHtml(event, false); }).join("");
+    // 初始不创建折叠项，避免数百个隐藏网格项留下 gap、拖慢布局并推走后续按钮。
+    const extraStepsHtml = hasMore
+      ? meaningful.slice(0, collapsedCount).map(function (event) { return buildStepHtml(event, true); }).join("")
+      : "";
     card.innerHTML =
       `<div class="timeline-header"><span class="timeline-title">${IA.escapeHtml(t("investigation_trail"))}</span>` +
       `<div class="timeline-metrics">${metricHtml}</div></div>` +
-      `<div class="timeline-steps" data-collapsed="${hasMore ? "1" : "0"}">${allStepsHtml}</div>` +
+      `<div class="timeline-steps" data-collapsed="${hasMore ? "1" : "0"}">${visibleStepsHtml}</div>` +
       (hasMore ? `<button type="button" class="timeline-expand-btn" aria-expanded="false">${IA.escapeHtml(t("timeline_expand"))} (${collapsedCount})</button>` : "");
     container.appendChild(card);
-    // 展开/折叠交互：用 max-height + opacity 过渡实现平滑动画
+    // 展开时再创建历史项，收起时移除，保持默认视图轻量且布局稳定。
     if (hasMore) {
       const stepsEl = card.querySelector(".timeline-steps");
       const btn = card.querySelector(".timeline-expand-btn");
       if (btn && stepsEl) {
-        // 初始折叠：前 collapsedCount 个 step 收起
-        const stepEls = stepsEl.querySelectorAll(".timeline-step");
-        const collapsedEls = Array.prototype.slice.call(stepEls, 0, collapsedCount);
-        // 测量单个 step 高度作为折叠基准
-        const stepHeight = stepEls.length ? stepEls[0].offsetHeight + 4 : 28;
-        collapsedEls.forEach(function (el) {
-          el.style.maxHeight = "0px";
-          el.style.opacity = "0";
-          el.style.overflow = "hidden";
-          el.style.margin = "0";
-          el.style.padding = "0";
-          el.style.transition = "max-height 240ms cubic-bezier(0.16,1,0.3,1), opacity 200ms ease-out";
-        });
         btn.addEventListener("click", function () {
           const expanded = btn.getAttribute("aria-expanded") === "true";
           if (expanded) {
-            // 折叠
-            collapsedEls.forEach(function (el) {
-              el.style.maxHeight = "0px";
-              el.style.opacity = "0";
-            });
+            stepsEl.querySelectorAll(".timeline-step-extra").forEach(function (el) { el.remove(); });
             btn.setAttribute("aria-expanded", "false");
             btn.textContent = `${t("timeline_expand")} (${collapsedCount})`;
             stepsEl.dataset.collapsed = "1";
           } else {
-            // 展开
-            collapsedEls.forEach(function (el) {
-              el.style.maxHeight = stepHeight + "px";
-              el.style.opacity = "1";
-            });
+            stepsEl.insertAdjacentHTML("afterbegin", extraStepsHtml);
             btn.setAttribute("aria-expanded", "true");
             btn.textContent = t("timeline_collapse");
             stepsEl.dataset.collapsed = "0";

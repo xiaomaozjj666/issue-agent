@@ -89,6 +89,7 @@ def detect_lang(rep: dict) -> str:
 def infer_kind(path: str) -> str:
     p = (path or "").lower()
     name = p.split("/")[-1].split("\\")[-1]
+    path_parts = {part for part in re.split(r"[/\\]+", p) if part}
     if (
         name.startswith("test_")
         or name.endswith("_test.py")
@@ -100,7 +101,7 @@ def infer_kind(path: str) -> str:
         or "/test/" in p
     ):
         return "test"
-    if p.endswith((".md", ".markdown", ".rst")) or "/docs/" in p or "doc" in p:
+    if p.endswith((".md", ".markdown", ".rst")) or path_parts.intersection({"doc", "docs", "documentation"}):
         return "docs"
     if name.endswith(_CONFIG_EXT) or "/config/" in p or name in ("dockerfile", "makefile"):
         return "config"
@@ -156,7 +157,7 @@ def _severity_for(rep: dict, modules: list[str], fixed_files: set[str]) -> str:
         return "medium"
     # 无补丁时，根据证据类型判断
     kinds = {infer_kind(e.get("path", "")) for e in evidence if isinstance(e, dict)}
-    if kinds <= {"docs", "config"}:
+    if kinds and kinds <= {"docs", "config"}:
         return "low"
     return "medium"
 

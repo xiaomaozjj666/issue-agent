@@ -447,22 +447,70 @@
   function enhanceChartsA11y() {
     const rep = IA.getReport && IA.getReport();
     if (!rep) return;
+    const enumLabel = IA.enumLabel || function (prefix, value) { return value || ""; };
+    // 根因证据链隐藏表
+    const evidenceCanvas = el("report-evidence-map-chart");
+    if (evidenceCanvas && !evidenceCanvas.dataset.a11y) {
+      const evidenceRows = (rep.evidence || []).map(function (e) {
+        return [
+          e.path || "",
+          e.lines || "",
+          enumLabel("kind", e.kind || "code"),
+          enumLabel("strength", e.strength || "moderate"),
+          e.reason || "",
+        ];
+      });
+      addChartTable(
+        evidenceCanvas,
+        t("chart_evidence_map"),
+        [t("chart_table_path"), t("chart_table_lines"), t("evidence_kind_legend"), t("evidence_strength_legend"), t("chart_table_reason")],
+        evidenceRows,
+      );
+    }
+    // 风险矩阵隐藏表
+    const riskCanvas = el("report-risk-matrix-chart");
+    if (riskCanvas && !riskCanvas.dataset.a11y && rep.impact) {
+      addChartTable(
+        riskCanvas,
+        t("chart_risk_matrix"),
+        [t("report_severity"), t("report_likelihood")],
+        [[enumLabel("severity", rep.impact.severity), enumLabel("likelihood", rep.impact.likelihood)]],
+      );
+    }
+    // 波及范围隐藏表
+    const blastCanvas = el("report-blast-radius-chart");
+    if (blastCanvas && !blastCanvas.dataset.a11y && rep.impact) {
+      let modules = (rep.impact.blast_radius || []).slice();
+      if (!modules.length) modules = parsePatchStat(rep.patch).map(function (row) { return row[0]; });
+      const seen = {};
+      const blastRows = modules.filter(function (name) {
+        if (!name || seen[name]) return false;
+        seen[name] = true;
+        return true;
+      }).map(function (name) {
+        return [name, enumLabel("severity", rep.impact.severity)];
+      });
+      addChartTable(blastCanvas, t("chart_blast_radius"), [t("chart_table_module"), t("report_severity")], blastRows);
+    }
     // diffstat 隐藏表
     const diffCanvas = el("report-diffstat-chart");
     if (diffCanvas && !diffCanvas.dataset.a11y) {
-      diffCanvas.dataset.a11y = "1";
       const rows = parsePatchStat(rep.patch);
-      const table = buildSrOnlyTable(t("diffstat_chart_title"), [t("report_evidence"), t("diffstat_added"), t("diffstat_removed")], rows);
-      diffCanvas.parentNode.insertBefore(table, diffCanvas.nextSibling);
+      addChartTable(diffCanvas, t("diffstat_chart_title"), [t("chart_table_path"), t("diffstat_added"), t("diffstat_removed")], rows);
     }
     // verify 隐藏表
     const verifyCanvas = el("report-verify-chart");
     if (verifyCanvas && !verifyCanvas.dataset.a11y) {
-      verifyCanvas.dataset.a11y = "1";
       const ev = (rep.evidence || []).map(function (e) { return [e.path, e.lines || "", e.reason || ""]; });
-      const table = buildSrOnlyTable(t("verify_chart_title"), [t("report_evidence"), "Lines", ""], ev);
-      verifyCanvas.parentNode.insertBefore(table, verifyCanvas.nextSibling);
+      addChartTable(verifyCanvas, t("verify_chart_title"), [t("chart_table_path"), t("chart_table_lines"), t("chart_table_reason")], ev);
     }
+  }
+  function addChartTable(canvas, caption, headers, rows) {
+    canvas.dataset.a11y = "1";
+    const table = buildSrOnlyTable(caption, headers, rows);
+    table.id = canvas.id + "-data";
+    canvas.setAttribute("aria-describedby", table.id);
+    canvas.parentNode.insertBefore(table, canvas.nextSibling);
   }
   function parsePatchStat(patch) {
     if (!patch) return [];
@@ -704,16 +752,23 @@
     pollHealth();
     if (healthTimer) clearInterval(healthTimer);
     healthTimer = setInterval(pollHealth, 15000);
-    // 报告内搜索 / 图表无障碍 / 重新生成：在报告面板可用时挂载
+    // 报告内搜索 / 图表无障碍：报告内容变化或主布局打开报告时挂载。
+    // report-open 类在 #main 上，不在 #report-panel 上。
     const reportPanel = el("report-panel");
-    if (reportPanel) {
-      const ro = new MutationObserver(function () {
-        if (reportPanel.classList.contains("report-open")) {
-          injectReportSearch();
-          enhanceChartsA11y();
-        }
-      });
-      ro.observe(reportPanel, { attributes: true, attributeFilter: ["class"] });
+    const main = el("main");
+    const report = el("report");
+    if (reportPanel && main && report) {
+      const enhanceOpenReport = function () {
+        if (!main.classList.contains("report-open")) return;
+        injectReportSearch();
+        enhanceChartsA11y();
+      };
+      const layoutObserver = new MutationObserver(enhanceOpenReport);
+      layoutObserver.observe(main, { attributes: true, attributeFilter: ["class"] });
+      const reportObserver = new MutationObserver(enhanceOpenReport);
+      reportObserver.observe(report, { childList: true, subtree: true });
+      setupChartA11y();
+      enhanceOpenReport();
     }
     // Hero 真实入口
     setupHeroRecent();

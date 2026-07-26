@@ -1138,6 +1138,7 @@ a:hover {
 
 /* 消息气泡 */
 .msg {
+  flex: 0 0 auto;
   max-width: min(82%, 780px);
   border-radius: var(--radius-lg);
   padding: 12px 16px;
@@ -2182,7 +2183,8 @@ a:hover {
 /* 图表容器 */
 .report-charts-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
+  align-items: start;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
@@ -2196,23 +2198,14 @@ a:hover {
   background: var(--card);
   box-shadow: var(--shadow-sm);
   min-width: 0;
-  /* ReactBits Card Hover 复刻：悬停时边框微亮 + 阴影加深 + 轻微上浮 */
+  /* 数据卡片保持位置稳定，只用边框和阴影反馈悬停。 */
   transition: border-color var(--dur-fast) var(--ease-standard),
-              box-shadow var(--dur-fast) var(--ease-standard),
-              transform var(--dur-fast) var(--ease-standard);
+              box-shadow var(--dur-fast) var(--ease-standard);
 }
 
 .report-chart:hover {
   border-color: var(--accent-muted);
   box-shadow: 0 4px 16px rgba(59, 130, 246, 0.12), var(--shadow-sm);
-  transform: translateY(-2px);
-}
-
-/* 触屏设备禁用 hover 上浮（无悬停态，避免误触闪烁） */
-@media (hover: none) {
-  .report-chart:hover {
-    transform: none;
-  }
 }
 
 
@@ -2276,40 +2269,44 @@ a:hover {
   grid-column: 1 / -1;
 }
 
-/* 主打图（根因证据链）：全行宽、更高画布，视觉焦点 */
-.report-chart-canvas-hero {
-  height: 380px;
-  min-height: 380px;
-}
-
-/* 次要图（补丁改动 + 证据核对）：降低视觉权重 */
+/* 次要图通过背景和标题降级，保持图形、文字与控件的可读性。 */
 .report-chart-minor {
-  opacity: 0.82;
+  border-color: var(--border-muted);
+  background: color-mix(in srgb, var(--card) 94%, var(--bg));
 }
 .report-chart-minor .report-chart-title {
+  color: var(--muted);
   font-size: var(--text-xs);
   font-weight: 500;
 }
-.report-chart-minor .report-chart-canvas-tall {
-  height: 240px;
-  min-height: 240px;
-}
-
-/* 并排双图需要更高画布以容纳文件名标签 */
-.report-chart-canvas-tall {
-  height: 300px;
-  min-height: 300px;
-}
-
 .report-chart-title {
-  margin-bottom: var(--space-2);
+  min-height: 32px;
+  margin-bottom: var(--space-1);
+  padding-right: 40px;
   color: var(--fg-strong);
   font-size: var(--text-sm);
   font-weight: 600;
 }
 
 .report-chart-canvas {
+  position: relative;
   width: 100%;
+  height: 240px;
+  min-height: 240px;
+}
+
+/* 修饰类必须在基础画布规则之后，否则会被 240px 默认值覆盖。 */
+.report-chart-canvas.report-chart-canvas-hero {
+  height: 360px;
+  min-height: 360px;
+}
+
+.report-chart-canvas.report-chart-canvas-tall {
+  height: 300px;
+  min-height: 300px;
+}
+
+.report-chart-minor .report-chart-canvas.report-chart-canvas-tall {
   height: 240px;
   min-height: 240px;
 }
@@ -2321,9 +2318,13 @@ a:hover {
   line-height: 1.5;
 }
 
-/* 窄屏：图表垂直堆叠（断点提高至 1400px，避免 1181-1366px 区间两图各 314px 严重挤压） */
-@media (max-width: 1400px) {
-  .report-charts-row {
+/* 只有全屏报告有足够宽度并排；侧栏/分屏报告始终单列。 */
+#report-panel.fullscreen .report-charts-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 760px) {
+  #report-panel.fullscreen .report-charts-row {
     grid-template-columns: 1fr;
   }
 }
@@ -3856,13 +3857,14 @@ dialog::backdrop {
 }
 
 /* ============================================================
-   滚动平滑 + 空状态 CTA
+   稳定滚动 + 空状态 CTA
    ============================================================ */
 
 #messages,
 #history-list,
 #report {
-  scroll-behavior: smooth;
+  /* 需要动画的导航由 JS 显式指定 smooth；默认保持即时，避免焦点/点击自动滚动时坐标漂移。 */
+  scroll-behavior: auto;
 }
 
 /* 历史列表空状态：引导用户开始第一次分析 */
@@ -4292,18 +4294,18 @@ dialog::backdrop {
 /* ── #17 图表放大按钮 ───────────────────────────────────── */
 .chart-zoom-btn {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 10px;
+  right: 10px;
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--card) 85%, transparent);
   color: var(--muted);
   cursor: pointer;
-  opacity: 0.4;
+  opacity: 0.72;
   z-index: 2;
   backdrop-filter: blur(4px);
   transition: opacity var(--dur-fast) var(--ease-standard),
@@ -4320,22 +4322,9 @@ dialog::backdrop {
   border-color: var(--accent-muted);
 }
 
-/* removed old hover-only visibility */
-.chart-zoom-btn-old-hover {
-  background: var(--accent-subtle);
-  color: var(--accent);
-  border-color: var(--accent-muted);
-}
-
 .chart-zoom-btn svg {
-  width: 12px;
-  height: 12px;
-}
-
-/* 确保图表容器是定位上下文 */
-#report-diffstat-chart,
-#report-verify-chart {
-  position: relative;
+  width: 14px;
+  height: 14px;
 }
 
 /* ── #17 图表放大模态框 ─────────────────────────────────── */
@@ -4388,6 +4377,7 @@ dialog::backdrop {
   color: var(--fg-strong);
   font-size: var(--text-md);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .chart-modal-close {
@@ -4442,11 +4432,33 @@ body.modal-open {
 }
 
 @media (max-width: 640px) {
+  .report-chart-title {
+    min-height: 40px;
+    padding-right: 48px;
+  }
+  .chart-zoom-btn {
+    width: 40px;
+    height: 40px;
+    opacity: 0.82;
+  }
+  .chart-modal {
+    padding: var(--space-2);
+  }
   .chart-modal-content {
-    max-height: calc(100vh - 32px);
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+  .chart-modal-header {
+    padding: var(--space-3);
+  }
+  .chart-modal-close {
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
   }
   .chart-modal-canvas {
     height: 60vh;
+    height: 60dvh;
     min-height: 280px;
   }
 }

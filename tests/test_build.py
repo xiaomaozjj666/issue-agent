@@ -3,7 +3,7 @@ from pathlib import Path
 from app.build import calculate_build_id
 
 
-def test_build_id_is_stable_and_tracks_web_asset_changes(tmp_path: Path) -> None:
+def test_build_id_is_stable_and_tracks_runtime_and_web_changes(tmp_path: Path) -> None:
     app_dir = tmp_path / "app"
     static_dir = app_dir / "static"
     static_dir.mkdir(parents=True)
@@ -20,5 +20,9 @@ def test_build_id_is_stable_and_tracks_web_asset_changes(tmp_path: Path) -> None
     ignored.write_text("still ignored\n", encoding="utf-8")
     assert calculate_build_id(app_dir) == first
 
+    source.write_text("VERSION = 2\n", encoding="utf-8")
+    after_source_change = calculate_build_id(app_dir)
+    assert after_source_change != first
+
     asset.write_text("window.ready = false;\n", encoding="utf-8")
-    assert calculate_build_id(app_dir) != first
+    assert calculate_build_id(app_dir) != after_source_change
