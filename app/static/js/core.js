@@ -175,6 +175,18 @@
     chart_data_view: "View data",
     chart_data_view_refresh: "Refresh",
     report_evidence_chart_empty: "No code evidence yet",
+    // ── 高价值决策图表 i18n 兜底 ─────────────────────────────
+    chart_risk_matrix: "Risk matrix",
+    chart_evidence_map: "Root-cause evidence map",
+    chart_blast_radius: "Blast radius",
+    chart_risk_matrix_empty: "Missing severity or likelihood assessment",
+    chart_evidence_map_empty: "No supporting evidence yet",
+    chart_blast_radius_empty: "No clear blast radius",
+    chart_risk_matrix_caption: "Severity \u00d7 likelihood \u2014 how urgent is this issue",
+    chart_evidence_map_caption: "Root cause and supporting evidence nodes, colored by strength",
+    risk_matrix_root_cause: "Root cause",
+    evidence_kind_legend: "Type",
+    evidence_strength_legend: "Evidence strength (weak / medium / strong)",
     // #5 修复方案优先级 + 影响范围
     change_scope: "Affected",
     change_priority_p0_desc: "P0 — must fix (security/crash/data loss)",
