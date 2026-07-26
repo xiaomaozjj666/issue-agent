@@ -18,3 +18,4 @@ dist/
 reports/
 data/
 *.tmp_*.json
+_ui_charts_*.png
