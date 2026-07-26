@@ -85,14 +85,21 @@ test("renders responsive decision charts without overlaps or console errors", as
   });
 
   await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveAccessibleName("Issue 溯源・自动生成修复补丁");
   const heroStep = page.locator(".hero-step").first();
   await heroStep.hover();
-  await expect(heroStep).toHaveCSS("transform", "none");
-  expect(await heroStep.getAttribute("data-spotlight-active")).toBeNull();
+  await expect(heroStep).not.toHaveCSS("transform", "none");
+  await expect(heroStep).toHaveAttribute("data-spotlight-active", "true");
+  const heroSpotlight = await heroStep.evaluate((card) => getComputedStyle(card).getPropertyValue("--spot-o").trim());
+  expect(Number(heroSpotlight)).toBeGreaterThanOrEqual(0.18);
   const heroExample = page.locator(".hero-example").first();
   await heroExample.hover();
-  expect(await heroExample.getAttribute("data-spotlight-active")).toBeNull();
+  await expect(heroExample).toHaveAttribute("data-spotlight-active", "true");
   await expect(heroExample).not.toHaveCSS("transform", "none");
+  const heroCta = page.getByRole("button", { name: "开始排查", exact: true });
+  const heroCtaBox = await heroCta.boundingBox();
+  await heroCta.hover({ position: { x: heroCtaBox.width - 4, y: heroCtaBox.height / 2 } });
+  await expect.poll(() => heroCta.evaluate((button) => button.style.transform)).not.toBe("");
   await historyCard(page, 1).click();
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
@@ -146,9 +153,24 @@ test("renders responsive decision charts without overlaps or console errors", as
     return {
       evidenceRoot: evidence.getOption().series[0].data[0].itemStyle.color,
       riskMarker: risk.getOption().series[1].itemStyle.color,
+      riskLow: risk.getOption().series[0].data[0].color,
+      riskHigh: risk.getOption().series[0].data[7].color,
+      riskCritical: risk.getOption().series[0].data[11].color,
+      riskRendererSilent: risk.getOption().series[0].silent,
+      riskHitLayer: risk.getOption().series[2].name,
+      riskCriticalHover: risk.getOption().series[2].data[11].emphasis.itemStyle.color,
     };
   });
-  expect(lightChartColors).toEqual({ evidenceRoot: "#0969da", riskMarker: "#9a6700" });
+  expect(lightChartColors).toEqual({
+    evidenceRoot: "#0969da",
+    riskMarker: "#bc6b00",
+    riskLow: "#dafbe1",
+    riskHigh: "#ffebc8",
+    riskCritical: "#ffebe9",
+    riskRendererSilent: true,
+    riskHitLayer: "risk-cell-hit-area",
+    riskCriticalHover: "#ffcecb",
+  });
 
   // 报告状态色使用轻量底色而非高饱和实心色块。
   const semanticColors = await page.evaluate(() => {
@@ -167,6 +189,15 @@ test("renders responsive decision charts without overlaps or console errors", as
     expect(background).not.toBe(foreground);
     expect(background).not.toBe("rgba(0, 0, 0, 0)");
   });
+  const riskItem = page.locator(".risk-item").first();
+  await riskItem.hover();
+  await expect(riskItem).not.toHaveCSS("box-shadow", "none");
+  const riskDot = await riskItem.locator(".risk-badge").evaluate((badge) => ({
+    width: getComputedStyle(badge, "::before").width,
+    color: getComputedStyle(badge, "::before").backgroundColor,
+  }));
+  expect(riskDot.width).toBe("6px");
+  expect(riskDot.color).not.toBe("rgba(0, 0, 0, 0)");
   await page.locator("#report-risk-matrix-section").hover();
   const hoverTransform = await page.locator("#report-risk-matrix-section").evaluate((card) => getComputedStyle(card).transform);
   expect(hoverTransform).toBe("none");
@@ -196,12 +227,16 @@ test("renders responsive decision charts without overlaps or console errors", as
   });
 
   // 图表画布保留 ECharts tooltip，点击反馈不再叠加装饰性火花。
-  await page.evaluate(() => {
+  const criticalCellPoint = await page.evaluate(() => {
     const target = document.getElementById("report-risk-matrix-chart");
-    window.echarts.getInstanceByDom(target).dispatchAction({ type: "showTip", seriesIndex: 1, dataIndex: 0 });
+    return window.echarts.getInstanceByDom(target).convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [2, 3]);
   });
-  await expect(page.locator(".ia-chart-tooltip").last()).toBeVisible();
   const riskCanvas = page.locator("#report-risk-matrix-chart canvas").first();
+  await riskCanvas.scrollIntoViewIfNeeded();
+  const riskCanvasBox = await riskCanvas.boundingBox();
+  await page.mouse.move(riskCanvasBox.x + criticalCellPoint[0], riskCanvasBox.y + criticalCellPoint[1]);
+  const criticalTooltip = page.locator(".ia-chart-tooltip", { hasText: "严重 × 高" });
+  await expect(criticalTooltip).toBeVisible();
   await riskCanvas.click({ position: { x: 24, y: 24 } });
   await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0);
   await expect(page.locator(".motion-ripple")).toHaveCount(0);
@@ -244,8 +279,17 @@ test("renders responsive decision charts without overlaps or console errors", as
     return {
       evidenceRoot: mainEvidence.getOption().series[0].data[0].itemStyle.color,
       riskMarker: modalRisk.getOption().series[1].itemStyle.color,
+      riskLow: modalRisk.getOption().series[0].data[0].color,
+      riskCritical: modalRisk.getOption().series[0].data[11].color,
+      riskCriticalHover: modalRisk.getOption().series[2].data[11].emphasis.itemStyle.color,
     };
-  })).toEqual({ evidenceRoot: "#58a6ff", riskMarker: "#d29922" });
+  })).toEqual({
+    evidenceRoot: "#58a6ff",
+    riskMarker: "#db6d28",
+    riskLow: "#183c24",
+    riskCritical: "#442129",
+    riskCriticalHover: "#5e2731",
+  });
   await page.keyboard.press("Tab");
   await expect(page.locator(".chart-modal-close")).toBeFocused();
   await page.keyboard.press("Escape");
