@@ -368,11 +368,13 @@ class SqliteStore:
         async with self._conn() as db:
             rows = await (
                 await db.execute(
-                    f"SELECT * FROM sessions {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    "SELECT session_id, issue_url, issue_json, display_title, status, phase, version, "
+                    "metrics_json, cancel_requested, error_message, archived_at, created_at, updated_at "
+                    f"FROM sessions {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
                     params,
                 )
             ).fetchall()
-        return [_row_to_session(row) for row in rows]
+        return [_row_to_summary_session(row) for row in rows]
 
     async def delete(self, session_id: str) -> bool:
         async with self._conn() as db:
@@ -557,6 +559,43 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
     s.files_read = _safe_parse("files_read", row["files_read_json"], json.loads) or []
     s.report = _safe_parse("report", row["report_json"], AnalysisReport.model_validate_json)
     return s
+
+
+def _row_to_summary_session(row: aiosqlite.Row) -> Session:
+    """Deserialize only fields required by SessionSummary list responses.
+
+    Large tree, message, file-cache and report JSON columns are deliberately not
+    selected or parsed here. Detail endpoints continue to use _row_to_session.
+    """
+    now = _now()
+    raw_status = row["status"] or "queued"
+    status = (
+        cast(SessionStatus, raw_status)
+        if raw_status in {"queued", "running", "completed", "failed", "cancelled"}
+        else "queued"
+    )
+    session = Session(
+        session_id=row["session_id"],
+        issue_url=row["issue_url"],
+        display_title=row["display_title"],
+        status=status,
+        phase=row["phase"] or "queued",
+        version=row["version"] or 0,
+        cancel_requested=bool(row["cancel_requested"]),
+        error_message=row["error_message"],
+        archived_at=row["archived_at"],
+        created_at=row["created_at"] or now,
+        updated_at=row["updated_at"] or now,
+    )
+    try:
+        session.metrics = json.loads(row["metrics_json"]) if row["metrics_json"] else {}
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Failed to parse metrics for session %s", session.session_id)
+    try:
+        session.issue = IssueData.model_validate_json(row["issue_json"]) if row["issue_json"] else None
+    except (ValueError, TypeError) as error:
+        logger.warning("Failed to parse issue for session %s: %s", session.session_id, error)
+    return session
 
 
 def _now() -> str:

@@ -6,12 +6,11 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%235da9ff'/%3E%3Cpath d='M9 9h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/css/primer.css?v={{ build_id }}">
 <link rel="stylesheet" href="/static/css/enhancements.css?v={{ build_id }}">
+<meta name="issue-agent-build" content="{{ build_id }}">
 <title>GitHub Issue Agent</title>
 <script id="i18n-payload" type="application/json">{{ frontend_strings | tojson }}</script>
-<script src="/static/vendor/echarts.min.js?v={{ build_id }}" onerror="window.__echartsFailed=true"></script>
 <script src="/static/vendor/marked.min.js?v={{ build_id }}" onerror="window.__markedFailed=true"></script>
 <script src="/static/vendor/purify.min.js?v={{ build_id }}" onerror="window.__domPurifyFailed=true"></script>
-<script src="/static/vendor/highlight.min.js?v={{ build_id }}" onerror="window.__hljsFailed=true"></script>
 </head>
 <body>
 <div id="sidebar">

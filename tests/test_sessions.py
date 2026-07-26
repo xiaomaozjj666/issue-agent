@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from app.db import get_db
+from app.models import IssueData
 from app.sessions import Session, SessionConflictError, SessionManager
 
 
@@ -86,6 +87,35 @@ async def test_sqlite_persists_event_history_and_metrics(tmp_path) -> None:
     assert restored.metrics == {"model_calls": 2, "tool_calls": 1}
     assert events[0]["type"] == "phase"
     assert events[0]["data"]["label"] == "Exploring"
+    await manager.close()
+
+
+async def test_sqlite_list_uses_lightweight_summary_projection(tmp_path) -> None:
+    manager = SessionManager(db_path=str(tmp_path / "sessions.db"))
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Large session",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+    )
+    session.tree = [f"src/file-{index}.py" for index in range(1000)]
+    session.messages = [{"role": "assistant", "content": "x" * 10000}]
+    session.file_cache = {"src/large.py": "x" * 10000}
+    session.metrics = {"tool_calls": 9}
+    await manager.save(session)
+
+    listed = (await manager.list())[0]
+
+    assert listed.issue is not None and listed.issue.title == "Large session"
+    assert listed.metrics == {"tool_calls": 9}
+    assert listed.tree == []
+    assert listed.messages == []
+    assert listed.file_cache == {}
     await manager.close()
 
 

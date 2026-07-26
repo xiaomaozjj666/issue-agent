@@ -1,6 +1,39 @@
 (function () {
   "use strict";
 
+  const BUILD_ID = (document.querySelector('meta[name="issue-agent-build"]') || {}).content || "";
+  const VENDOR_ASSETS = {
+    echarts: { path: "/static/vendor/echarts.min.js", global: "echarts", failure: "__echartsFailed" },
+    highlight: { path: "/static/vendor/highlight.min.js", global: "hljs", failure: "__hljsFailed" },
+  };
+  const vendorLoads = Object.create(null);
+
+  // 大型可选依赖只在首次使用时加载。Promise 按名称复用，避免多个图表/代码块重复发起请求。
+  function ensureVendor(name) {
+    const asset = VENDOR_ASSETS[name];
+    if (!asset) return Promise.resolve(false);
+    if (window[asset.global]) return Promise.resolve(true);
+    if (vendorLoads[name]) return vendorLoads[name];
+
+    vendorLoads[name] = new Promise(function (resolve) {
+      const script = document.createElement("script");
+      script.async = true;
+      script.src = asset.path + (BUILD_ID ? "?v=" + encodeURIComponent(BUILD_ID) : "");
+      script.dataset.vendor = name;
+      script.onload = function () {
+        const loaded = Boolean(window[asset.global]);
+        window[asset.failure] = !loaded;
+        resolve(loaded);
+      };
+      script.onerror = function () {
+        window[asset.failure] = true;
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+    return vendorLoads[name];
+  }
+
   const I18N_DEFAULTS = {
     doc_title: "GitHub Issue Agent",
     brand_title: "Issue Agent",
@@ -593,6 +626,7 @@
     renderSideBySideDiff,
     buildGitHubUrl,
     parseSseEvents,
+    ensureVendor,
     jumpToEvidence,
     jumpToSection,
   };

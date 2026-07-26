@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
+from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -24,7 +25,8 @@ from fastapi.templating import Jinja2Templates
 from openai import APIError
 from pydantic import BaseModel as PydanticBaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import ASGIApp, Scope
 
 from app.agent import IssueAgent, ModelResponseError
 from app.auth import AuthMiddleware
@@ -84,6 +86,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     _app.state.circuit_breaker = breaker
 
+    async def recover_stale_sessions() -> None:
+        cutoff = datetime.now(UTC) - timedelta(seconds=settings.session_stale_after_seconds)
+        recovered = await manager.recover_stale(cutoff.isoformat(timespec="seconds"))
+        if recovered:
+            logger.warning("Recovered %d stale running session(s)", recovered)
+
+    # 启动时恢复一次，后续由低频后台任务负责，避免每次历史列表 GET 都写 SQLite。
+    try:
+        await recover_stale_sessions()
+    except Exception:
+        logger.warning("Stale session recovery on startup failed; continuing", exc_info=True)
+
     # Purge old completed/failed sessions on startup
     try:
         purged = await manager.purge_old_sessions(settings.session_retention_days)
@@ -106,6 +120,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     purge_task = asyncio.create_task(periodic_purge())
 
+    async def periodic_stale_recovery() -> None:
+        interval = max(30, min(300, settings.session_stale_after_seconds // 2))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await recover_stale_sessions()
+            except Exception:
+                logger.warning("Periodic stale session recovery failed; will retry", exc_info=True)
+
+    stale_recovery_task = asyncio.create_task(periodic_stale_recovery())
+
     # 批量分析任务队列：纯 asyncio 实现，无需外部 broker
     task_queue = TaskQueue(
         settings,
@@ -120,8 +145,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         purge_task.cancel()
+        stale_recovery_task.cancel()
         with suppress(asyncio.CancelledError):
             await purge_task
+        with suppress(asyncio.CancelledError):
+            await stale_recovery_task
         _app.state.task_queue = None
         await task_queue.stop()
         _app.state.session_manager = None
@@ -182,11 +210,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# 中间件执行顺序：后添加的先执行（洋葱模型外层）。
-# AuthMiddleware 后添加 → 先执行，确保未认证请求在限流前被 401 拒绝，
-# 避免攻击者通过大量未认证请求耗尽合法用户的限流配额。
+# 中间件执行顺序：后添加的先执行（洋葱模型外层）。GZip 只包装响应；
+# 请求随后先经过 Auth，确保未认证请求不会消耗合法用户的限流配额。
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
 
 def get_session_manager(request: Request) -> SessionManager:
@@ -254,8 +282,24 @@ def apply_regenerate(session: Session, request: ChatRequest) -> None:
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR)) if _TEMPLATES_DIR.exists() else None
+
+
+class VersionedStaticFiles(StaticFiles):
+    """Static files with immutable caching for build-versioned asset URLs."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            query = parse_qs(scope.get("query_string", b"").decode("ascii", errors="ignore"))
+            if query.get("v") == [get_build_id()]:
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+        return response
+
+
 if _STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    app.mount("/static", VersionedStaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.exception_handler(SessionConflictError)
@@ -536,10 +580,6 @@ async def list_sessions(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> list[SessionSummary]:
-    cutoff = datetime.now(UTC) - timedelta(seconds=get_settings().session_stale_after_seconds)
-    recovered = await manager.recover_stale(cutoff.isoformat(timespec="seconds"))
-    if recovered:
-        logger.warning("Recovered %d stale running session(s)", recovered)
     sessions = await manager.list(
         archived=archived,
         query=q,
