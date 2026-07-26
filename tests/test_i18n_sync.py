@@ -119,6 +119,12 @@ _ENUM_DOMAINS: dict[str, set[str]] = {
     "review_status": {"approved", "revised", "rejected", "unavailable"},
     "confidence": {"high", "medium", "low"},
     "risk_severity": {"high", "medium", "low"},
+    # 报告说服力增强（高级调查员路线）新增的 enumLabel 前缀
+    "hypothesis": {"accepted", "rejected", "open"},
+    "severity": {"low", "medium", "high", "critical"},
+    "likelihood": {"low", "medium", "high"},
+    "strength": {"weak", "moderate", "strong"},
+    "kind": {"code", "log", "test", "config", "docs"},
 }
 
 
