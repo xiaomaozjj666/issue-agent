@@ -206,6 +206,57 @@ SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
 CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
 
 
+def resolve_override_settings(req: object) -> object:
+    """Fork server settings, applying any per-request overrides from the request body.
+
+    The global cached Settings object is never mutated; a deep copy is returned
+    with language/model/thinking/reasoning_effort/review overridden when the
+    request provides them. Falls back to the original settings when nothing is set.
+    """
+    settings = get_settings()
+    overrides: dict[str, object] = {}
+    mapping = (
+        ("language", "language"),
+        ("model", "openai_model"),
+        ("thinking", "openai_thinking"),
+        ("reasoning_effort", "openai_reasoning_effort"),
+        ("review", "independent_review"),
+    )
+    for attr, field in mapping:
+        value = getattr(req, attr, None)
+        if value is not None:
+            overrides[field] = value
+    if not overrides:
+        return settings
+    forked = settings.model_copy(deep=True)
+    for field, value in overrides.items():
+        setattr(forked, field, value)
+    return forked
+
+
+def apply_regenerate(session: object, request: object) -> None:
+    """Regeneration: drop trailing assistant message(s) and point the message at the last user turn.
+
+    Mutates the in-memory session so the agent re-answers the most recent user
+    question without the previous (discarded) assistant reply in its history.
+    """
+    messages = getattr(session, "messages", None) or []
+    last_user_idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], dict) and messages[i].get("role") == "user":
+            last_user_idx = i
+            break
+    if last_user_idx is None:
+        return
+    last_user_content = messages[last_user_idx].get("content", "")
+    if last_user_content:
+        try:
+            setattr(request, "message", last_user_content)
+        except Exception:
+            pass
+    session.messages = messages[:last_user_idx]
+
+
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR)) if _TEMPLATES_DIR.exists() else None
@@ -230,9 +281,15 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "app": "issue-agent", "build_id": get_build_id()}
 
 
+@app.get("/i18n")
+async def get_i18n(lang: str = Query(default="zh", pattern=r"^(zh|en)$")) -> dict:
+    """返回指定语言的全部前端字符串，供应用内语言切换热更新（无需刷新/重启）。"""
+    return get_frontend_strings(lang)
+
+
 @app.post("/analyze", response_model=AnalysisReport)
 async def analyze(request: AnalyzeRequest, breaker: CircuitBreakerDep) -> AnalysisReport:
-    agent = IssueAgent(get_settings(), circuit_breaker=breaker)
+    agent = IssueAgent(resolve_override_settings(request), circuit_breaker=breaker)
     try:
         return await agent.investigate(str(request.issue_url))
     except ValueError as error:
@@ -256,7 +313,7 @@ async def analyze(request: AnalyzeRequest, breaker: CircuitBreakerDep) -> Analys
 async def stream_analysis(
     request: StreamRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep
 ) -> StreamingResponse:
-    settings = get_settings()
+    settings = resolve_override_settings(request)
     agent = IssueAgent(settings, circuit_breaker=breaker)
 
     async def event_generator() -> AsyncIterator[str]:
@@ -350,7 +407,7 @@ async def stream_analysis(
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep) -> ChatResponse:
-    agent = IssueAgent(get_settings(), circuit_breaker=breaker)
+    agent = IssueAgent(resolve_override_settings(request), circuit_breaker=breaker)
     session: Session | None = None
     try:
         if request.session_id:
@@ -364,6 +421,8 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBr
                 session.phase = "chatting"
                 session.error_message = None
                 await session_mgr.save(session)
+            if request.regenerate:
+                apply_regenerate(session, request)
             result = await agent.chat(session, request.message)
             async with session.lock:
                 session.status = "completed"
@@ -433,7 +492,7 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
     if session.archived_at is not None:
         raise HTTPException(status_code=409, detail="Restore the archived session before continuing")
 
-    agent = IssueAgent(get_settings(), circuit_breaker=breaker)
+    agent = IssueAgent(resolve_override_settings(request), circuit_breaker=breaker)
     async with session.lock:
         session.status = "running"
         session.phase = "chatting"
@@ -443,6 +502,8 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
     async def event_generator() -> AsyncIterator[str]:
         started_at = monotonic()
         try:
+            if request.regenerate:
+                apply_regenerate(session, request)
             async for event in agent.chat_stream(session, request.message):
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
