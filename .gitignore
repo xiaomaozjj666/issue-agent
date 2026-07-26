@@ -20,3 +20,5 @@ data/
 .qoder/
 *.tmp_*.json
 _ui_charts_*.png
+.coverage
+github_issue_agent.egg-info/
