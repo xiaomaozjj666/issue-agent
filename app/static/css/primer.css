@@ -1943,6 +1943,12 @@ a:hover {
 
 #main.report-open #report-panel {
   display: flex;
+  animation: report-panel-in var(--dur-base) var(--ease-out);
+}
+
+@keyframes report-panel-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .report-header {
@@ -5418,63 +5424,110 @@ body.modal-open {
   );
 }
 
-/* ── ReactBits GlareHover：悬停斜向光泽扫过 ────────────── */
-/* 悬停时一道斜向高光从左扫到右，强化"可点击"暗示；
-   离开时无过渡直接复位，避免反向回扫的怪异感 */
+/* ── 统一交互反馈 ──────────────────────────────────────── */
+/* 工作台只让可操作元素产生位移；静态内容通过边框和底色表达层级。 */
+.icon-button:hover,
+.theme-toggle:hover,
+.mobile-history-toggle:hover,
+.back-button:hover:not(:disabled),
+.session-action:hover,
+.icon-button:active,
+.theme-toggle:active,
+.session-action:active,
+.msg-action-btn:active {
+  transform: none;
+}
+
+.hero-step,
 .hero-example,
-.hero-cta-button {
-  position: relative;
-  overflow: hidden;
+.hero-cta-button,
+.session-row,
+.msg.tool,
+.report-conclusion,
+.report-metric-card,
+.report-chart,
+.evidence-item,
+.risk-item,
+.change-item {
+  transition-duration: var(--dur-base);
+  transition-timing-function: var(--ease-out);
 }
 
-.hero-example::before,
-.hero-cta-button::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -75%;
-  width: 50%;
-  background: linear-gradient(
-    105deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.12) 50%,
-    transparent 100%
-  );
-  transform: skewX(-18deg);
-  pointer-events: none;
-  z-index: 3;
+@media (hover: hover) {
+  .hero-step:hover {
+    transform: none;
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .hero-step:hover::before {
+    opacity: 0;
+  }
+
+  .hero-example:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent-muted);
+    background: var(--accent-subtle);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .hero-cta-button:hover,
+  .primary-action:hover,
+  #input-bar button:hover {
+    transform: translateY(-1px);
+  }
+
+  .session-row:not(.active):hover,
+  .msg.tool:hover,
+  .report-conclusion:hover,
+  .report-metric-card:hover,
+  .evidence-item:hover,
+  .risk-item:hover,
+  .change-item:hover {
+    transform: none;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .report-conclusion:hover {
+    border-color: var(--accent-muted);
+  }
+
+  .report-metric-card:hover {
+    border-color: var(--accent-muted);
+    background: var(--canvas-inset);
+  }
+
+  .report-chart:hover {
+    border-color: var(--accent-muted);
+    box-shadow: var(--shadow-sm);
+  }
 }
 
-/* CTA 绿色实底可承受更亮的高光 */
-.hero-cta-button::before {
-  background: linear-gradient(
-    105deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.3) 50%,
-    transparent 100%
-  );
+.hero-example-cta {
+  opacity: 0.72;
+  transform: none;
 }
 
-.hero-example:hover::before,
-.hero-cta-button:hover::before {
-  left: 125%;
-  transition: left 600ms cubic-bezier(0.16, 1, 0.3, 1);
+.report-conclusion-copy {
+  opacity: 0.72;
+  transform: none;
 }
 
-/* 浅色主题下示例卡浅底改用 accent 淡色高光带 */
-[data-theme="light"] .hero-example::before {
-  background: linear-gradient(
-    105deg,
-    transparent 0%,
-    rgba(59, 130, 246, 0.1) 50%,
-    transparent 100%
-  );
+.report-conclusion:hover .report-conclusion-copy,
+.report-conclusion-copy:hover,
+.hero-example:hover .hero-example-cta {
+  opacity: 1;
+  transform: none;
+}
+
+.report-metric-card {
+  transform-style: flat;
 }
 
 /* prefers-reduced-motion：禁用所有 motion.js 动效，
    确保无障碍用户不受动画干扰 */
 @media (prefers-reduced-motion: reduce) {
+  #main.report-open #report-panel,
   .report-metric-card,
   .evidence-item,
   .change-item,

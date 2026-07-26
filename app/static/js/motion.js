@@ -137,9 +137,9 @@
   // 不影响 hover 过渡。尊重 prefers-reduced-motion：直接显示。
   function applySessionListMotion(rows) {
     if (!rows || !rows.length || prefersReducedMotion()) return;
-    const maxAnimated = 12;
-    const stagger = 35;
-    const baseDur = 280;
+    const maxAnimated = 8;
+    const stagger = 24;
+    const baseDur = 200;
     Array.prototype.slice.call(rows).forEach(function (row, idx) {
       if (idx >= maxAnimated) return;
       row.style.opacity = "0";
@@ -456,7 +456,7 @@
   function attachSpotlight(el, opts) {
     if (!el || prefersReducedMotion()) return;
     if (window.matchMedia("(hover: none)").matches) return; // 触屏禁用
-    var defaultIntensity = el.classList.contains("report-chart") ? 1 : 0.18;
+    var defaultIntensity = el.classList.contains("report-chart") ? 0.45 : 0.12;
     const intensity = opts && typeof opts.intensity === "number" ? opts.intensity : defaultIntensity;
     const size = (opts && opts.size) || 380;
 
@@ -482,15 +482,10 @@
     };
   }
 
-  // 批量挂载 SpotlightCard：hero 步骤卡 / 案例卡 / 报告指标卡 / 核心结论卡 / 图表卡
+  // 聚光只用于持续存在的交互图表；动态列表统一使用 CSS hover 反馈。
   function applySpotlights(root) {
     if (!root || prefersReducedMotion()) return;
     const selectors = [
-      ".hero-step",
-      ".hero-example",
-      ".report-metric-card",
-      ".report-conclusion",
-      ".matrix-stat",
       ".report-chart",
     ];
     selectors.forEach(function (sel) {
@@ -844,36 +839,8 @@
   // 在 renderReport 完成后调用，统一挂载所有报告相关动效
   function applyReportMotion(container) {
     if (!container) return;
-    applyCounters(container);
-    // 视口外章节先交给 ScrollReveal 接管（打标记），再对视口内章节 stagger 入场
-    const scrollRoot = document.getElementById("report");
-    applyScrollReveal(scrollRoot, container.querySelectorAll(".report-section"));
-    applyReportListAnimation(container);
-    applyTiltToMetricCards(container);
-    // SpotlightCard 报告指标卡 + 核心结论卡 + 图表卡
+    // 报告属于高密度工作区：内容直接稳定呈现，只给可操作图表保留轻量聚光。
     applySpotlights(container);
-    // 图表卡片 stagger 入场：主打图先入，次主/次要依次跟随
-    applyStaggerAnimation(container, ".report-charts-row .report-chart", { stagger: 80, max: 6 });
-    // SplitText 报告大标题逐字入场
-    const titleEl = container.querySelector(".report-summary-title, #report-summary h3, .report-header h2");
-    if (titleEl) applySplitText(titleEl);
-    // 核心结论区 ScaleIn 入场：作为报告最顶端卡片，用 scale+translateY 强调"结论前置"
-    const conclusionEl = container.querySelector(".report-conclusion");
-    if (conclusionEl) {
-      const reduced = prefersReducedMotion();
-      if (!reduced) {
-        conclusionEl.style.opacity = "0";
-        conclusionEl.style.transform = "translateY(12px) scale(0.96)";
-        conclusionEl.style.transition = "opacity 380ms cubic-bezier(0.16,1,0.3,1), transform 380ms cubic-bezier(0.16,1,0.3,1)";
-        requestAnimationFrame(function () {
-          requestAnimationFrame(function () {
-            conclusionEl.style.opacity = "1";
-            conclusionEl.style.transform = "translateY(0) scale(1)";
-          });
-        });
-        setTimeout(function () { conclusionEl.style.transition = ""; }, 420);
-      }
-    }
     // 平滑展开挂载到 TOC 和 patch details
     container.querySelectorAll(".report-toc, details#report-patch").forEach(function (d) {
       attachSmoothExpand(d);
@@ -884,30 +851,14 @@
   // 在 renderHero 完成后调用：全屏点阵背景 + 标题逐字入场 + 卡片聚光灯 + CTA 磁吸
   function applyHeroMotion(heroEl) {
     if (!heroEl) return;
-    // 全屏粒子连线拓扑背景（ReactBits Particles）
+    // 保留低对比拓扑背景，卡片反馈统一交给 CSS hover / focus。
     attachParticleNet(heroEl);
-    // 标题 SplitText 逐字入场（仅主标题，克制不炫技）
-    const titleEl = heroEl.querySelector(".hero-title");
-    if (titleEl) {
-      applySplitText(titleEl);
-    }
-    // 副标题 BlurText：延迟到主标题逐字接近尾声时淡入，形成层次节奏
-    const subtitleEl = heroEl.querySelector(".hero-subtitle");
-    if (subtitleEl) applyBlurText(subtitleEl, 260);
-    // 卡片 SpotlightCard 聚光灯
-    applySpotlights(heroEl);
-    // CTA 磁吸
-    const cta = heroEl.querySelector(".hero-cta-button");
-    if (cta) attachMagnet(cta);
   }
 
   // ── 全局动效初始化（页面加载后调用一次） ─────────────────
   function init() {
     attachThemeTransition();
-    // 全局涟漪委托：覆盖所有按钮类元素，动态新增也自动生效
-    initRippleDelegation();
-    // 主 CTA 点击火花委托：仅限"启动分析"类关键动作
-    initClickSpark();
+    // 操作反馈由统一的 hover / active / focus 样式承担，避免涟漪与火花叠加。
   }
 
   // ── 暴露命名空间 ───────────────────────────────────────
