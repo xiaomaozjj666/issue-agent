@@ -706,43 +706,99 @@
 
     const sev = impact.severity || "medium";
     const sevColor = SEVERITY_COLOR[sev] || palette.muted;
-    const treeData = Object.keys(moduleSet).map(function (mod) {
-      const changed = moduleChanges[mod] || 1;
-      return { name: mod, value: changed, itemStyle: { color: sevColor } };
-    });
+    const modules = Object.keys(moduleSet);
+    const useBar = modules.length <= 3;
 
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
-    chart.setOption({
-      animationDuration: 200,
-      animationEasing: "cubicOut",
-      tooltip: mobileTooltip({
-        confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
-        textStyle: { color: palette.text, fontSize: 12 },
-        position: smartTooltipPosition,
-        formatter: function (info) {
-          const d = info.data || {};
-          const changed = d.value > 1 ? d.value : 0;
-          return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
-            IA.escapeHtml(d.name) + "</div>" +
-            (changed ? '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("diffstat_total_changes")) +
-              ': <b>' + changed + "</b></div>" : "") +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
-            ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
+
+    if (useBar) {
+      // 少量模块时用横向条形图，避免单一大灰块，同时显示改动行数
+      const rows = modules.map(function (mod) {
+        return { name: mod, value: moduleChanges[mod] || 1 };
+      }).sort(function (a, b) { return b.value - a.value; });
+      chart.setOption({
+        animationDuration: 200,
+        animationEasing: "cubicOut",
+        tooltip: mobileTooltip({
+          confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
+          backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
+          textStyle: { color: palette.text, fontSize: 12 },
+          position: smartTooltipPosition,
+          formatter: function (info) {
+            const d = info.data || {};
+            return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
+              IA.escapeHtml(d.name) + "</div>" +
+              '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("diffstat_total_changes")) +
+              ': <b>' + d.value + "</b></div>" +
+              '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
+              ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
+          },
+        }),
+        grid: { left: 90, right: 70, top: 16, bottom: 16 },
+        xAxis: {
+          type: "value",
+          splitLine: { lineStyle: { color: palette.grid, type: "dashed" } },
+          axisLabel: { color: palette.textDim, fontSize: 11 },
         },
-      }),
-      toolbox: toolbox(palette),
-      series: [{
-        type: "treemap",
-        roam: false,
-        nodeClick: false,
-        breadcrumb: { show: false },
-        label: { color: "#ffffff", fontSize: 12, fontWeight: 600, formatter: function (p) { return p.name; } },
-        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 1, borderRadius: 2 },
-        data: treeData,
-      }],
-    });
+        yAxis: {
+          type: "category",
+          data: rows.map(function (r) { return r.name; }),
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { color: palette.text, fontSize: 12, width: 80, overflow: "truncate" },
+        },
+        toolbox: toolbox(palette),
+        series: [{
+          type: "bar",
+          data: rows.map(function (r) { return { value: r.value, name: r.name, itemStyle: { color: sevColor, borderRadius: [0, 3, 3, 0] } }; }),
+          barMaxWidth: 28,
+          label: {
+            show: true,
+            position: "right",
+            color: palette.text,
+            fontSize: 12,
+            formatter: function (p) { return p.value + " " + IA.escapeHtml(enumLabel("severity", sev)); },
+          },
+          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+        }],
+      });
+    } else {
+      const treeData = modules.map(function (mod) {
+        const changed = moduleChanges[mod] || 1;
+        return { name: mod, value: changed, itemStyle: { color: sevColor } };
+      });
+      chart.setOption({
+        animationDuration: 200,
+        animationEasing: "cubicOut",
+        tooltip: mobileTooltip({
+          confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
+          backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
+          textStyle: { color: palette.text, fontSize: 12 },
+          position: smartTooltipPosition,
+          formatter: function (info) {
+            const d = info.data || {};
+            const changed = d.value > 1 ? d.value : 0;
+            return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
+              IA.escapeHtml(d.name) + "</div>" +
+              (changed ? '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("diffstat_total_changes")) +
+                ': <b>' + changed + "</b></div>" : "") +
+              '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
+              ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
+          },
+        }),
+        toolbox: toolbox(palette),
+        series: [{
+          type: "treemap",
+          roam: false,
+          nodeClick: false,
+          breadcrumb: { show: false },
+          label: { color: "#ffffff", fontSize: 12, fontWeight: 600, formatter: function (p) { return p.name; } },
+          itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 1, borderRadius: 2 },
+          data: treeData,
+        }],
+      });
+    }
     chart.on("click", function () { IA.jumpToSection("report-impact"); });
     chart.on("mouseover", function () { container.style.cursor = "pointer"; });
     chart.on("mouseout", function () { container.style.cursor = ""; });

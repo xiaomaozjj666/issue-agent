@@ -28,6 +28,22 @@ import re
 _CJK = re.compile(r"[一-鿿]")
 _CONFIG_EXT = (".yml", ".yaml", ".toml", ".ini", ".cfg", ".env", ".conf", ".properties")
 
+# 历史报告回填时用于推断严重度的信号。新报告应由 LLM 直接产出，不受此影响。
+_SENSITIVE_MODULES = frozenset({
+    "auth", "authentication", "authorize", "authorization",
+    "security", "secure", "crypto", "cryptography", "encrypt", "encryption",
+    "password", "credential", "credentials", "token", "tokens", "jwt", "oauth",
+    "session", "sessions", "permission", "permissions", "acl", "rbac",
+    "payment", "payments", "billing", "checkout", "wallet", "wallets",
+    "user", "users", "account", "accounts", "identity",
+    "secret", "secrets", "vault", "key", "keys", "certificate", "certificates",
+})
+_SENSITIVE_PATCH_RE = re.compile(
+    r"\b(auth|token|password|credential|secret|encrypt|hash|salt|jwt|oauth|"
+    r"permission|session|csrf|xss|sql injection|injection|escape|sanitize)\b",
+    re.IGNORECASE,
+)
+
 # 路径中常见的无意义顶层目录，提取模块名时跳过
 _GENERIC_ROOTS = {
     "src", "lib", "libs", "app", "apps", "pkg", "pkgs", "package", "packages",
@@ -121,6 +137,30 @@ def parse_diffstat(patch: str) -> list[dict]:
     return files
 
 
+def _severity_for(rep: dict, modules: list[str], fixed_files: set[str]) -> str:
+    """从历史信号推断 impact.severity，不编造 LLM 级判断。
+
+    规则（由宽到严）：
+    - 触及认证/安全/支付/凭证相关模块或补丁内容 → high
+    - 有补丁且涉及代码文件 → medium（默认，比旧逻辑更有信息量）
+    - 只有 docs/config 证据且无补丁 → low
+    """
+    patch = rep.get("patch") or ""
+    evidence = rep.get("evidence") or []
+    mod_lower = " ".join(modules).lower()
+    if any(kw in mod_lower for kw in _SENSITIVE_MODULES):
+        return "high"
+    if patch and _SENSITIVE_PATCH_RE.search(patch):
+        return "high"
+    if patch:
+        return "medium"
+    # 无补丁时，根据证据类型判断
+    kinds = {infer_kind(e.get("path", "")) for e in evidence if isinstance(e, dict)}
+    if kinds <= {"docs", "config"}:
+        return "low"
+    return "medium"
+
+
 def _blast_radius(rep: dict, fixed_files: set[str]) -> list[str]:
     """从历史数据派生受影响的模块/目录列表（不是原始文件路径）。"""
     paths: list[str] = []
@@ -168,9 +208,8 @@ def enrich_report(rep: dict) -> dict:
     # ── impact (blast radius + severity/likelihood) ──
     if "impact" not in rep or rep.get("impact") is None:
         br = _blast_radius(rep, fixed_files)
-        severity = "high" if len(br) >= 5 else ("medium" if len(br) >= 2 else "low")
         rep["impact"] = {
-            "severity": severity,
+            "severity": _severity_for(rep, br, fixed_files),
             "likelihood": "medium",
             "blast_radius": br,
         }
@@ -190,6 +229,10 @@ def enrich_report(rep: dict) -> dict:
                 new_br = _blast_radius(rep, fixed_files)
             if new_br != old_br:
                 impact["blast_radius"] = new_br
+            # 如果严重度是旧逻辑遗留的「按数量分档」或 low，重新推断
+            old_sev = impact.get("severity")
+            if old_sev in (None, "low") or old_sev not in ("low", "medium", "high", "critical"):
+                impact["severity"] = _severity_for(rep, new_br, fixed_files)
 
     # ── confidence rationale ──
     if not rep.get("confidence_rationale"):
