@@ -153,12 +153,12 @@ test("renders responsive decision charts without overlaps or console errors", as
     return {
       evidenceRoot: evidence.getOption().series[0].data[0].itemStyle.color,
       riskMarker: risk.getOption().series[1].itemStyle.color,
-      riskLow: risk.getOption().series[0].data[0].color,
-      riskHigh: risk.getOption().series[0].data[7].color,
-      riskCritical: risk.getOption().series[0].data[11].color,
-      riskRendererSilent: risk.getOption().series[0].silent,
-      riskHitLayer: risk.getOption().series[2].name,
-      riskCriticalHover: risk.getOption().series[2].data[11].emphasis.itemStyle.color,
+      riskLow: risk.getOption().series[0].data[0].itemStyle.color,
+      riskHigh: risk.getOption().series[0].data[7].itemStyle.color,
+      riskCritical: risk.getOption().series[0].data[11].itemStyle.color,
+      riskSeriesType: risk.getOption().series[0].type,
+      riskSeriesCount: risk.getOption().series.length,
+      riskCriticalHover: risk.getOption().series[0].data[11].emphasis.itemStyle.color,
     };
   });
   expect(lightChartColors).toEqual({
@@ -167,8 +167,8 @@ test("renders responsive decision charts without overlaps or console errors", as
     riskLow: "#dafbe1",
     riskHigh: "#ffebc8",
     riskCritical: "#ffebe9",
-    riskRendererSilent: true,
-    riskHitLayer: "risk-cell-hit-area",
+    riskSeriesType: "heatmap",
+    riskSeriesCount: 2,
     riskCriticalHover: "#ffcecb",
   });
 
@@ -208,8 +208,8 @@ test("renders responsive decision charts without overlaps or console errors", as
     borderLayerZIndex: getComputedStyle(card, "::after").zIndex,
   }));
   expect(spotlight.active).toBe("true");
-  expect(Number(spotlight.opacity)).toBeGreaterThan(0.3);
-  expect(Number(spotlight.opacity)).toBeLessThan(0.7);
+  expect(Number(spotlight.opacity)).toBeGreaterThan(0.2);
+  expect(Number(spotlight.opacity)).toBeLessThan(0.35);
   expect(spotlight.borderLayer).toContain("radial-gradient");
   expect(spotlight.borderLayerZIndex).not.toBe("-1");
 
@@ -235,8 +235,42 @@ test("renders responsive decision charts without overlaps or console errors", as
   await riskCanvas.scrollIntoViewIfNeeded();
   const riskCanvasBox = await riskCanvas.boundingBox();
   await page.mouse.move(riskCanvasBox.x + criticalCellPoint[0], riskCanvasBox.y + criticalCellPoint[1]);
-  const criticalTooltip = page.locator(".ia-chart-tooltip", { hasText: "严重 × 高" });
+  const criticalTooltip = page.locator(".ia-chart-tooltip", { hasText: "严重度 严重" });
   await expect(criticalTooltip).toBeVisible();
+  await expect(criticalTooltip).toContainText("严重度 严重");
+  await expect(criticalTooltip).toContainText("发生可能性 高");
+  const tooltipBox = await criticalTooltip.boundingBox();
+  const criticalCellBox = await page.evaluate(() => {
+    const target = document.getElementById("report-risk-matrix-chart");
+    const chart = window.echarts.getInstanceByDom(target);
+    const rect = target.getBoundingClientRect();
+    const center = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [2, 3]);
+    const previousX = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [1, 3]);
+    const previousY = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [2, 2]);
+    const width = Math.abs(center[0] - previousX[0]) - 8;
+    const height = Math.abs(center[1] - previousY[1]) - 8;
+    return {
+      x: rect.x + center[0] - width / 2,
+      y: rect.y + center[1] - height / 2,
+      width,
+      height,
+    };
+  });
+  const overlapsHoveredCell = !(
+    tooltipBox.x + tooltipBox.width <= criticalCellBox.x
+    || tooltipBox.x >= criticalCellBox.x + criticalCellBox.width
+    || tooltipBox.y + tooltipBox.height <= criticalCellBox.y
+    || tooltipBox.y >= criticalCellBox.y + criticalCellBox.height
+  );
+  expect(overlapsHoveredCell, JSON.stringify({ tooltipBox, criticalCellBox })).toBe(false);
+  const hoveredCell = await page.evaluate(() => {
+    const chart = window.echarts.getInstanceByDom(document.getElementById("report-risk-matrix-chart"));
+    return {
+      seriesCount: chart.getOption().series.length,
+      hoverColor: chart.getOption().series[0].data[11].emphasis.itemStyle.color,
+    };
+  });
+  expect(hoveredCell).toEqual({ seriesCount: 2, hoverColor: "#ffcecb" });
   await riskCanvas.click({ position: { x: 24, y: 24 } });
   await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0);
   await expect(page.locator(".motion-ripple")).toHaveCount(0);
@@ -279,16 +313,16 @@ test("renders responsive decision charts without overlaps or console errors", as
     return {
       evidenceRoot: mainEvidence.getOption().series[0].data[0].itemStyle.color,
       riskMarker: modalRisk.getOption().series[1].itemStyle.color,
-      riskLow: modalRisk.getOption().series[0].data[0].color,
-      riskCritical: modalRisk.getOption().series[0].data[11].color,
-      riskCriticalHover: modalRisk.getOption().series[2].data[11].emphasis.itemStyle.color,
+      riskLow: modalRisk.getOption().series[0].data[0].itemStyle.color,
+      riskCritical: modalRisk.getOption().series[0].data[11].itemStyle.color,
+      riskCriticalHover: modalRisk.getOption().series[0].data[11].emphasis.itemStyle.color,
     };
   })).toEqual({
     evidenceRoot: "#58a6ff",
     riskMarker: "#db6d28",
-    riskLow: "#183c24",
-    riskCritical: "#442129",
-    riskCriticalHover: "#5e2731",
+    riskLow: "rgba(63,185,80,0.09)",
+    riskCritical: "rgba(248,81,73,0.12)",
+    riskCriticalHover: "rgba(248,81,73,0.22)",
   });
   await page.keyboard.press("Tab");
   await expect(page.locator(".chart-modal-close")).toBeFocused();
