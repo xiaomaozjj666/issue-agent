@@ -9,8 +9,7 @@
  *
  * 图表数据元素均支持点击下钻到对应详情（补丁章节 / 证据条目）。
  *
- * 配色体系（全局统一）：
- *   深蓝 #165DFF · 绿色 #00B42A · 红色 #F53F3F · 棕橙色 #FF7D00
+ * 配色体系跟随 GitHub 风格的明暗主题语义色，避免图表与报告外壳割裂。
  */
 (function () {
   "use strict";
@@ -19,44 +18,44 @@
   const t = IA.translate;
   const enumLabel = IA.enumLabel;
 
-  // ── 配色体系 ────────────────────────────────────────────
-  // 全局固定色值，深色/浅色主题共用。辅助色（text/line 等）按主题区分。
-  const BRAND = {
-    blue: "#165DFF",
-    green: "#00B42A",
-    red: "#F53F3F",
-    orange: "#FF7D00",
-    gray: "#86909C",
-  };
-
   const PALETTE_DARK = {
-    primary: BRAND.blue,
-    success: BRAND.green,
-    danger: BRAND.red,
-    warning: BRAND.orange,
-    muted: BRAND.gray,
-    text: "#f1f5f9",
-    textDim: "#94a3b8",
-    line: "#334155",
-    tooltipBg: "#0f172a",
-    tooltipBorder: "#1e293b",
-    bg: "#0f172a",
-    splitArea: ["rgba(22,93,255,0.04)", "rgba(22,93,255,0.08)"],
+    primary: "#58a6ff",
+    success: "#3fb950",
+    danger: "#f85149",
+    warning: "#d29922",
+    muted: "#8b949e",
+    docs: "#bc8cff",
+    text: "#e6edf3",
+    textDim: "#8b949e",
+    line: "#30363d",
+    tooltipBg: "#161b22",
+    tooltipBorder: "#30363d",
+    bg: "#0d1117",
+    splitArea: ["rgba(88,166,255,0.035)", "rgba(88,166,255,0.07)"],
+    riskLow: "rgba(63,185,80,0.16)",
+    riskMedium: "rgba(210,153,34,0.18)",
+    riskHigh: "rgba(210,153,34,0.26)",
+    riskCritical: "rgba(248,81,73,0.28)",
   };
 
   const PALETTE_LIGHT = {
-    primary: BRAND.blue,
-    success: BRAND.green,
-    danger: BRAND.red,
-    warning: BRAND.orange,
-    muted: BRAND.gray,
-    text: "#0f172a",
-    textDim: "#475569",
-    line: "#cbd5e1",
+    primary: "#0969da",
+    success: "#1a7f37",
+    danger: "#cf222e",
+    warning: "#9a6700",
+    muted: "#6e7781",
+    docs: "#8250df",
+    text: "#1f2328",
+    textDim: "#656d76",
+    line: "#d0d7de",
     tooltipBg: "#ffffff",
-    tooltipBorder: "#e2e8f0",
+    tooltipBorder: "#d0d7de",
     bg: "#ffffff",
-    splitArea: ["rgba(22,93,255,0.04)", "rgba(22,93,255,0.08)"],
+    splitArea: ["rgba(9,105,218,0.03)", "rgba(9,105,218,0.065)"],
+    riskLow: "rgba(26,127,55,0.12)",
+    riskMedium: "rgba(154,103,0,0.12)",
+    riskHigh: "rgba(154,103,0,0.18)",
+    riskCritical: "rgba(207,34,46,0.20)",
   };
 
   function getPalette() {
@@ -575,29 +574,25 @@
   // ── 区块3：证据强度 ──────────────────────────────────────
   // 每条证据按强度（弱/中/强）横向条形、按类型（code/log/test/config/docs）着色，
   // 点击下钻到对应证据条目。直接回答读者「凭什么信这个结论」。
-  const KIND_COLOR = {
-    code: BRAND.blue,
-    log: BRAND.orange,
-    test: BRAND.green,
-    config: BRAND.red,
-    docs: "#722ED1",
-  };
-  // 证据强度着色：这是本图的核心信息，必须用颜色直接区分弱/中/强。
-  // （此前按 kind 着色，同类型证据颜色一致，强度差异完全不可见。）
-  const STRENGTH_COLOR = {
-    weak: BRAND.gray,
-    moderate: BRAND.blue,
-    strong: BRAND.green,
-  };
+  function kindColor(kind, palette) {
+    return ({
+      code: palette.primary,
+      log: palette.warning,
+      test: palette.success,
+      config: palette.muted,
+      docs: palette.docs,
+    })[kind] || palette.muted;
+  }
+
+  function strengthColor(strength, palette) {
+    return ({ weak: palette.muted, moderate: palette.primary, strong: palette.success })[strength] || palette.muted;
+  }
   // ── 区块4：波及范围 ──────────────────────────────────────
   // 受影响模块/文件 treemap：以 impact.blast_radius 为主，补丁改动文件为补充；
   // 叶子大小 = 该文件改动行数（来自补丁）或 1，颜色按严重度。直接回答「有多严重」。
-  const SEVERITY_COLOR = {
-    critical: BRAND.red,
-    high: BRAND.orange,
-    medium: BRAND.blue,
-    low: BRAND.gray,
-  };
+  function severityColor(severity, palette) {
+    return ({ critical: palette.danger, high: palette.warning, medium: palette.primary, low: palette.muted })[severity] || palette.muted;
+  }
   const GENERIC_ROOTS = {
     src: 1, lib: 1, libs: 1, app: 1, apps: 1, pkg: 1, pkgs: 1, package: 1, packages: 1,
     tests: 1, test: 1, testing: 1, docs: 1, doc: 1, documentation: 1,
@@ -654,7 +649,7 @@
     });
 
     const sev = impact.severity || "medium";
-    const sevColor = SEVERITY_COLOR[sev] || palette.muted;
+    const sevColor = severityColor(sev, palette);
     const modules = Object.keys(moduleSet);
     const useBar = modules.length <= 3;
 
@@ -702,7 +697,7 @@
         toolbox: toolbox(palette),
         series: [{
           type: "bar",
-          data: rows.map(function (r) { return { value: r.value, name: r.name, changed: r.changed, itemStyle: { color: sevColor, borderRadius: [0, 3, 3, 0] } }; }),
+          data: rows.map(function (r) { return { value: r.value, name: r.name, changed: r.changed, itemStyle: { color: palette.primary, borderRadius: [0, 3, 3, 0] } }; }),
           barMaxWidth: 28,
           label: {
             show: true,
@@ -721,7 +716,7 @@
     } else {
       const treeData = modules.map(function (mod) {
         const changed = moduleChanges[mod] || 1;
-        return { name: mod, value: changed, itemStyle: { color: sevColor } };
+        return { name: mod, value: changed, itemStyle: { color: palette.primary } };
       });
       chart.setOption({
         animationDuration: 200,
@@ -785,10 +780,10 @@
     // 单元格背景色：组合风险 = 严重度×可能性
     function cellColor(s, l) {
       const score = sevVal[s] * likeVal[l];
-      if (score >= 9) return "rgba(245,63,63,0.55)";   // 红：极高
-      if (score >= 6) return "rgba(255,125,0,0.50)";   // 橙：高
-      if (score >= 3) return "rgba(247,186,30,0.42)";  // 黄：中
-      return "rgba(0,180,42,0.38)";                    // 绿：低
+      if (score >= 9) return palette.riskCritical;
+      if (score >= 6) return palette.riskHigh;
+      if (score >= 3) return palette.riskMedium;
+      return palette.riskLow;
     }
     const cellData = [];
     sevLevels.forEach(function (s, yi) {
@@ -798,7 +793,7 @@
     });
     const issueX = likeLevels.indexOf(like);
     const issueY = sevLevels.indexOf(sev);
-    const markerColor = SEVERITY_COLOR[sev] || palette.muted;
+    const markerColor = severityColor(sev, palette);
 
     setChartHeight(container, 300);
     fadeIn(container);
@@ -926,24 +921,26 @@
         strength: e.strength || "moderate",
         kind: e.kind || "code",
         reason: e.reason || "",
-        itemStyle: { color: STRENGTH_COLOR[e.strength || "moderate"] || palette.muted },
+        itemStyle: { color: strengthColor(e.strength || "moderate", palette) },
       };
     });
 
     function evidenceLayout(width) {
       const safeWidth = Math.max(320, width || 320);
-      const vertical = safeWidth < 680 && evidence.length <= 4;
+      // 常见的 2-4 条证据始终自上而下展示，避免宽屏时叶子标签挤在最右侧被裁切。
+      // 只有节点较多时才使用横向紧凑树；超宽容器可容纳最多 6 个纵向叶子。
+      const vertical = evidence.length <= 4 || (safeWidth >= 860 && evidence.length <= 6);
       if (vertical) {
         const columns = Math.max(1, evidence.length);
         return {
           vertical: true,
           width: safeWidth,
-          height: 340,
-          rootLabelW: Math.max(180, Math.min(260, safeWidth - 96)),
-          evidenceLabelW: Math.max(64, Math.min(102, Math.floor((safeWidth - 48) / columns) - 28)),
+          height: evidence.length > 4 ? 380 : 350,
+          rootLabelW: Math.max(180, Math.min(360, safeWidth - 96)),
+          evidenceLabelW: Math.max(64, Math.min(168, Math.floor((safeWidth - 48) / columns) - 40)),
           rootMaxLength: 104,
-          top: 148,
-          bottom: 96,
+          top: 140,
+          bottom: 108,
           left: 32,
           right: 32,
         };
@@ -1062,9 +1059,9 @@
           return '<div style="font-weight:600;margin-bottom:4px;max-width:300px;white-space:normal;word-break:break-all;">' +
             IA.escapeHtml(d.fullPath) + (d.lines ? ' <span style="color:' + palette.textDim + ';">' + IA.escapeHtml(d.lines) + "</span>" : "") + "</div>" +
             '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_kind_legend")) +
-            ': <b style="color:' + (KIND_COLOR[d.kind] || palette.muted) + ';">' + IA.escapeHtml(enumLabel("kind", d.kind)) + "</b></div>" +
+            ': <b style="color:' + kindColor(d.kind, palette) + ';">' + IA.escapeHtml(enumLabel("kind", d.kind)) + "</b></div>" +
             '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_strength_legend")) +
-            ': <b style="color:' + (STRENGTH_COLOR[d.strength] || palette.muted) + ';">' + IA.escapeHtml(enumLabel("strength", d.strength)) + "</b></div>" +
+            ': <b style="color:' + strengthColor(d.strength, palette) + ';">' + IA.escapeHtml(enumLabel("strength", d.strength)) + "</b></div>" +
             (d.reason ? '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:280px;white-space:normal;">' + IA.escapeHtml(d.reason) + "</div>" : "");
         },
       }),
