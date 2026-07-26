@@ -6,6 +6,7 @@ newer releases to databases created by older version.
 """
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -75,6 +76,7 @@ async def get_db(path: str) -> aiosqlite.Connection:
     await conn.execute("PRAGMA foreign_keys=ON")
     await conn.executescript(SCHEMA)
     await _migrate_sessions(conn)
+    await _migrate_report_enrichment(conn)
     await _ensure_performance_indexes(conn)
     await conn.commit()
     return conn
@@ -104,6 +106,42 @@ async def _migrate_sessions(conn: aiosqlite.Connection) -> None:
         if name not in existing:
             await conn.execute(f"ALTER TABLE sessions ADD COLUMN {name} {definition}")
     await conn.execute("UPDATE sessions SET status = 'completed' WHERE report_json IS NOT NULL AND status = 'queued'")
+
+
+async def _migrate_report_enrichment(conn: aiosqlite.Connection) -> None:
+    """Backfill enriched report fields for pre-senior-investigator reports.
+
+    Idempotent: only fills missing *optional* fields (impact, hypotheses,
+    evidence strength/kind, confidence_rationale, fix_rationale). Never
+    overwrites data already produced by the LLM. Safe to run on every startup.
+    """
+    try:
+        from app.report_backfill import enrich_report
+    except Exception:  # pragma: no cover - enrichment is best-effort
+        return
+    rows = await (await conn.execute(
+        "SELECT session_id, report_json FROM sessions WHERE report_json IS NOT NULL"
+    )).fetchall()
+    for row in rows:
+        sid, rj = row["session_id"], row["report_json"]
+        if not rj:
+            continue
+        try:
+            rep = json.loads(rj)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(rep, dict):
+            continue
+        try:
+            enriched = enrich_report(rep)
+        except Exception:
+            continue
+        new_rj = json.dumps(enriched, ensure_ascii=False)
+        if new_rj != rj:
+            await conn.execute(
+                "UPDATE sessions SET report_json = ? WHERE session_id = ?",
+                (new_rj, sid),
+            )
 
 
 class ConnectionPool:
