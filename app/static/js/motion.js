@@ -456,7 +456,8 @@
   function attachSpotlight(el, opts) {
     if (!el || prefersReducedMotion()) return;
     if (window.matchMedia("(hover: none)").matches) return; // 触屏禁用
-    const intensity = (opts && opts.intensity) || 0.18;
+    var defaultIntensity = el.classList.contains("report-chart") ? 0.06 : 0.18;
+    const intensity = (opts && opts.intensity) || defaultIntensity;
     const size = (opts && opts.size) || 380;
 
     function onMove(e) {
@@ -479,7 +480,7 @@
     };
   }
 
-  // 批量挂载 SpotlightCard：hero 步骤卡 / 案例卡 / 报告指标卡 / 核心结论卡
+  // 批量挂载 SpotlightCard：hero 步骤卡 / 案例卡 / 报告指标卡 / 核心结论卡 / 图表卡
   function applySpotlights(root) {
     if (!root || prefersReducedMotion()) return;
     const selectors = [
@@ -488,6 +489,7 @@
       ".report-metric-card",
       ".report-conclusion",
       ".matrix-stat",
+      ".report-chart",
     ];
     selectors.forEach(function (sel) {
       root.querySelectorAll(sel).forEach(function (el) {
@@ -844,8 +846,10 @@
     applyScrollReveal(scrollRoot, container.querySelectorAll(".report-section"));
     applyReportListAnimation(container);
     applyTiltToMetricCards(container);
-    // SpotlightCard 报告指标卡 + 核心结论卡
+    // SpotlightCard 报告指标卡 + 核心结论卡 + 图表卡
     applySpotlights(container);
+    // 图表卡片 stagger 入场：主打图先入，次主/次要依次跟随
+    applyStaggerAnimation(container, ".report-charts-row .report-chart", { stagger: 80, max: 6 });
     // SplitText 报告大标题逐字入场
     const titleEl = container.querySelector(".report-summary-title, #report-summary h3, .report-header h2");
     if (titleEl) applySplitText(titleEl);

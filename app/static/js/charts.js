@@ -40,6 +40,7 @@
     line: "#334155",
     tooltipBg: "#0f172a",
     tooltipBorder: "#1e293b",
+    bg: "#0f172a",
     splitArea: ["rgba(22,93,255,0.04)", "rgba(22,93,255,0.08)"],
   };
 
@@ -54,6 +55,7 @@
     line: "#cbd5e1",
     tooltipBg: "#ffffff",
     tooltipBorder: "#e2e8f0",
+    bg: "#ffffff",
     splitArea: ["rgba(22,93,255,0.04)", "rgba(22,93,255,0.08)"],
   };
 
@@ -197,13 +199,15 @@
 
   // 数据少时压缩画布高度，避免 1~3 条数据在 300px 容器中显得空旷稀疏。
   // 放大模态框（.chart-modal-canvas）保持大画布，不压缩，便于查看细节。
-  function fitChartHeight(container, rowCount, perRow) {
+  function fitChartHeight(container, rowCount, perRow, minH, maxH) {
     if (!container || container.classList.contains("chart-modal-canvas")) return;
     const rows = Math.max(1, rowCount || 1);
     const per = perRow || 42;
+    const lo = minH || 150;
+    const hi = maxH || 300;
     const chrome = 82; // 图例 + 底部汇总 + 上下内边距
     let h = chrome + rows * per;
-    h = Math.max(150, Math.min(h, 300));
+    h = Math.max(lo, Math.min(h, hi));
     container.style.height = h + "px";
     container.style.minHeight = h + "px";
   }
@@ -576,100 +580,6 @@
     moderate: BRAND.blue,
     strong: BRAND.green,
   };
-  function strengthValue(s) {
-    return s === "strong" ? 3 : s === "moderate" ? 2 : 1;
-  }
-  function renderEvidenceStrength(container, report, sessionData) {
-    if (!container) return null;
-    if (!isAvailable()) {
-      container.innerHTML = '<div class="report-chart-fallback">' + IA.escapeHtml(t("chart_load_failed")) + "</div>";
-      return null;
-    }
-    const evidence = (report.evidence || []).filter(function (e) { return e && e.path; });
-    if (!evidence.length) {
-      container.innerHTML = '<div class="report-chart-empty">' + IA.escapeHtml(t("chart_evidence_strength_empty")) + "</div>";
-      return null;
-    }
-    const palette = getPalette();
-    const rows = evidence
-      .map(function (e, i) {
-        return {
-          idx: i,
-          path: e.path,
-          lines: e.lines || "",
-          reason: e.reason || "",
-          strength: e.strength || "moderate",
-          kind: e.kind || "code",
-          value: strengthValue(e.strength || "moderate"),
-        };
-      })
-      .sort(function (a, b) { return a.value - b.value; }); // 弱在下、强在上
-    const labels = rows.map(function (r) { return shortName(r.path) + (r.lines ? " " + r.lines : ""); });
-
-    fitChartHeight(container, rows.length);
-    const barW = rows.length <= 3 ? 26 : 16;
-    fadeIn(container);
-    const chart = echarts.init(container, null, mobileInitOpts());
-    chart.setOption({
-      animationDuration: 200,
-      animationEasing: "cubicOut",
-      tooltip: mobileTooltip({
-        confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
-        textStyle: { color: palette.text, fontSize: 12 },
-        position: smartTooltipPosition,
-        formatter: function (params) {
-          const row = rows[params.dataIndex];
-          if (!row) return "";
-          return '<div style="font-weight:600;margin-bottom:4px;max-width:300px;white-space:normal;word-break:break-all;">' +
-            IA.escapeHtml(row.path) + (row.lines ? ' <span style="color:' + palette.textDim + ';">' + IA.escapeHtml(row.lines) + "</span>" : "") + "</div>" +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_kind_legend")) + ": <b style=\"color:" + (KIND_COLOR[row.kind] || palette.muted) + ';">' + IA.escapeHtml(enumLabel("kind", row.kind)) + "</b></div>" +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_strength_legend")) + ": <b style=\"color:" + palette.text + ';">' + IA.escapeHtml(enumLabel("strength", row.strength)) + "</b></div>" +
-            (row.reason ? '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:280px;white-space:normal;">' + IA.escapeHtml(row.reason) + "</div>" : "");
-        },
-      }),
-      grid: { left: 8, right: 108, top: 12, bottom: 12, containLabel: true },
-      toolbox: toolbox(palette),
-      xAxis: {
-        type: "value", min: 0, max: 3, interval: 1,
-        axisLabel: {
-          color: palette.textDim, fontSize: 10,
-          formatter: function (v) { return v === 3 ? t("strength_strong") : v === 2 ? t("strength_moderate") : v === 1 ? t("strength_weak") : ""; },
-        },
-        splitLine: { lineStyle: { color: palette.line, opacity: 0.4 } },
-      },
-      yAxis: {
-        type: "category", data: labels,
-        axisLabel: { color: palette.textDim, fontSize: 10, width: isMobile() ? 90 : 150, overflow: "truncate" },
-        axisLine: { lineStyle: { color: palette.line } }, axisTick: { show: false },
-      },
-      series: [{
-        type: "bar",
-        data: rows.map(function (r) {
-          return { value: r.value, itemStyle: { color: STRENGTH_COLOR[r.strength] || palette.muted, borderRadius: [0, 3, 3, 0] } };
-        }),
-        barMaxWidth: barW,
-        label: {
-          show: true, position: "right", fontSize: 10, fontWeight: 600, color: palette.textDim,
-          formatter: function (params) {
-            const row = rows[params.dataIndex];
-            // 右侧同时标注强度 + 类型，条形颜色已传达强度，标签补足类型信息
-            return enumLabel("strength", row.strength) + " · " + enumLabel("kind", row.kind);
-          },
-        },
-        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
-      }],
-    });
-    chart.on("click", function (params) {
-      const row = rows[params.dataIndex];
-      if (row && row.idx >= 0) IA.jumpToEvidence(row.idx);
-      else IA.jumpToSection("report-evidence");
-    });
-    chart.on("mouseover", function () { container.style.cursor = "pointer"; });
-    chart.on("mouseout", function () { container.style.cursor = ""; });
-    return chart;
-  }
-
   // ── 区块4：波及范围 ──────────────────────────────────────
   // 受影响模块/文件 treemap：以 impact.blast_radius 为主，补丁改动文件为补充；
   // 叶子大小 = 该文件改动行数（来自补丁）或 1，颜色按严重度。直接回答「有多严重」。
@@ -738,9 +648,10 @@
     const sevColor = SEVERITY_COLOR[sev] || palette.muted;
     const modules = Object.keys(moduleSet);
     const useBar = modules.length <= 3;
+    const allDefault = modules.every(function (m) { return !moduleChanges[m]; });
 
     // bar 模式按模块数压缩高度；treemap 模式保持大画布
-    if (useBar) fitChartHeight(container, modules.length);
+    if (useBar) fitChartHeight(container, modules.length, 42, allDefault ? 120 : 150);
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
 
@@ -837,12 +748,268 @@
     return chart;
   }
 
+  // ── 区块5：风险矩阵 ──────────────────────────────────────
+  // severity × likelihood 二维网格：把本问题标在「严重度×发生可能性」上，
+  // 背景单元格按组合风险着色（绿→黄→橙→红）。直接回答「该多紧急」。
+  function renderRiskMatrix(container, report, sessionData) {
+    if (!container) return null;
+    if (!isAvailable()) {
+      container.innerHTML = '<div class="report-chart-fallback">' + IA.escapeHtml(t("chart_load_failed")) + "</div>";
+      return null;
+    }
+    const impact = report.impact;
+    if (!impact || !impact.severity || !impact.likelihood) {
+      container.innerHTML = '<div class="report-chart-empty">' + IA.escapeHtml(t("chart_risk_matrix_empty")) + "</div>";
+      return null;
+    }
+    const palette = getPalette();
+    const sevLevels = ["low", "medium", "high", "critical"];
+    const likeLevels = ["low", "medium", "high"];
+    const sevVal = { low: 1, medium: 2, high: 3, critical: 4 };
+    const likeVal = { low: 1, medium: 2, high: 3 };
+    const sev = sevLevels.indexOf(impact.severity) >= 0 ? impact.severity : "medium";
+    const like = likeLevels.indexOf(impact.likelihood) >= 0 ? impact.likelihood : "medium";
+
+    // 单元格背景色：组合风险 = 严重度×可能性
+    function cellColor(s, l) {
+      const score = sevVal[s] * likeVal[l];
+      if (score >= 9) return "rgba(245,63,63,0.55)";   // 红：极高
+      if (score >= 6) return "rgba(255,125,0,0.50)";   // 橙：高
+      if (score >= 3) return "rgba(247,186,30,0.42)";  // 黄：中
+      return "rgba(0,180,42,0.38)";                    // 绿：低
+    }
+    const cellData = [];
+    sevLevels.forEach(function (s, yi) {
+      likeLevels.forEach(function (l, xi) {
+        cellData.push({ value: [xi, yi], color: cellColor(s, l) });
+      });
+    });
+    const issueX = likeLevels.indexOf(like);
+    const issueY = sevLevels.indexOf(sev);
+    const markerColor = SEVERITY_COLOR[sev] || palette.muted;
+
+    fadeIn(container);
+    const chart = echarts.init(container, null, mobileInitOpts());
+    chart.setOption({
+      animationDuration: 200,
+      animationEasing: "cubicOut",
+      tooltip: mobileTooltip({
+        confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
+        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
+        textStyle: { color: palette.text, fontSize: 12 },
+        position: smartTooltipPosition,
+        formatter: function () {
+          return '<div style="font-weight:600;">' + IA.escapeHtml(t("chart_risk_matrix")) + "</div>" +
+            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
+            ': <b style="color:' + markerColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>" +
+            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_likelihood")) +
+            ': <b>' + IA.escapeHtml(enumLabel("likelihood", like)) + "</b></div>";
+        },
+      }),
+      grid: { left: 8, right: 20, top: 18, bottom: 34, containLabel: true },
+      toolbox: toolbox(palette),
+      xAxis: {
+        type: "category",
+        name: t("report_likelihood"),
+        nameLocation: "middle",
+        nameGap: 24,
+        nameTextStyle: { color: palette.textDim, fontSize: 11 },
+        data: likeLevels.map(function (l) { return enumLabel("likelihood", l); }),
+        axisLine: { lineStyle: { color: palette.line } },
+        axisTick: { show: false },
+        axisLabel: { color: palette.textDim, fontSize: 11 },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: "category",
+        name: t("report_severity"),
+        nameTextStyle: { color: palette.textDim, fontSize: 11 },
+        data: sevLevels.map(function (s) { return enumLabel("severity", s); }),
+        axisLine: { lineStyle: { color: palette.line } },
+        axisTick: { show: false },
+        axisLabel: { color: palette.textDim, fontSize: 11 },
+        splitLine: { show: false },
+      },
+      series: [
+        {
+          type: "custom",
+          renderItem: function (params, api) {
+            const d = cellData[params.dataIndex];
+            const center = api.coord([api.value(0), api.value(1)]);
+            const size = api.size([1, 1]);
+            const w = Math.max(12, size[0] - 8);
+            const h = Math.max(12, size[1] - 8);
+            return {
+              type: "rect",
+              shape: { x: center[0] - w / 2, y: center[1] - h / 2, width: w, height: h, r: 5 },
+              style: { fill: d.color },
+            };
+          },
+          data: cellData.map(function (d) { return { value: d.value }; }),
+          silent: true,
+          z: 1,
+        },
+        {
+          type: "scatter",
+          symbolSize: 18,
+          data: [{ value: [issueX, issueY] }],
+          itemStyle: {
+            color: markerColor,
+            borderColor: palette.bg || "#fff",
+            borderWidth: 2.5,
+            shadowBlur: 4,
+            shadowColor: "rgba(0,0,0,0.2)",
+          },
+          label: {
+            show: true,
+            position: "right",
+            distance: 8,
+            formatter: "\u2190 " + t("risk_matrix_root_cause"),
+            color: palette.text,
+            fontWeight: 600,
+            fontSize: 11,
+          },
+          z: 10,
+        },
+      ],
+    });
+    chart.on("click", function () { IA.jumpToSection("report-impact"); });
+    chart.on("mouseover", function () { container.style.cursor = "pointer"; });
+    chart.on("mouseout", function () { container.style.cursor = ""; });
+    return chart;
+  }
+
+  // ── 区块6：根因证据链 ────────────────────────────────────
+  // 树状图：根因为根节点，各条证据为子节点，节点颜色=证据强度，可点击下钻。
+  // 把「结论 ← 由哪些证据支撑」的逻辑关系画出来，是说服力的核心。
+  function renderEvidenceMap(container, report, sessionData) {
+    if (!container) return null;
+    if (!isAvailable()) {
+      container.innerHTML = '<div class="report-chart-fallback">' + IA.escapeHtml(t("chart_load_failed")) + "</div>";
+      return null;
+    }
+    const evidence = (report.evidence || []).filter(function (e) { return e && e.path; });
+    if (!evidence.length) {
+      container.innerHTML = '<div class="report-chart-empty">' + IA.escapeHtml(t("chart_evidence_map_empty")) + "</div>";
+      return null;
+    }
+    const palette = getPalette();
+    const rootCause = String(report.root_cause || t("risk_matrix_root_cause")).trim();
+    // 根据证据数量动态调整标签截断宽度，避免 >6 条时标签拥挤重叠
+    const labelW = evidence.length > 8 ? 100 : evidence.length > 6 ? 120 : 150;
+    const rootMaxLen = evidence.length > 8 ? 22 : evidence.length > 6 ? 28 : 34;
+    const rootLabel = rootCause.length > rootMaxLen ? rootCause.slice(0, rootMaxLen) + "…" : rootCause;
+
+    const children = evidence.map(function (e, i) {
+      return {
+        name: shortName(e.path) + (e.lines ? " " + e.lines : ""),
+        idx: i,
+        fullPath: e.path,
+        lines: e.lines || "",
+        strength: e.strength || "moderate",
+        kind: e.kind || "code",
+        reason: e.reason || "",
+        itemStyle: { color: STRENGTH_COLOR[e.strength || "moderate"] || palette.muted },
+      };
+    });
+    const treeData = [{
+      name: rootLabel,
+      itemStyle: { color: palette.primary, borderColor: palette.primary },
+      label: {
+        position: "left",
+        color: palette.text,
+        fontWeight: 700,
+        fontSize: 12,
+        backgroundColor: palette.tooltipBg,
+        borderColor: palette.line,
+        borderWidth: 1,
+        borderRadius: 4,
+        padding: [5, 8],
+      },
+      children: children,
+    }];
+
+    fadeIn(container);
+    const chart = echarts.init(container, null, mobileInitOpts());
+    chart.setOption({
+      animationDuration: 200,
+      animationEasing: "cubicOut",
+      tooltip: mobileTooltip({
+        confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
+        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
+        textStyle: { color: palette.text, fontSize: 12 },
+        position: smartTooltipPosition,
+        formatter: function (params) {
+          const d = params.data || {};
+          if (params.dataIndex === 0 || !d.fullPath) {
+            return '<div style="font-weight:600;max-width:300px;white-space:normal;">' + IA.escapeHtml(rootCause) + "</div>";
+          }
+          return '<div style="font-weight:600;margin-bottom:4px;max-width:300px;white-space:normal;word-break:break-all;">' +
+            IA.escapeHtml(d.fullPath) + (d.lines ? ' <span style="color:' + palette.textDim + ';">' + IA.escapeHtml(d.lines) + "</span>" : "") + "</div>" +
+            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_kind_legend")) +
+            ': <b style="color:' + (KIND_COLOR[d.kind] || palette.muted) + ';">' + IA.escapeHtml(enumLabel("kind", d.kind)) + "</b></div>" +
+            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_strength_legend")) +
+            ': <b style="color:' + (STRENGTH_COLOR[d.strength] || palette.muted) + ';">' + IA.escapeHtml(enumLabel("strength", d.strength)) + "</b></div>" +
+            (d.reason ? '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:280px;white-space:normal;">' + IA.escapeHtml(d.reason) + "</div>" : "");
+        },
+      }),
+      toolbox: toolbox(palette),
+      series: [{
+        type: "tree",
+        data: treeData,
+        orient: "LR",
+        left: "26%",
+        right: "24%",
+        top: "6%",
+        bottom: "6%",
+        symbol: "circle",
+        symbolSize: 13,
+        edgeShape: "curve",
+        edgeForkPosition: "50%",
+        expandAndCollapse: false,
+        initialTreeDepth: -1,
+        lineStyle: { color: palette.line, width: 1.5, curveness: 0.5 },
+        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1.5 },
+        label: {
+          position: "right",
+          verticalAlign: "middle",
+          align: "left",
+          color: palette.text,
+          fontSize: 11,
+          overflow: "truncate",
+          width: labelW,
+        },
+        leaves: {
+          label: {
+            position: "right",
+            verticalAlign: "middle",
+            align: "left",
+            color: palette.text,
+            fontSize: 11,
+            overflow: "truncate",
+            width: labelW,
+          },
+        },
+        emphasis: { focus: "descendant", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+      }],
+    });
+    chart.on("click", function (params) {
+      const d = params.data || {};
+      if (typeof d.idx === "number" && d.idx >= 0) IA.jumpToEvidence(d.idx);
+      else IA.jumpToSection("report-evidence");
+    });
+    chart.on("mouseover", function () { container.style.cursor = "pointer"; });
+    chart.on("mouseout", function () { container.style.cursor = ""; });
+    return chart;
+  }
+
   // ── 导出 ────────────────────────────────────────────────
   IA.Charts = {
     renderDiffstat: renderDiffstat,
     renderVerify: renderVerify,
-    renderEvidenceStrength: renderEvidenceStrength,
     renderBlastRadius: renderBlastRadius,
+    renderRiskMatrix: renderRiskMatrix,
+    renderEvidenceMap: renderEvidenceMap,
     isAvailable: isAvailable,
     getPalette: getPalette,
   };

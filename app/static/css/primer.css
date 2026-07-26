@@ -2188,6 +2188,7 @@ a:hover {
 }
 
 .report-chart {
+  position: relative;
   margin: 0;
   padding: var(--space-3);
   border: 1px solid var(--border);
@@ -2214,8 +2215,55 @@ a:hover {
   }
 }
 
+
+/* -- ReactBits BorderGlow ----------------------------------------- */
+.report-chart {
+  --spot-x: 50%;
+  --spot-y: 50%;
+  --spot-o: 0;
+}
+.report-chart::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: calc(var(--radius) + 2px);
+  background: radial-gradient(
+    320px circle at var(--spot-x) var(--spot-y),
+    rgba(100, 160, 255, calc(var(--spot-o) * 0.7)),
+    transparent 50%
+  );
+  filter: blur(6px);
+  z-index: -1;
+  pointer-events: none;
+}
+[data-theme="light"] .report-chart::before {
+  background: radial-gradient(
+    320px circle at var(--spot-x) var(--spot-y),
+    rgba(50, 120, 220, calc(var(--spot-o) * 0.55)),
+    transparent 50%
+  );
+}
 .report-chart + .report-chart {
   margin-top: 0;
+}
+
+/* single minor chart center */
+.report-charts-single {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+.report-charts-single > * {
+  max-width: 50%;
+  min-width: 360px;
+}
+@media (max-width: 1400px) {
+  .report-charts-single > * {
+    max-width: 100%;
+    min-width: 0;
+  }
 }
 
 .report-chart-half {
@@ -2226,6 +2274,25 @@ a:hover {
 
 .report-chart-full {
   grid-column: 1 / -1;
+}
+
+/* 主打图（根因证据链）：全行宽、更高画布，视觉焦点 */
+.report-chart-canvas-hero {
+  height: 380px;
+  min-height: 380px;
+}
+
+/* 次要图（补丁改动 + 证据核对）：降低视觉权重 */
+.report-chart-minor {
+  opacity: 0.82;
+}
+.report-chart-minor .report-chart-title {
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+.report-chart-minor .report-chart-canvas-tall {
+  height: 240px;
+  min-height: 240px;
 }
 
 /* 并排双图需要更高画布以容纳文件名标签 */
@@ -3401,12 +3468,12 @@ dialog::backdrop {
 
 .markdown-body pre .code-copy-btn {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 4px;
+  right: 4px;
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm);
   background: var(--control-bg);
@@ -4226,39 +4293,43 @@ dialog::backdrop {
 .chart-zoom-btn {
   position: absolute;
   top: 6px;
-  left: 6px;
+  right: 6px;
   display: inline-grid;
   place-items: center;
   width: 26px;
   height: 26px;
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm);
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 85%, transparent);
   color: var(--muted);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.4;
   z-index: 2;
+  backdrop-filter: blur(4px);
   transition: opacity var(--dur-fast) var(--ease-standard),
               color var(--dur-fast) var(--ease-standard),
               background var(--dur-fast) var(--ease-standard),
               border-color var(--dur-fast) var(--ease-standard);
 }
 
-.report-chart-canvas:hover .chart-zoom-btn,
-.report-chart-canvas-tall:hover .chart-zoom-btn,
+.chart-zoom-btn:hover,
 .chart-zoom-btn:focus-visible {
   opacity: 1;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent-muted);
 }
 
-.chart-zoom-btn:hover {
+/* removed old hover-only visibility */
+.chart-zoom-btn-old-hover {
   background: var(--accent-subtle);
   color: var(--accent);
   border-color: var(--accent-muted);
 }
 
 .chart-zoom-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 /* 确保图表容器是定位上下文 */
@@ -4666,6 +4737,10 @@ body.modal-open {
 
 /* ── #25 图表响应式高度（移动端更高） ───────────────────── */
 @media (max-width: 640px) {
+  .report-chart-canvas-hero {
+    height: 340px;
+    min-height: 340px;
+  }
   .report-chart-canvas-tall {
     height: 340px;
     min-height: 340px;
@@ -4674,13 +4749,25 @@ body.modal-open {
     height: 280px;
     min-height: 280px;
   }
+  .report-chart-minor .report-chart-canvas-tall {
+    height: 260px;
+    min-height: 260px;
+  }
 }
 
 /* 高分屏桌面端略微降低图表高度，腾出阅读空间 */
 @media (min-width: 1600px) {
+  .report-chart-canvas-hero {
+    height: 360px;
+    min-height: 360px;
+  }
   .report-chart-canvas-tall {
     height: 280px;
     min-height: 280px;
+  }
+  .report-chart-minor .report-chart-canvas-tall {
+    height: 220px;
+    min-height: 220px;
   }
 }
 
@@ -4965,6 +5052,14 @@ body.modal-open {
 #main.split-view .report-chart-canvas-tall {
   height: 240px;
   min-height: 240px;
+}
+#main.split-view .report-chart-canvas-hero {
+  height: 300px;
+  min-height: 300px;
+}
+#main.split-view .report-chart-minor .report-chart-canvas-tall {
+  height: 200px;
+  min-height: 200px;
 }
 
 /* ============================================================
