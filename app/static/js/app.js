@@ -1847,6 +1847,8 @@
   function disposeReportCharts() {
     reportChartInstances.forEach(function (chart) {
       try {
+        if (chart.__iaResizeObserver) chart.__iaResizeObserver.disconnect();
+        if (chart.__iaClearResizeTimer) chart.__iaClearResizeTimer();
         chart.dispose();
       } catch (e) {
         /* ignore */
@@ -2626,7 +2628,11 @@
       if (closed) return;
       closed = true;
       document.removeEventListener("keydown", modalKeyHandler, true);
-      if (modalChart && !modalChart.isDisposed()) modalChart.dispose();
+      if (modalChart && !modalChart.isDisposed()) {
+        if (modalChart.__iaResizeObserver) modalChart.__iaResizeObserver.disconnect();
+        if (modalChart.__iaClearResizeTimer) modalChart.__iaClearResizeTimer();
+        modalChart.dispose();
+      }
       modal.remove();
       document.body.classList.remove("modal-open");
       if (restoreFocus !== false && opener && opener.isConnected) opener.focus();
