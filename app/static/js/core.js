@@ -229,7 +229,14 @@
     }
   }
 
-  const i18nTable = loadI18n();
+  let i18nTable = loadI18n();
+
+  // 运行时热更新前端字符串表（应用内语言切换用）。保留 I18N_DEFAULTS 兜底。
+  function updateI18n(strings) {
+    if (strings && typeof strings === "object") {
+      i18nTable = Object.assign({}, I18N_DEFAULTS, strings);
+    }
+  }
 
   function translate(key, params) {
     const template = i18nTable[key] !== undefined ? i18nTable[key] : I18N_DEFAULTS[key];
@@ -552,6 +559,7 @@
 
   const ns = {
     apiJson,
+    updateI18n,
     escapeHtml,
     escapeAttr,
     safeClass,

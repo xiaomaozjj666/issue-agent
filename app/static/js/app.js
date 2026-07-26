@@ -1470,7 +1470,7 @@
       const resp = await fetch("/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issue_url: url }),
+        body: JSON.stringify(Object.assign({ issue_url: url }, window.IA_SETTINGS || {})),
       });
       if (!resp.ok) {
         let detail = t("error_unable_to_start");
@@ -2695,7 +2695,7 @@
       const resp = await fetch("/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-        body: JSON.stringify({ session_id: sessionId, message: msg }),
+        body: JSON.stringify(Object.assign({ session_id: sessionId, message: msg }, window.IA_SETTINGS || {}, window.__iaRegenerate ? { regenerate: true } : {})),
         signal: chatAbortController.signal,
       });
       if (!resp.ok) {
@@ -3679,6 +3679,9 @@
   IA.chat = chat;
   IA.analyze = analyze;
   IA.loadSessions = loadSessions;
+  IA.getReport = function () { return report; };
+  IA.getActiveSession = function () { return activeSession; };
+  IA.getSelectedSessions = function () { return Array.from(selectedSessions); };
 
   // #33 CDN 降级统一提示：检测 CDN 脚本加载失败标志，展示统一可关闭的横幅
   function checkCdnFailures() {
