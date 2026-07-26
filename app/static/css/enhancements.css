@@ -134,6 +134,14 @@ mark.report-search-hit.current { background: #f97316; color: #fff; }
   overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
 
+/* 表格的固有宽度会突破 1px，并被滚动容器计入横向范围。固定定位保留
+   屏幕阅读器可访问的数据表，同时不再撑宽手机端报告。 */
+table.sr-only {
+  position: fixed;
+  inset: 0 auto auto 0;
+  clip-path: inset(50%);
+}
+
 /* ── 批量对比 ── */
 .compare-surface { width: min(880px, 94vw); max-height: 82vh; display: flex; flex-direction: column; }
 .compare-body { display: flex; gap: 0; overflow-x: auto; padding: 0; }

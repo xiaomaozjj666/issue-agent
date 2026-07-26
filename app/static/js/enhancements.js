@@ -360,7 +360,7 @@
     btn.setAttribute("aria-pressed", "false");
     btn.title = t("report_search_placeholder");
     btn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6.75 1.5a5.25 5.25 0 1 0 3.2 9.4l3.32 3.33a.75.75 0 1 0 1.06-1.06l-3.32-3.33A5.25 5.25 0 0 0 6.75 1.5ZM3.25 6.75a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0Z"/></svg>';
-    header.appendChild(btn);
+    header.insertBefore(btn, el("report-close-btn"));
     btn.addEventListener("click", function () {
       const bar = el("report-search-bar");
       if (bar) { bar.remove(); btn.setAttribute("aria-pressed", "false"); return; }
