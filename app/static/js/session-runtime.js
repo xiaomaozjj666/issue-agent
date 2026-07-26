@@ -24,8 +24,9 @@
     if (metrics && metrics.review_calls !== undefined) metricItems.push(countLabel(metrics.review_calls, "timeline_reviews"));
     if (metrics && metrics.files_read !== undefined) metricItems.push(countLabel(metrics.files_read, "timeline_files_read"));
 
-    // 默认折叠：只显示最后 20 条，超出部分隐藏，点击"展开全部"显示完整轨迹
-    const VISIBLE_LIMIT = 20;
+    // 默认展示聚合摘要：同名工具调用合并计数，长轨迹保留开头与结尾各 4 条。
+    // 用户仍可展开查看完整时序，兼顾扫描效率和审计完整性。
+    const VISIBLE_LIMIT = 8;
     const total = meaningful.length;
     const buildStepHtml = function (event, extra) {
       let label = event.message || event.type;
@@ -38,6 +39,7 @@
       }
       if (event.type === "tool_call" && event.data) label = `${t("tool_call_label")}: ${event.data.name}`;
       if (event.type === "review" && event.data) label = t("review_progress", { status: IA.enumLabel("review_status", event.data.status) });
+      if (event._count > 1) label += ` × ${event._count}`;
       return `<div class="timeline-step${extra ? " timeline-step-extra" : ""}"><span>${IA.escapeHtml(label)}</span></div>`;
     };
     const metricHtml = metricItems
@@ -45,13 +47,29 @@
         return `<span class="timeline-metric">${IA.escapeHtml(item)}</span>`;
       })
       .join("");
-    const hasMore = total > VISIBLE_LIMIT;
-    const collapsedCount = hasMore ? total - VISIBLE_LIMIT : 0;
-    const visibleEvents = hasMore ? meaningful.slice(collapsedCount) : meaningful;
-    const visibleStepsHtml = visibleEvents.map(function (event) { return buildStepHtml(event, false); }).join("");
-    // 初始不创建折叠项，避免数百个隐藏网格项留下 gap、拖慢布局并推走后续按钮。
-    const extraStepsHtml = hasMore
-      ? meaningful.slice(0, collapsedCount).map(function (event) { return buildStepHtml(event, true); }).join("")
+    const toolIndexes = Object.create(null);
+    let summaryEvents = [];
+    meaningful.forEach(function (event) {
+      if (event.type !== "tool_call" || !event.data) {
+        summaryEvents.push(event);
+        return;
+      }
+      const toolName = String(event.data.name || "");
+      if (toolIndexes[toolName] !== undefined) {
+        summaryEvents[toolIndexes[toolName]]._count += 1;
+        return;
+      }
+      toolIndexes[toolName] = summaryEvents.length;
+      summaryEvents.push(Object.assign({}, event, { _count: 1 }));
+    });
+    if (summaryEvents.length > VISIBLE_LIMIT) {
+      summaryEvents = summaryEvents.slice(0, 4).concat(summaryEvents.slice(-4));
+    }
+    const hasMore = total > summaryEvents.length;
+    const collapsedCount = hasMore ? total - summaryEvents.length : 0;
+    const visibleStepsHtml = summaryEvents.map(function (event) { return buildStepHtml(event, false); }).join("");
+    const allStepsHtml = hasMore
+      ? meaningful.map(function (event) { return buildStepHtml(event, false); }).join("")
       : "";
     card.innerHTML =
       `<div class="timeline-header"><span class="timeline-title">${IA.escapeHtml(t("investigation_trail"))}</span>` +
@@ -67,12 +85,12 @@
         btn.addEventListener("click", function () {
           const expanded = btn.getAttribute("aria-expanded") === "true";
           if (expanded) {
-            stepsEl.querySelectorAll(".timeline-step-extra").forEach(function (el) { el.remove(); });
+            stepsEl.innerHTML = visibleStepsHtml;
             btn.setAttribute("aria-expanded", "false");
             btn.textContent = `${t("timeline_expand")} (${collapsedCount})`;
             stepsEl.dataset.collapsed = "1";
           } else {
-            stepsEl.insertAdjacentHTML("afterbegin", extraStepsHtml);
+            stepsEl.innerHTML = allStepsHtml;
             btn.setAttribute("aria-expanded", "true");
             btn.textContent = t("timeline_collapse");
             stepsEl.dataset.collapsed = "0";
