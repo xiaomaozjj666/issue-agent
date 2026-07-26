@@ -36,6 +36,11 @@ class CodeReference(BaseModel):
     path: str
     lines: str | None = Field(default=None, description="Line or range in L12 or L12-L18 format")
     reason: str | None = Field(default=None, description="Why this evidence supports the root cause")
+    # 证据强度与类型：用于前端「证据强度图」按可信度可视化，并支持点击下钻到对应条目
+    strength: Literal["weak", "moderate", "strong"] = "moderate"
+    kind: Literal["code", "log", "test", "config", "docs"] = "code"
+    # 该证据支撑的是哪一条结论（根因/影响/修复），缺省时视为支持整体根因
+    claim: str | None = Field(default=None, description="Which conclusion this evidence supports")
 
     @field_validator("lines")
     @classmethod
@@ -59,6 +64,30 @@ class ReviewAudit(BaseModel):
     reviewer_model: str | None = None
 
 
+class Hypothesis(BaseModel):
+    """调查过程中提出过的备选解释。呈现实则拒绝的假设，是「论证严谨」的可视信号。"""
+
+    statement: str
+    status: Literal["accepted", "rejected", "open"] = "open"
+    rationale: str = ""
+
+
+class Impact(BaseModel):
+    """问题影响面：严重度、发生可能性、波及的模块/文件（用于「波及范围图」）。"""
+
+    severity: Literal["low", "medium", "high", "critical"] = "medium"
+    likelihood: Literal["low", "medium", "high"] = "medium"
+    blast_radius: list[str] = Field(default_factory=list)
+
+
+class Reproduction(BaseModel):
+    """复现路径：让结论可被第三方独立验证，是报告可信度的关键支撑。"""
+
+    steps: list[str] = Field(default_factory=list)
+    observed: str = ""
+    expected: str = ""
+
+
 class AnalysisReport(BaseModel):
     summary: str
     root_cause: str
@@ -71,6 +100,16 @@ class AnalysisReport(BaseModel):
     files_examined: list[str] = Field(default_factory=list)
     evidence_audit: EvidenceAudit = Field(default_factory=EvidenceAudit)
     review_audit: ReviewAudit = Field(default_factory=ReviewAudit)
+    # ── 增强字段：让报告更具说服力、图表更具信息量（全部可选，向后兼容旧报告）──
+    confidence_rationale: str = Field(
+        default="", description="Why this confidence level — what raises or lowers certainty"
+    )
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
+    impact: Impact | None = Field(default=None, description="Severity, likelihood, blast radius")
+    reproduction: Reproduction | None = Field(default=None, description="Reproduction steps")
+    fix_rationale: str = Field(
+        default="", description="Why this fix was chosen over alternatives"
+    )
 
 
 class ReviewOutcome(BaseModel):

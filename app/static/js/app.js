@@ -2010,17 +2010,24 @@
       .join("");
     parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
 
-    // 3. ECharts 双图表：补丁改动分布（diffstat）+ 证据核对
-    // 前者对应 git diff --stat 的阅读习惯，后者核对证据是否读过、补丁是否改到
+    // 3. ECharts 图表：把「调查实质」可视化，而非过程指标
+    // - diffstat：补丁改动分布（git diff --stat 习惯）
+    // - verify：证据是否读过 / 补丁是否改到（一致性核对）
+    // - evidence-strength：每条证据强度（弱/中/强）× 类型，直接回答「凭什么信」
+    // - blast-radius：受影响模块/文件（来自 impact.blast_radius + 补丁），直接回答「有多严重」
     const sessionData = activeSession || {};
     const hasPatch = !!(r.patch && String(r.patch).trim());
-    if (hasPatch || hasEvidence) {
-      // 两图都有时并排，只有一张时占满整行
-      const halfClass = hasPatch && hasEvidence ? "report-chart-half" : "report-chart-full";
+    const hasImpact = !!(
+      r.impact &&
+      ((r.impact.blast_radius && r.impact.blast_radius.length) || r.impact.severity || r.impact.likelihood)
+    );
+    const showCharts = hasPatch || hasEvidence || hasImpact;
+    if (showCharts) {
+      // 多图并排：2 列网格布局，最多 4 图
       const chartBlocks = [];
       if (hasPatch) {
         chartBlocks.push(
-          `<div id="report-diffstat-section" class="report-chart ${halfClass}">` +
+          `<div id="report-diffstat-section" class="report-chart report-chart-half">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("diffstat_chart_title"))}</div>` +
           `<div id="report-diffstat-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("diffstat_chart_title"))}"></div>` +
           `<div class="report-chart-caption">${IA.escapeHtml(t("diffstat_chart_caption"))}</div>` +
@@ -2030,10 +2037,27 @@
       if (hasEvidence) {
         // 容器 id 供指标卡片（可信度/已读文件）下钻锚点
         chartBlocks.push(
-          `<div id="report-verify-section" class="report-chart ${halfClass}">` +
+          `<div id="report-verify-section" class="report-chart report-chart-half">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("verify_chart_title"))}</div>` +
           `<div id="report-verify-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("verify_chart_title"))}"></div>` +
           `<div class="report-chart-caption">${IA.escapeHtml(t("verify_chart_caption"))}</div>` +
+          `</div>`,
+        );
+        // 证据强度图：按强度横向条形、按类型着色、可点击下钻到对应证据条目
+        chartBlocks.push(
+          `<div id="report-evidence-strength-section" class="report-chart report-chart-half">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("chart_evidence_strength"))}</div>` +
+          `<div id="report-evidence-strength-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_evidence_strength"))}"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("evidence_strength_legend"))}</div>` +
+          `</div>`,
+        );
+      }
+      if (hasImpact) {
+        chartBlocks.push(
+          `<div id="report-blast-radius-section" class="report-chart report-chart-half">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("chart_blast_radius"))}</div>` +
+          `<div id="report-blast-radius-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_blast_radius"))}"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("report_blast_radius"))}</div>` +
           `</div>`,
         );
       }
@@ -2102,10 +2126,76 @@
           const linkHtml = ghUrl
             ? ` <a class="evidence-link" href="${IA.escapeAttr(ghUrl)}" target="_blank" rel="noopener noreferrer" title="${IA.escapeAttr(t("view_source"))}">${IA.svgIcon("external")}<span class="sr-only">${IA.escapeHtml(t("view_source"))}</span></a>`
             : "";
-          return `<div class="evidence-item" data-evidence-idx="${i}"><div class="evidence-path"><span class="evidence-path-text">${IA.escapeHtml(e.path)}</span>${e.lines ? `<span class="evidence-lines">${IA.escapeHtml(e.lines)}</span>` : ""}${linkHtml}</div><p>${IA.escapeHtml(e.reason || "")}</p></div>`;
+          const strengthCls = IA.safeClass(e.strength || "moderate");
+          const kindCls = IA.safeClass(e.kind || "code");
+          const strengthLabel = enumLabel("strength", e.strength || "moderate");
+          const kindLabel = enumLabel("kind", e.kind || "code");
+          const badges =
+            `<span class="evidence-badge evidence-strength-${strengthCls}" title="${IA.escapeAttr(strengthLabel)}">${IA.escapeHtml(strengthLabel)}</span>` +
+            `<span class="evidence-badge evidence-kind-${kindCls}">${IA.escapeHtml(kindLabel)}</span>`;
+          return `<div class="evidence-item" data-evidence-idx="${i}"><div class="evidence-path"><span class="evidence-path-text">${IA.escapeHtml(e.path)}</span>${e.lines ? `<span class="evidence-lines">${IA.escapeHtml(e.lines)}</span>` : ""}${linkHtml}</div><div class="evidence-badges">${badges}</div><p>${IA.escapeHtml(e.reason || "")}</p></div>`;
         })
         .join("");
       parts.push(pushSection("report-evidence", t("report_evidence"), `<div class="evidence-list">${items}</div>`));
+    }
+
+    // 8.5 置信度理由（凭什么信这个结论）
+    if (r.confidence_rationale) {
+      parts.push(
+        pushSection("report-confidence-rationale", t("report_confidence_rationale"), `<p>${IA.escapeHtml(r.confidence_rationale)}</p>`),
+      );
+    }
+
+    // 8.6 备选假设（被排除的其他可能——论证严谨性的可视信号）
+    if (r.hypotheses && r.hypotheses.length) {
+      const hypItems = r.hypotheses
+        .map(function (h) {
+          const statusCls = IA.safeClass(h.status);
+          return (
+            `<div class="hypothesis-item hypothesis-${statusCls}">` +
+            `<div class="hypothesis-head">` +
+            `<span class="hypothesis-status hypothesis-status-${statusCls}">${IA.escapeHtml(enumLabel("hypothesis", h.status))}</span>` +
+            `<span class="hypothesis-statement">${IA.escapeHtml(h.statement || "")}</span>` +
+            `</div>` +
+            (h.rationale ? `<p class="hypothesis-rationale">${IA.escapeHtml(h.rationale)}</p>` : "") +
+            `</div>`
+          );
+        })
+        .join("");
+      parts.push(pushSection("report-hypotheses", t("report_hypotheses"), `<div class="hypothesis-list">${hypItems}</div>`));
+    }
+
+    // 8.7 影响面 / 波及范围
+    if (r.impact) {
+      const imp = r.impact;
+      const sevCls = IA.safeClass(imp.severity);
+      const likeCls = IA.safeClass(imp.likelihood);
+      let body = `<div class="impact-head">` +
+        `<span class="impact-badge impact-severity-${sevCls}">${IA.escapeHtml(t("report_severity"))}: ${IA.escapeHtml(enumLabel("severity", imp.severity))}</span>` +
+        `<span class="impact-badge impact-likelihood-${likeCls}">${IA.escapeHtml(t("report_likelihood"))}: ${IA.escapeHtml(enumLabel("likelihood", imp.likelihood))}</span>` +
+        `</div>`;
+      if (imp.blast_radius && imp.blast_radius.length) {
+        body += `<div class="impact-blast"><div class="impact-blast-label">${IA.escapeHtml(t("report_blast_radius"))}</div><ul class="impact-blast-list">` +
+          imp.blast_radius.map(function (p) { return `<li><code>${IA.escapeHtml(p)}</code></li>`; }).join("") +
+          `</ul></div>`;
+      }
+      parts.push(pushSection("report-impact", t("report_impact"), body));
+    }
+
+    // 8.8 复现路径
+    if (r.reproduction && ((r.reproduction.steps && r.reproduction.steps.length) || r.reproduction.observed || r.reproduction.expected)) {
+      const rep = r.reproduction;
+      let body = "";
+      if (rep.steps && rep.steps.length) {
+        body += `<ol class="reproduction-steps">` + rep.steps.map(function (s) { return `<li>${IA.escapeHtml(s)}</li>`; }).join("") + `</ol>`;
+      }
+      if (rep.observed || rep.expected) {
+        body += `<div class="reproduction-compare">` +
+          (rep.observed ? `<div class="reproduction-observed"><span class="reproduction-label">${IA.escapeHtml(t("reproduction_observed"))}</span><p>${IA.escapeHtml(rep.observed)}</p></div>` : "") +
+          (rep.expected ? `<div class="reproduction-expected"><span class="reproduction-label">${IA.escapeHtml(t("reproduction_expected"))}</span><p>${IA.escapeHtml(rep.expected)}</p></div>` : "") +
+          `</div>`;
+      }
+      parts.push(pushSection("report-reproduction", t("report_reproduction"), body));
     }
 
     // 9. 修复方案
@@ -2130,6 +2220,11 @@
         })
         .join("");
       parts.push(pushSection("report-changes", t("report_proposed_changes"), `<ul class="change-list">${list}</ul>`));
+    }
+
+    // 9.5 修复取舍（为什么选这个方案而非其他）
+    if (r.fix_rationale) {
+      parts.push(pushSection("report-fix-rationale", t("report_fix_rationale"), `<p>${IA.escapeHtml(r.fix_rationale)}</p>`));
     }
 
     // 10. 修复补丁
@@ -2196,7 +2291,7 @@
 
     // #16 图表懒加载：用骨架屏占位，IntersectionObserver 触发时再初始化 ECharts
     // 避免首次渲染图表导致页面卡顿（移动端尤其明显）
-    ["report-diffstat-chart", "report-verify-chart"].forEach(function (id) {
+    ["report-diffstat-chart", "report-verify-chart", "report-evidence-strength-chart", "report-blast-radius-chart"].forEach(function (id) {
       const el = document.getElementById(id);
       if (el && !el.querySelector(".chart-skeleton")) {
         el.innerHTML = `<div class="chart-skeleton" aria-hidden="true"><div class="skeleton-bar skeleton-title"></div><div class="skeleton-grid"><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div></div><div class="skeleton-bar skeleton-caption"></div></div>`;
@@ -2415,6 +2510,8 @@
     const chartSpecs = [
       { id: "report-diffstat-chart", render: IA.Charts.renderDiffstat },
       { id: "report-verify-chart", render: IA.Charts.renderVerify },
+      { id: "report-evidence-strength-chart", render: IA.Charts.renderEvidenceStrength },
+      { id: "report-blast-radius-chart", render: IA.Charts.renderBlastRadius },
     ];
     chartSpecs.forEach(function (spec) {
       const el = document.getElementById(spec.id);
