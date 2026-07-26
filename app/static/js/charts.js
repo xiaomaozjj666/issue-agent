@@ -195,6 +195,19 @@
     });
   }
 
+  // 数据少时压缩画布高度，避免 1~3 条数据在 300px 容器中显得空旷稀疏。
+  // 放大模态框（.chart-modal-canvas）保持大画布，不压缩，便于查看细节。
+  function fitChartHeight(container, rowCount, perRow) {
+    if (!container || container.classList.contains("chart-modal-canvas")) return;
+    const rows = Math.max(1, rowCount || 1);
+    const per = perRow || 42;
+    const chrome = 82; // 图例 + 底部汇总 + 上下内边距
+    let h = chrome + rows * per;
+    h = Math.max(150, Math.min(h, 300));
+    container.style.height = h + "px";
+    container.style.minHeight = h + "px";
+  }
+
   // ── unified diff 解析：按文件统计增删行数 ────────────────
   // 与 git diff --numstat 同口径："+" 开头计新增，"-" 开头计删除，
   // 排除 +++/--- 文件头。文件路径取 +++ 行（新路径），删除文件回退到 --- 行。
@@ -268,6 +281,8 @@
     const totalAdded = stats.reduce(function (s, f) { return s + f.added; }, 0);
     const totalRemoved = stats.reduce(function (s, f) { return s + f.removed; }, 0);
 
+    fitChartHeight(container, rows.length);
+    const barW = rows.length <= 3 ? 26 : 16;
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
     chart.setOption({
@@ -337,7 +352,7 @@
           stack: "diff",
           data: rows.map(function (r) { return r.added; }),
           itemStyle: { color: palette.success, borderRadius: [0, 0, 0, 0] },
-          barMaxWidth: 16,
+          barMaxWidth: barW,
           emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
         },
         {
@@ -346,7 +361,7 @@
           stack: "diff",
           data: rows.map(function (r) { return r.removed; }),
           itemStyle: { color: palette.danger, borderRadius: [0, 3, 3, 0] },
-          barMaxWidth: 16,
+          barMaxWidth: barW,
           // 堆叠末端统一标注 +a −d（挂在最后一个 series 上才会显示在整条右侧）
           label: {
             show: true,
@@ -433,6 +448,8 @@
     rows.sort(function (a, b) { return a.count - b.count; });
     const labels = makeLabels(rows.map(function (r) { return r.path; }));
 
+    fitChartHeight(container, rows.length);
+    const barW = rows.length <= 3 ? 26 : 16;
     const readCount = rows.filter(function (r) { return r.read; }).length;
     const patchedCount = rows.filter(function (r) { return r.patched; }).length;
     const statParts = [];
@@ -509,7 +526,7 @@
             itemStyle: { color: r.read ? palette.primary : palette.danger, borderRadius: [0, 3, 3, 0] },
           };
         }),
-        barMaxWidth: 16,
+        barMaxWidth: barW,
         // 条形右侧标注：条数 + 补丁覆盖状态
         label: {
           show: true,
@@ -552,6 +569,13 @@
     config: BRAND.red,
     docs: "#722ED1",
   };
+  // 证据强度着色：这是本图的核心信息，必须用颜色直接区分弱/中/强。
+  // （此前按 kind 着色，同类型证据颜色一致，强度差异完全不可见。）
+  const STRENGTH_COLOR = {
+    weak: BRAND.gray,
+    moderate: BRAND.blue,
+    strong: BRAND.green,
+  };
   function strengthValue(s) {
     return s === "strong" ? 3 : s === "moderate" ? 2 : 1;
   }
@@ -582,6 +606,8 @@
       .sort(function (a, b) { return a.value - b.value; }); // 弱在下、强在上
     const labels = rows.map(function (r) { return shortName(r.path) + (r.lines ? " " + r.lines : ""); });
 
+    fitChartHeight(container, rows.length);
+    const barW = rows.length <= 3 ? 26 : 16;
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
     chart.setOption({
@@ -602,7 +628,7 @@
             (row.reason ? '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:280px;white-space:normal;">' + IA.escapeHtml(row.reason) + "</div>" : "");
         },
       }),
-      grid: { left: 8, right: 96, top: 12, bottom: 12, containLabel: true },
+      grid: { left: 8, right: 108, top: 12, bottom: 12, containLabel: true },
       toolbox: toolbox(palette),
       xAxis: {
         type: "value", min: 0, max: 3, interval: 1,
@@ -620,12 +646,16 @@
       series: [{
         type: "bar",
         data: rows.map(function (r) {
-          return { value: r.value, itemStyle: { color: KIND_COLOR[r.kind] || palette.muted, borderRadius: [0, 3, 3, 0] } };
+          return { value: r.value, itemStyle: { color: STRENGTH_COLOR[r.strength] || palette.muted, borderRadius: [0, 3, 3, 0] } };
         }),
-        barMaxWidth: 16,
+        barMaxWidth: barW,
         label: {
           show: true, position: "right", fontSize: 10, fontWeight: 600, color: palette.textDim,
-          formatter: function (params) { return enumLabel("strength", rows[params.dataIndex].strength); },
+          formatter: function (params) {
+            const row = rows[params.dataIndex];
+            // 右侧同时标注强度 + 类型，条形颜色已传达强度，标签补足类型信息
+            return enumLabel("strength", row.strength) + " · " + enumLabel("kind", row.kind);
+          },
         },
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
       }],
@@ -709,6 +739,8 @@
     const modules = Object.keys(moduleSet);
     const useBar = modules.length <= 3;
 
+    // bar 模式按模块数压缩高度；treemap 模式保持大画布
+    if (useBar) fitChartHeight(container, modules.length);
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
 
@@ -738,7 +770,7 @@
         grid: { left: 90, right: 70, top: 16, bottom: 16 },
         xAxis: {
           type: "value",
-          splitLine: { lineStyle: { color: palette.grid, type: "dashed" } },
+          splitLine: { lineStyle: { color: palette.line, opacity: 0.4, type: "dashed" } },
           axisLabel: { color: palette.textDim, fontSize: 11 },
         },
         yAxis: {
