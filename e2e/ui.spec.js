@@ -228,9 +228,13 @@ test("opens reports without hiding the conversation and builds valid GitHub link
   await page.getByRole("button", { name: "查看完整报告" }).click();
 
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
+  await expect(page.locator(".report-toc")).not.toHaveAttribute("open", "");
+  await expect(page.locator("#report-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator('#report-toggle > span[data-i18n]')).toHaveText("关闭");
   await expect(page.getByLabel("对话消息")).toBeVisible();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("可信度高");
   await expect(page.getByRole("complementary", { name: "分析报告" })).toContainText("独立审查 · 已通过");
+  await expect(page.locator(".confidence-badge")).toHaveCSS("-webkit-text-fill-color", /rgb/);
   await expect(page.getByRole("link", { name: "查看源码" }).first()).toHaveAttribute(
     "href",
     "https://github.com/acme/widget/blob/HEAD/src/a%20%231.py#L10-L12",
@@ -242,6 +246,30 @@ test("opens reports without hiding the conversation and builds valid GitHub link
   }));
   expect(layout.documentWidth).toBe(layout.viewportWidth);
   expect(layout.conversationWidth).toBeGreaterThan(500);
+
+  // 中等桌面宽度下隐藏侧栏并为报告预留空间，报告不再覆盖对话。
+  await page.setViewportSize({ width: 1040, height: 800 });
+  const compactDesktop = await page.evaluate(() => {
+    const conversation = document.getElementById("conversation").getBoundingClientRect();
+    const reportPanel = document.getElementById("report-panel").getBoundingClientRect();
+    return {
+      sidebarDisplay: getComputedStyle(document.getElementById("sidebar")).display,
+      conversationRight: conversation.right,
+      conversationWidth: conversation.width,
+      reportLeft: reportPanel.left,
+    };
+  });
+  expect(compactDesktop.sidebarDisplay).toBe("none");
+  expect(compactDesktop.conversationWidth).toBeGreaterThan(360);
+  expect(compactDesktop.conversationRight).toBeLessThanOrEqual(compactDesktop.reportLeft + 1);
+
+  // 对话区的报告按钮同时承担关闭操作，关闭后历史侧栏应恢复。
+  await page.locator("#report-toggle").click();
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toBeHidden();
+  await expect(page.locator("#sidebar")).toBeVisible();
+  await expect(page.locator('#report-toggle > span[data-i18n]')).toHaveText("查看报告");
+  await page.locator("#report-toggle").click();
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载 Markdown" }).click();
@@ -318,11 +346,11 @@ test("keeps large investigation histories collapsed and report actions stable", 
 
   await page.goto("/");
   await historyCard(page, 1).click();
-  await expect(page.locator(".timeline-step")).toHaveCount(20);
-  await page.getByRole("button", { name: "展开全部 (565)" }).click();
+  await expect(page.locator(".timeline-step")).toHaveCount(8);
+  await page.getByRole("button", { name: "展开全部 (577)" }).click();
   await expect(page.locator(".timeline-step")).toHaveCount(585);
   await page.getByRole("button", { name: "收起" }).click();
-  await expect(page.locator(".timeline-step")).toHaveCount(20);
+  await expect(page.locator(".timeline-step")).toHaveCount(8);
 
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
@@ -342,10 +370,13 @@ test("@mobile keeps history and report flows inside the viewport", async ({ page
     viewport: document.documentElement.clientWidth,
     report: document.getElementById("report-panel").getBoundingClientRect().width,
     reportBody: document.getElementById("report").getBoundingClientRect().width,
+    reportBodyClient: document.getElementById("report").clientWidth,
+    reportBodyScroll: document.getElementById("report").scrollWidth,
     evidenceCard: document.getElementById("report-evidence-map-section").getBoundingClientRect().width,
   }));
   expect(width.document).toBe(width.viewport);
   expect(width.report).toBeLessThanOrEqual(width.viewport);
   expect(width.reportBody).toBeLessThanOrEqual(width.viewport);
+  expect(width.reportBodyScroll).toBe(width.reportBodyClient);
   expect(width.evidenceCard).toBeLessThanOrEqual(width.viewport);
 });

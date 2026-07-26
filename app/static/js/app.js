@@ -926,6 +926,8 @@
     disposeReportCharts();
     document.getElementById("messages").innerHTML = "";
     document.getElementById("main").classList.remove("report-open");
+    document.body.classList.remove("report-visible");
+    syncReportToggle(false);
     document.getElementById("report-toggle").style.display = "none";
     document.getElementById("report").innerHTML = "";
     document.getElementById("input-bar").style.display = "none";
@@ -2301,9 +2303,9 @@
     }
 
     // 目录前置（金字塔结构下，TOC 作为快速跳转入口）
-    // 折叠状态从 localStorage 恢复，默认展开
+    // 折叠状态从 localStorage 恢复；默认收起，把首屏留给结论和关键指标。
     if (toc.length) {
-      const tocOpen = localStorage.getItem("report-toc-open") !== "false";
+      const tocOpen = localStorage.getItem("report-toc-open") === "true";
       parts.unshift(
         `<details class="report-toc"${tocOpen ? " open" : ""}><summary>${IA.escapeHtml(t("toc_title"))}</summary><ol>${toc.join("")}</ol></details>`,
       );
@@ -2664,9 +2666,24 @@
     });
   }
 
+  function syncReportToggle(open) {
+    const reportToggle = document.getElementById("report-toggle");
+    const toggleKey = open ? "report_close" : "report_toggle";
+    reportToggle.setAttribute("aria-expanded", String(open));
+    reportToggle.setAttribute("aria-label", t(toggleKey));
+    reportToggle.setAttribute("data-i18n-aria-label", toggleKey);
+    reportToggle.title = t(toggleKey);
+    const toggleLabel = reportToggle.querySelector("span");
+    if (toggleLabel) {
+      toggleLabel.textContent = t(toggleKey);
+      toggleLabel.setAttribute("data-i18n", toggleKey);
+    }
+  }
+
   function toggleReport(open) {
     document.getElementById("main").classList.toggle("report-open", open);
-    document.getElementById("report-toggle").setAttribute("aria-expanded", String(open));
+    document.body.classList.toggle("report-visible", open);
+    syncReportToggle(open);
     if (open) {
       document.getElementById("report").scrollTop = 0;
       const closeBtn = document.querySelector(".report-close");
@@ -3574,7 +3591,7 @@
       IA.Runtime.cancelAnalysis();
     });
     document.getElementById("report-toggle").addEventListener("click", function () {
-      toggleReport(true);
+      toggleReport(!document.getElementById("main").classList.contains("report-open"));
     });
     document.getElementById("report-close-btn").addEventListener("click", function () {
       toggleReport(false);

@@ -3146,6 +3146,58 @@ dialog::backdrop {
     min-width: 0;
     box-shadow: var(--shadow-large);
   }
+
+  .brand-copy span {
+    display: none;
+  }
+
+  .compose-row {
+    grid-template-columns: 1fr;
+  }
+
+  .primary-action {
+    width: 100%;
+  }
+
+  #main.split-view #report-panel {
+    position: static;
+    inset: auto;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1180px) {
+  body.report-visible #sidebar {
+    display: none;
+  }
+
+  body.report-visible #main.report-open:not(.split-view) #conversation {
+    margin-right: min(560px, 54vw);
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1180px) {
+  .brand-identity {
+    gap: 8px;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+
+  .brand-actions {
+    gap: 0;
+  }
+
+  .brand-actions .icon-button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand-copy strong {
+    font-size: var(--text-sm);
+  }
 }
 
 @media (max-width: 900px) {
@@ -3154,21 +3206,9 @@ dialog::backdrop {
     width: 252px;
   }
 
-  .brand-copy span {
-    display: none;
-  }
-
-  .compose-row {
-    grid-template-columns: minmax(0, 1fr) 34px;
-  }
-
-  .primary-action {
-    width: 34px;
-    padding: 0;
-  }
-
-  .primary-action span {
-    display: none;
+  #report-panel {
+    width: 100%;
+    max-width: 100%;
   }
 }
 
@@ -4129,6 +4169,15 @@ dialog::backdrop {
       var(--red-emphasis) 50%, var(--red) 75%,
       var(--red-emphasis) 100%);
   }
+}
+
+/* 状态标签以可读性优先，避免 background-clip 在部分合成路径中只留下圆点。 */
+.confidence-badge {
+  background-image: none;
+  background-clip: border-box;
+  -webkit-background-clip: border-box;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
 }
 
 [data-theme="light"] .confidence-high { color: var(--green); }
