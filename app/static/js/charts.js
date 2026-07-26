@@ -32,15 +32,14 @@
     tooltipBorder: "#30363d",
     bg: "#0d1117",
     splitArea: ["rgba(88,166,255,0.035)", "rgba(88,166,255,0.07)"],
-    riskLow: "#183c24",
-    riskMedium: "#3b3217",
-    riskHigh: "#48291a",
-    riskCritical: "#442129",
-    riskLowHover: "#20532f",
-    riskMediumHover: "#55471c",
-    riskHighHover: "#61341d",
-    riskCriticalHover: "#5e2731",
-    riskCellBorder: "rgba(240,246,252,0.14)",
+    riskLow: "rgba(63,185,80,0.09)",
+    riskMedium: "rgba(210,153,34,0.09)",
+    riskHigh: "rgba(219,109,40,0.11)",
+    riskCritical: "rgba(248,81,73,0.12)",
+    riskLowHover: "rgba(63,185,80,0.18)",
+    riskMediumHover: "rgba(210,153,34,0.18)",
+    riskHighHover: "rgba(219,109,40,0.21)",
+    riskCriticalHover: "rgba(248,81,73,0.22)",
     riskMarkerHigh: "#db6d28",
   };
 
@@ -66,7 +65,6 @@
     riskMediumHover: "#fae17d",
     riskHighHover: "#ffc680",
     riskCriticalHover: "#ffcecb",
-    riskCellBorder: "rgba(31,35,40,0.18)",
     riskMarkerHigh: "#bc6b00",
   };
 
@@ -94,7 +92,7 @@
     if (!isMobile()) return tooltip;
     return Object.assign({}, tooltip, {
       confine: true,
-      appendToBody: true,
+      appendToBody: tooltip && tooltip.appendToBody === false ? false : true,
       enterable: false,
       padding: [8, 10],
       hideDelay: 100,
@@ -116,6 +114,28 @@
     if (x < 8) x = 8;
     if (y < 8) y = 8;
     return [x, y];
+  }
+
+  // 矩阵 tooltip 放在当前单元格外侧，避免遮住用户正在比较的数据。
+  function matrixTooltipPosition(pos, params, dom, rect, size) {
+    const viewWidth = size.viewSize[0];
+    const viewHeight = size.viewSize[1];
+    if (viewWidth < 420) {
+      let mobileX = pos[0] - dom.offsetWidth / 2;
+      let mobileY = pos[1] - dom.offsetHeight - 46;
+      if (mobileY < 8) mobileY = pos[1] + 46;
+      mobileX = Math.max(8, Math.min(mobileX, viewWidth - dom.offsetWidth - 8));
+      mobileY = Math.max(8, Math.min(mobileY, viewHeight - dom.offsetHeight - 8));
+      return [mobileX, mobileY];
+    }
+    // 三列矩阵中，光标通常位于格子中心；预留半格宽度和稳定的安全间距，
+    // 比依赖 ECharts 在不同 renderer 下语义不一致的 rect 更稳定。
+    const clearance = Math.max(120, Math.min(200, (viewWidth - 96) / 6 + 76));
+    let x = pos[0] + clearance;
+    if (x + dom.offsetWidth > viewWidth - 8) x = pos[0] - dom.offsetWidth - clearance;
+    let y = pos[1] - dom.offsetHeight / 2;
+    y = Math.max(8, Math.min(y, viewHeight - dom.offsetHeight - 8));
+    return [Math.max(8, x), y];
   }
 
   // ── 公共工具栏：保存图片 + 刷新重绘 + 数据视图 ────────────
@@ -807,12 +827,25 @@
         const band = riskBand(s, l);
         const key = band.charAt(0).toUpperCase() + band.slice(1);
         cellData.push({
-          value: [xi, yi],
+          value: [xi, yi, sevVal[s] * likeVal[l]],
           severity: s,
           likelihood: l,
           band: band,
-          color: palette["risk" + key],
-          hoverColor: palette["risk" + key + "Hover"],
+          itemStyle: {
+            color: palette["risk" + key],
+            borderColor: palette.bg,
+            borderWidth: 6,
+            borderRadius: 7,
+          },
+          emphasis: {
+            itemStyle: {
+              color: palette["risk" + key + "Hover"],
+              borderColor: palette.bg,
+              borderWidth: 6,
+              shadowBlur: 3,
+              shadowColor: "rgba(0,0,0,0.14)",
+            },
+          },
         });
       });
     });
@@ -827,24 +860,25 @@
       animationDuration: 200,
       animationEasing: "cubicOut",
       tooltip: mobileTooltip({
-        confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
+        confine: true, appendToBody: false, enterable: false, className: "ia-chart-tooltip",
+        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [8, 10],
         textStyle: { color: palette.text, fontSize: 12 },
-        position: smartTooltipPosition,
+        transitionDuration: 0,
+        position: matrixTooltipPosition,
         formatter: function (params) {
           const d = (params && params.data) || {};
-          const values = d.value || [];
-          const activeSev = d.severity || values[2] || sev;
-          const activeLike = d.likelihood || values[3] || like;
+          const activeSev = d.severity || sev;
+          const activeLike = d.likelihood || like;
           const activeColor = riskMarkerColor(activeSev, palette);
-          const heading = d.severity || values[2]
-            ? enumLabel("severity", activeSev) + " × " + enumLabel("likelihood", activeLike)
-            : t("chart_risk_matrix");
-          return '<div style="font-weight:600;">' + IA.escapeHtml(heading) + "</div>" +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
-            ': <b style="color:' + activeColor + ';">' + IA.escapeHtml(enumLabel("severity", activeSev)) + "</b></div>" +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_likelihood")) +
-            ': <b>' + IA.escapeHtml(enumLabel("likelihood", activeLike)) + "</b></div>";
+          const prefix = params.seriesType === "scatter"
+            ? '<b style="color:' + palette.text + ';">' + IA.escapeHtml(t("risk_matrix_root_cause")) + "</b>" +
+              '<span style="color:' + palette.textDim + ';"> · </span>'
+            : "";
+          return '<div style="font-size:11px;white-space:nowrap;">' + prefix +
+            '<span style="color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) + "</span> " +
+            '<b style="color:' + activeColor + ';">' + IA.escapeHtml(enumLabel("severity", activeSev)) + "</b>" +
+            '<span style="color:' + palette.textDim + ';"> · ' + IA.escapeHtml(t("report_likelihood")) + "</span> " +
+            "<b>" + IA.escapeHtml(enumLabel("likelihood", activeLike)) + "</b></div>";
         },
       }),
       grid: { left: 16, right: 28, top: 52, bottom: 42, containLabel: true },
@@ -875,47 +909,16 @@
       },
       series: [
         {
-          type: "custom",
-          dimensions: ["likelihoodIndex", "severityIndex", "severity", "likelihood"],
-          encode: { x: 0, y: 1, tooltip: [2, 3] },
-          renderItem: function (params, api) {
-            const d = cellData[params.dataIndex];
-            const center = api.coord([api.value(0), api.value(1)]);
-            const size = api.size([1, 1]);
-            const w = Math.max(12, size[0] - 8);
-            const h = Math.max(12, size[1] - 8);
-            return {
-              type: "rect",
-              shape: { x: center[0] - w / 2, y: center[1] - h / 2, width: w, height: h, r: 5 },
-              style: { fill: d.color, stroke: palette.riskCellBorder, lineWidth: 0.6 },
-              emphasis: {
-                style: {
-                  fill: d.hoverColor,
-                  stroke: palette.textDim,
-                  lineWidth: 1.2,
-                  shadowBlur: 8,
-                  shadowColor: "rgba(0,0,0,0.24)",
-                },
-              },
-            };
-          },
-          data: cellData.map(function (d) {
-            return {
-              value: [d.value[0], d.value[1], d.severity, d.likelihood],
-              severity: d.severity,
-              likelihood: d.likelihood,
-              band: d.band,
-              color: d.color,
-              itemStyle: { color: d.color },
-            };
-          }),
-          silent: true,
+          type: "heatmap",
+          data: cellData,
+          progressive: 0,
+          cursor: "pointer",
           z: 1,
         },
         {
           type: "scatter",
           symbolSize: 18,
-          data: [{ value: [issueX, issueY] }],
+          data: [{ value: [issueX, issueY], severity: sev, likelihood: like }],
           itemStyle: {
             color: markerColor,
             borderColor: palette.bg || "#fff",
@@ -939,33 +942,6 @@
             itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,0,0,0.34)" },
           },
           z: 10,
-        },
-        {
-          type: "scatter",
-          name: "risk-cell-hit-area",
-          symbol: "rect",
-          symbolSize: [Math.max(54, Math.min(118, (container.clientWidth - 96) / 3 - 8)), 44],
-          data: cellData.map(function (d) {
-            return {
-              value: [d.value[0], d.value[1], d.severity, d.likelihood],
-              severity: d.severity,
-              likelihood: d.likelihood,
-              band: d.band,
-              emphasis: { itemStyle: { color: d.hoverColor } },
-            };
-          }),
-          itemStyle: { color: "rgba(0,0,0,0)" },
-          emphasis: {
-            scale: false,
-            itemStyle: {
-              borderColor: palette.textDim,
-              borderWidth: 1.2,
-              shadowBlur: 8,
-              shadowColor: "rgba(0,0,0,0.24)",
-            },
-          },
-          cursor: "pointer",
-          z: 5,
         },
       ],
     });
@@ -1020,7 +996,7 @@
           vertical: true,
           width: safeWidth,
           height: evidence.length > 4 ? 380 : 350,
-          rootLabelW: Math.max(180, Math.min(360, safeWidth - 96)),
+          rootLabelW: Math.max(180, Math.min(520, safeWidth - 128)),
           evidenceLabelW: Math.max(64, Math.min(168, Math.floor((safeWidth - 48) / columns) - 40)),
           rootMaxLength: 104,
           top: 140,

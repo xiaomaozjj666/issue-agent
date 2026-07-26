@@ -459,7 +459,7 @@
   function attachSpotlight(el, opts) {
     if (!el || prefersReducedMotion()) return;
     if (window.matchMedia("(hover: none)").matches) return; // 触屏禁用
-    var defaultIntensity = el.classList.contains("report-chart") ? 0.45 : 0.12;
+    var defaultIntensity = el.classList.contains("report-chart") ? 0.26 : 0.12;
     const intensity = opts && typeof opts.intensity === "number" ? opts.intensity : defaultIntensity;
     const size = (opts && opts.size) || 380;
 
