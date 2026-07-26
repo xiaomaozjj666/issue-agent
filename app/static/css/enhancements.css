@@ -6,7 +6,8 @@
 .health-indicator { padding: 6px; }
 .health-dot {
   display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-  background: var(--accent-muted); transition: background .3s, box-shadow .3s;
+  background: var(--accent-muted);
+  transition: background var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
 }
 .health-dot[data-state="ok"] { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18); }
 .health-dot[data-state="down"] { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.18); }
@@ -20,14 +21,14 @@
 .drawer[aria-hidden="false"], .overlay[aria-hidden="false"] { display: block; }
 .drawer-backdrop, .overlay-backdrop {
   position: absolute; inset: 0; background: rgba(0,0,0,.5);
-  backdrop-filter: blur(2px); animation: fadeIn .18s ease both;
+  backdrop-filter: blur(2px); animation: fadeIn var(--dur-base) var(--ease-standard) both;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .drawer-surface, .overlay-surface {
   position: absolute; background: var(--bg); color: var(--fg);
-  border: 1px solid var(--canvas-subtle); border-radius: 14px;
-  box-shadow: 0 24px 60px rgba(0,0,0,.45);
-  animation: popIn .2s cubic-bezier(.2,.7,.3,1) both;
+  border: 1px solid var(--canvas-subtle); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  animation: popIn var(--dur-base) var(--ease-out) both;
 }
 @keyframes popIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
 
@@ -35,7 +36,7 @@
 .drawer-surface {
   top: 0; right: 0; height: 100%; width: min(380px, 92vw);
   border-radius: 0; display: flex; flex-direction: column;
-  animation: slideInRight .24s cubic-bezier(.2,.7,.3,1) both;
+  animation: slideInRight var(--dur-base) var(--ease-out) both;
 }
 @keyframes slideInRight { from { transform: translateX(100%); } to { transform: none; } }
 .drawer-head {
@@ -76,9 +77,9 @@
 .palette-surface {
   position: relative; width: min(620px, 92vw); max-height: 64vh; display: flex;
   flex-direction: column; background: var(--bg); color: var(--fg);
-  border: 1px solid var(--canvas-subtle); border-radius: 16px; overflow: hidden;
-  box-shadow: 0 24px 70px rgba(0,0,0,.5);
-  animation: popIn .2s cubic-bezier(.2,.7,.3,1) both;
+  border: 1px solid var(--canvas-subtle); border-radius: var(--radius-lg); overflow: hidden;
+  box-shadow: var(--shadow-xl);
+  animation: popIn var(--dur-base) var(--ease-out) both;
 }
 .palette-search { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--canvas-subtle); color: var(--fg); }
 .palette-search svg { width: 18px; height: 18px; opacity: .7; }
@@ -93,8 +94,8 @@
 .palette-item {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   background: transparent; border: 0; color: var(--fg); padding: 10px 12px;
-  border-radius: 10px; cursor: pointer;
-  animation: paletteItemIn .3s cubic-bezier(.2,.7,.3,1) both;
+  border-radius: var(--radius); cursor: pointer;
+  animation: paletteItemIn var(--dur-base) var(--ease-out) both;
 }
 @keyframes paletteItemIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .palette-item:hover, .palette-item.active { background: var(--accent-subtle); }
@@ -163,7 +164,8 @@ table.sr-only {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
   background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px;
   font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none;
-  transition: opacity .25s, transform .25s; z-index: 90; box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+  z-index: 90; box-shadow: var(--shadow-large);
 }
 #ia-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 

@@ -84,6 +84,14 @@ test("renders responsive decision charts without overlaps or console errors", as
   });
 
   await page.goto("/");
+  const heroStep = page.locator(".hero-step").first();
+  await heroStep.hover();
+  await expect(heroStep).toHaveCSS("transform", "none");
+  expect(await heroStep.getAttribute("data-spotlight-active")).toBeNull();
+  const heroExample = page.locator(".hero-example").first();
+  await heroExample.hover();
+  expect(await heroExample.getAttribute("data-spotlight-active")).toBeNull();
+  await expect(heroExample).not.toHaveCSS("transform", "none");
   await historyCard(page, 1).click();
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
@@ -141,11 +149,25 @@ test("renders responsive decision charts without overlaps or console errors", as
     borderLayerZIndex: getComputedStyle(card, "::after").zIndex,
   }));
   expect(spotlight.active).toBe("true");
-  expect(Number(spotlight.opacity)).toBeGreaterThan(0.5);
+  expect(Number(spotlight.opacity)).toBeGreaterThan(0.3);
+  expect(Number(spotlight.opacity)).toBeLessThan(0.7);
   expect(spotlight.borderLayer).toContain("radial-gradient");
   expect(spotlight.borderLayerZIndex).not.toBe("-1");
 
-  // 图表画布保留 ECharts tooltip，同时用 ClickSpark 确认点击已被接收。
+  const staticReportCards = await page.evaluate(() => ({
+    conclusionSpotlight: document.querySelector(".report-conclusion").dataset.spotlightActive || "",
+    metricSpotlight: document.querySelector(".report-metric-card").dataset.spotlightActive || "",
+    conclusionInlineTransform: document.querySelector(".report-conclusion").style.transform,
+    metricInlineTransform: document.querySelector(".report-metric-card").style.transform,
+  }));
+  expect(staticReportCards).toEqual({
+    conclusionSpotlight: "",
+    metricSpotlight: "",
+    conclusionInlineTransform: "",
+    metricInlineTransform: "",
+  });
+
+  // 图表画布保留 ECharts tooltip，点击反馈不再叠加装饰性火花。
   await page.evaluate(() => {
     const target = document.getElementById("report-risk-matrix-chart");
     window.echarts.getInstanceByDom(target).dispatchAction({ type: "showTip", seriesIndex: 1, dataIndex: 0 });
@@ -153,9 +175,8 @@ test("renders responsive decision charts without overlaps or console errors", as
   await expect(page.locator(".ia-chart-tooltip").last()).toBeVisible();
   const riskCanvas = page.locator("#report-risk-matrix-chart canvas").first();
   await riskCanvas.click({ position: { x: 24, y: 24 } });
-  await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(1);
-  await expect(page.locator(".motion-spark-burst--chart")).toHaveCSS("pointer-events", "none");
-  await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0, { timeout: 1_000 });
+  await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0);
+  await expect(page.locator(".motion-ripple")).toHaveCount(0);
 
   // 普通报告侧栏宽度不足时单列排布。
   const sidePanelTops = await page.evaluate(() => ({
