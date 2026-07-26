@@ -2191,6 +2191,7 @@ a:hover {
 
 .report-chart {
   position: relative;
+  isolation: isolate;
   margin: 0;
   padding: var(--space-3);
   border: 1px solid var(--border);
@@ -2205,40 +2206,66 @@ a:hover {
 
 .report-chart:hover {
   border-color: var(--accent-muted);
-  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.12), var(--shadow-sm);
+  box-shadow: 0 5px 18px rgba(59, 130, 246, 0.16), var(--shadow-sm);
 }
 
-
-/* -- ReactBits BorderGlow ----------------------------------------- */
+/* ReactBits SpotlightCard：只移动伪元素光照，不变换 ECharts 画布坐标系。 */
 .report-chart {
   --spot-x: 50%;
   --spot-y: 50%;
   --spot-o: 0;
+  --spot-size: 380px;
 }
+
 .report-chart::before {
-  content: '';
+  content: "";
   position: absolute;
-  top: -2px;
-  left: -2px;
-  right: -2px;
-  bottom: -2px;
-  border-radius: calc(var(--radius) + 2px);
+  inset: 1px;
+  border-radius: calc(var(--radius) - 1px);
   background: radial-gradient(
-    320px circle at var(--spot-x) var(--spot-y),
-    rgba(100, 160, 255, calc(var(--spot-o) * 0.7)),
-    transparent 50%
+    var(--spot-size) circle at var(--spot-x) var(--spot-y),
+    rgba(88, 166, 255, calc(var(--spot-o) * 0.10)),
+    transparent 62%
   );
-  filter: blur(6px);
-  z-index: -1;
+  z-index: 1;
   pointer-events: none;
 }
+
+.report-chart::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 1.5px;
+  border-radius: calc(var(--radius) + 1px);
+  background: radial-gradient(
+    var(--spot-size) circle at var(--spot-x) var(--spot-y),
+    rgba(88, 166, 255, calc(var(--spot-o) * 0.82)),
+    transparent 58%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  z-index: 3;
+  pointer-events: none;
+}
+
 [data-theme="light"] .report-chart::before {
   background: radial-gradient(
-    320px circle at var(--spot-x) var(--spot-y),
-    rgba(50, 120, 220, calc(var(--spot-o) * 0.55)),
-    transparent 50%
+    var(--spot-size) circle at var(--spot-x) var(--spot-y),
+    rgba(9, 105, 218, calc(var(--spot-o) * 0.065)),
+    transparent 62%
   );
 }
+
+[data-theme="light"] .report-chart::after {
+  background: radial-gradient(
+    var(--spot-size) circle at var(--spot-x) var(--spot-y),
+    rgba(9, 105, 218, calc(var(--spot-o) * 0.65)),
+    transparent 58%
+  );
+}
+
 .report-chart + .report-chart {
   margin-top: 0;
 }
@@ -5282,13 +5309,21 @@ body.modal-open {
   animation: motion-spark-fly 440ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.motion-spark-burst--chart .motion-spark-line {
+  top: -4px;
+  height: 8px;
+  background: var(--accent);
+  animation-duration: 360ms;
+  --spark-distance: -21px;
+}
+
 @keyframes motion-spark-fly {
   0% {
     transform: rotate(var(--spark-angle)) translateY(-8px) scaleY(1);
     opacity: 1;
   }
   100% {
-    transform: rotate(var(--spark-angle)) translateY(-28px) scaleY(0.35);
+    transform: rotate(var(--spark-angle)) translateY(var(--spark-distance, -28px)) scaleY(0.35);
     opacity: 0;
   }
 }
