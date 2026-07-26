@@ -912,25 +912,16 @@
     }
     const palette = getPalette();
     const rootCause = String(report.root_cause || t("risk_matrix_root_cause")).trim();
-    const chartWidth = Math.max(320, container.clientWidth || 320);
-    const compact = chartWidth < 480;
-    const rootLabelW = compact ? 112 : Math.max(132, Math.min(280, Math.round(chartWidth * 0.3)));
-    const evidenceLabelW = compact ? 64 : Math.max(108, Math.min(220, Math.round(chartWidth * 0.24)));
-    const horizontalPadding = compact ? 20 : 28;
-    const rootMaxLength = compact ? 42 : chartWidth < 640 ? 68 : 84;
-    const rootLabel = rootCause.length > rootMaxLength ? rootCause.slice(0, rootMaxLength).trimEnd() + "…" : rootCause;
-    setChartHeight(container, Math.max(300, Math.min(500, 160 + evidence.length * 42)));
 
     const children = evidence.map(function (e, i) {
       const pathParts = String(e.path).split("/");
       const fileName = pathParts[pathParts.length - 1] || e.path;
-      const nodeLabel = compact
-        ? (e.lines || fileName)
-        : (e.lines ? e.lines + " · " + fileName : fileName);
       return {
-        name: nodeLabel,
+        name: fileName,
         idx: i,
         fullPath: e.path,
+        shortPath: pathParts.slice(-2).join("/") || fileName,
+        fileName: fileName,
         lines: e.lines || "",
         strength: e.strength || "moderate",
         kind: e.kind || "code",
@@ -938,25 +929,120 @@
         itemStyle: { color: STRENGTH_COLOR[e.strength || "moderate"] || palette.muted },
       };
     });
-    const treeData = [{
-      name: rootLabel,
-      itemStyle: { color: palette.primary, borderColor: palette.primary },
-      label: {
-        position: "left",
-        color: palette.text,
-        fontWeight: 700,
-        fontSize: 11,
-        lineHeight: 17,
-        width: rootLabelW,
-        overflow: "break",
-        backgroundColor: palette.tooltipBg,
-        borderColor: palette.line,
-        borderWidth: 1,
-        borderRadius: 4,
-        padding: [5, 8],
-      },
-      children: children,
-    }];
+
+    function evidenceLayout(width) {
+      const safeWidth = Math.max(320, width || 320);
+      const vertical = safeWidth < 680 && evidence.length <= 4;
+      if (vertical) {
+        const columns = Math.max(1, evidence.length);
+        return {
+          vertical: true,
+          width: safeWidth,
+          height: 340,
+          rootLabelW: Math.max(180, Math.min(260, safeWidth - 96)),
+          evidenceLabelW: Math.max(64, Math.min(102, Math.floor((safeWidth - 48) / columns) - 28)),
+          rootMaxLength: 104,
+          top: 148,
+          bottom: 96,
+          left: 32,
+          right: 32,
+        };
+      }
+      return {
+        vertical: false,
+        width: safeWidth,
+        height: Math.max(260, Math.min(440, 164 + evidence.length * 32)),
+        rootLabelW: Math.max(150, Math.min(250, Math.round(safeWidth * 0.26))),
+        evidenceLabelW: Math.max(124, Math.min(220, Math.round(safeWidth * 0.22))),
+        rootMaxLength: 140,
+        top: 52,
+        bottom: 30,
+        left: 0,
+        right: 0,
+      };
+    }
+
+    function evidenceSeries(layout) {
+      const rootLabel = rootCause.length > layout.rootMaxLength
+        ? rootCause.slice(0, layout.rootMaxLength).trimEnd() + "…"
+        : rootCause;
+      const rootPosition = layout.vertical ? "top" : "left";
+      const leafPosition = layout.vertical ? "bottom" : "right";
+      return {
+        id: "evidence-map-tree",
+        type: "tree",
+        roam: container.classList.contains("chart-modal-canvas"),
+        data: [{
+          name: rootLabel,
+          itemStyle: { color: palette.primary, borderColor: palette.primary },
+          label: {
+            position: rootPosition,
+            verticalAlign: layout.vertical ? "bottom" : "middle",
+            align: layout.vertical ? "center" : "right",
+            distance: 10,
+            color: palette.text,
+            fontWeight: 700,
+            fontSize: 11,
+            lineHeight: 17,
+            width: layout.rootLabelW,
+            overflow: "break",
+            backgroundColor: palette.tooltipBg,
+            borderColor: palette.line,
+            borderWidth: 1,
+            borderRadius: 4,
+            padding: [6, 8],
+          },
+          children: children,
+        }],
+        orient: layout.vertical ? "TB" : "LR",
+        left: layout.vertical ? layout.left : layout.rootLabelW + 32,
+        right: layout.vertical ? layout.right : layout.evidenceLabelW + 36,
+        top: layout.top,
+        bottom: layout.bottom,
+        symbol: "circle",
+        symbolSize: 13,
+        edgeShape: "curve",
+        edgeForkPosition: "50%",
+        expandAndCollapse: false,
+        initialTreeDepth: -1,
+        lineStyle: { color: palette.line, width: 1.5, curveness: layout.vertical ? 0.42 : 0.5 },
+        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1.5 },
+        label: {
+          color: palette.text,
+          fontSize: 11,
+        },
+        leaves: {
+          label: {
+            position: leafPosition,
+            verticalAlign: layout.vertical ? "top" : "middle",
+            align: layout.vertical ? "center" : "left",
+            distance: 9,
+            color: palette.text,
+            fontSize: 10,
+            lineHeight: 15,
+            width: layout.evidenceLabelW,
+            overflow: "truncate",
+            backgroundColor: palette.tooltipBg,
+            borderColor: palette.line,
+            borderWidth: 1,
+            borderRadius: 4,
+            padding: [4, 6],
+            formatter: function (params) {
+              const d = params.data || {};
+              const path = layout.vertical ? d.fileName : d.shortPath;
+              const strength = enumLabel("strength", d.strength);
+              if (layout.vertical) return [path, d.lines, strength].filter(Boolean).join("\n");
+              const detail = [d.lines, strength].filter(Boolean).join(" · ");
+              return path + (detail ? "\n" + detail : "");
+            },
+          },
+        },
+        emphasis: { focus: "descendant", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+      };
+    }
+
+    let layout = evidenceLayout(container.clientWidth);
+    setChartHeight(container, layout.height);
 
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
@@ -983,46 +1069,28 @@
         },
       }),
       toolbox: toolbox(palette),
-      series: [{
-        type: "tree",
-        roam: container.classList.contains("chart-modal-canvas"),
-        data: treeData,
-        orient: "LR",
-        left: rootLabelW + horizontalPadding,
-        right: evidenceLabelW + horizontalPadding,
-        top: 48,
-        bottom: 24,
-        symbol: "circle",
-        symbolSize: 13,
-        edgeShape: "curve",
-        edgeForkPosition: "50%",
-        expandAndCollapse: false,
-        initialTreeDepth: -1,
-        lineStyle: { color: palette.line, width: 1.5, curveness: 0.5 },
-        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1.5 },
-        label: {
-          position: "right",
-          verticalAlign: "middle",
-          align: "left",
-          color: palette.text,
-          fontSize: 11,
-          overflow: "truncate",
-          width: evidenceLabelW,
-        },
-        leaves: {
-          label: {
-            position: "right",
-            verticalAlign: "middle",
-            align: "left",
-            color: palette.text,
-            fontSize: 11,
-            overflow: "truncate",
-            width: evidenceLabelW,
-          },
-        },
-        emphasis: { focus: "descendant", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
-      }],
+      series: [evidenceSeries(layout)],
     });
+
+    // 报告侧栏、分屏和全屏会改变容器宽度；必须重算方向与标签，而不只是拉伸 canvas。
+    if (typeof ResizeObserver !== "undefined") {
+      let resizeTimer = null;
+      const observer = new ResizeObserver(function (entries) {
+        const width = entries[0] && entries[0].contentRect.width;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+          const nextLayout = evidenceLayout(width || container.clientWidth);
+          if (Math.abs(nextLayout.width - layout.width) < 2 && nextLayout.vertical === layout.vertical) return;
+          layout = nextLayout;
+          setChartHeight(container, layout.height);
+          chart.resize();
+          chart.setOption({ animationDurationUpdate: 180, series: [evidenceSeries(layout)] });
+        }, 80);
+      });
+      observer.observe(container);
+      chart.__iaResizeObserver = observer;
+      chart.__iaClearResizeTimer = function () { clearTimeout(resizeTimer); };
+    }
     chart.on("click", function (params) {
       const d = params.data || {};
       if (typeof d.idx === "number" && d.idx >= 0) IA.jumpToEvidence(d.idx);

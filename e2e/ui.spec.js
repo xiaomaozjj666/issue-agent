@@ -125,6 +125,12 @@ test("renders responsive decision charts without overlaps or console errors", as
 
   const minorOpacity = await page.locator("#report-diffstat-section").evaluate((card) => getComputedStyle(card).opacity);
   expect(minorOpacity).toBe("1");
+  const sidebarEvidenceLayout = await page.evaluate(() => {
+    const chart = window.echarts.getInstanceByDom(document.getElementById("report-evidence-map-chart"));
+    const series = chart.getOption().series[0];
+    return { orient: series.orient, childName: series.data[0].children[0].name };
+  });
+  expect(sidebarEvidenceLayout).toEqual({ orient: "TB", childName: "a #1.py" });
   await page.locator("#report-risk-matrix-section").hover();
   const hoverTransform = await page.locator("#report-risk-matrix-section").evaluate((card) => getComputedStyle(card).transform);
   expect(hoverTransform).toBe("none");
@@ -166,6 +172,12 @@ test("renders responsive decision charts without overlaps or console errors", as
     blast: document.getElementById("report-blast-radius-section").getBoundingClientRect().top,
   }));
   expect(Math.abs(fullscreenTops.blast - fullscreenTops.risk)).toBeLessThan(2);
+  await expect.poll(async () => page.evaluate(() => {
+    const chart = window.echarts.getInstanceByDom(document.getElementById("report-evidence-map-chart"));
+    return chart.getOption().series[0].orient;
+  })).toBe("LR");
+  const fullscreenEvidenceHeight = await page.locator("#report-evidence-map-chart").evaluate((el) => el.clientHeight);
+  expect(fullscreenEvidenceHeight).toBeLessThanOrEqual(300);
 
   // 放大交互应能创建有内容的模态图表，Escape 可正常关闭。
   const riskZoom = page.locator('.chart-zoom-btn[data-chart-id="report-risk-matrix-chart"]');
@@ -329,7 +341,11 @@ test("@mobile keeps history and report flows inside the viewport", async ({ page
     document: document.documentElement.scrollWidth,
     viewport: document.documentElement.clientWidth,
     report: document.getElementById("report-panel").getBoundingClientRect().width,
+    reportBody: document.getElementById("report").getBoundingClientRect().width,
+    evidenceCard: document.getElementById("report-evidence-map-section").getBoundingClientRect().width,
   }));
   expect(width.document).toBe(width.viewport);
   expect(width.report).toBeLessThanOrEqual(width.viewport);
+  expect(width.reportBody).toBeLessThanOrEqual(width.viewport);
+  expect(width.evidenceCard).toBeLessThanOrEqual(width.viewport);
 });

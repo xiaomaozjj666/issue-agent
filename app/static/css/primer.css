@@ -1959,7 +1959,10 @@ a:hover {
 /* 报告主体 */
 #report {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
   overflow-y: auto;
   padding: var(--space-5);
   color: var(--fg);
