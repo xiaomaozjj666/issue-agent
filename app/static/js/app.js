@@ -2023,11 +2023,43 @@
     );
     const showCharts = hasPatch || hasEvidence || hasImpact;
     if (showCharts) {
-      // 多图并排：2 列网格布局，最多 4 图
-      const chartBlocks = [];
+      // 三级主次布局：主打（根因证据链，整行）→ 次主（风险矩阵+波及范围）→ 次要（补丁改动+证据核对，缩小）
+      // 主打：根因证据链——把「结论←证据」的支撑关系画出来，说服力核心
+      if (hasEvidence) {
+        parts.push(
+          `<div class="report-charts-row">` +
+          `<div id="report-evidence-map-section" class="report-chart report-chart-full">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("chart_evidence_map"))}</div>` +
+          `<div id="report-evidence-map-chart" class="report-chart-canvas report-chart-canvas-hero" role="img" aria-label="${IA.escapeHtml(t("chart_evidence_map"))}"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("chart_evidence_map_caption"))}</div>` +
+          `</div></div>`,
+        );
+      }
+      // 次主：风险矩阵 + 波及范围（同属「影响」维度：有多严重 + 波及多广）
+      const secondaryBlocks = [];
+      if (hasImpact) {
+        secondaryBlocks.push(
+          `<div id="report-risk-matrix-section" class="report-chart report-chart-half">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("chart_risk_matrix"))}</div>` +
+          `<div id="report-risk-matrix-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_risk_matrix"))}"></div>` +
+          `<div class="report-chart-caption">${IA.escapeHtml(t("chart_risk_matrix_caption"))}</div>` +
+          `</div>`,
+        );
+        secondaryBlocks.push(
+          `<div id="report-blast-radius-section" class="report-chart report-chart-half">` +
+          `<div class="report-chart-title">${IA.escapeHtml(t("chart_blast_radius"))}</div>` +
+          `<div id="report-blast-radius-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_blast_radius"))}"></div>` +
+          `</div>`,
+        );
+      }
+      if (secondaryBlocks.length) {
+        parts.push(`<div class="report-charts-row">${secondaryBlocks.join("")}</div>`);
+      }
+      // 次要：补丁改动 + 证据核对（过程指标，降级为弱化小图）
+      const minorBlocks = [];
       if (hasPatch) {
-        chartBlocks.push(
-          `<div id="report-diffstat-section" class="report-chart report-chart-half">` +
+        minorBlocks.push(
+          `<div id="report-diffstat-section" class="report-chart report-chart-half report-chart-minor">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("diffstat_chart_title"))}</div>` +
           `<div id="report-diffstat-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("diffstat_chart_title"))}"></div>` +
           `<div class="report-chart-caption">${IA.escapeHtml(t("diffstat_chart_caption"))}</div>` +
@@ -2036,31 +2068,20 @@
       }
       if (hasEvidence) {
         // 容器 id 供指标卡片（可信度/已读文件）下钻锚点
-        chartBlocks.push(
-          `<div id="report-verify-section" class="report-chart report-chart-half">` +
+        minorBlocks.push(
+          `<div id="report-verify-section" class="report-chart ${hasPatch ? 'report-chart-half' : 'report-chart-full'} report-chart-minor">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("verify_chart_title"))}</div>` +
           `<div id="report-verify-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("verify_chart_title"))}"></div>` +
           `<div class="report-chart-caption">${IA.escapeHtml(t("verify_chart_caption"))}</div>` +
           `</div>`,
         );
-        // 证据强度图：按强度横向条形、按类型着色、可点击下钻到对应证据条目
-        chartBlocks.push(
-          `<div id="report-evidence-strength-section" class="report-chart report-chart-half">` +
-          `<div class="report-chart-title">${IA.escapeHtml(t("chart_evidence_strength"))}</div>` +
-          `<div id="report-evidence-strength-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_evidence_strength"))}"></div>` +
-          `<div class="report-chart-caption">${IA.escapeHtml(t("evidence_strength_legend"))}</div>` +
-          `</div>`,
-        );
       }
-      if (hasImpact) {
-        chartBlocks.push(
-          `<div id="report-blast-radius-section" class="report-chart report-chart-half">` +
-          `<div class="report-chart-title">${IA.escapeHtml(t("chart_blast_radius"))}</div>` +
-          `<div id="report-blast-radius-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_blast_radius"))}"></div>` +
-          `</div>`,
-        );
+      if (minorBlocks.length) {
+        const minorCls = minorBlocks.length === 1
+         ? "report-charts-row report-charts-minor report-charts-single"
+          : "report-charts-row report-charts-minor";
+        parts.push(`<div class="${minorCls}">${minorBlocks.join("")}</div>`);
       }
-      parts.push(`<div class="report-charts-row">${chartBlocks.join("")}</div>`);
     }
 
     // 5. 报告工具栏（移至次级位置：核心结论和图表之后）
@@ -2290,7 +2311,7 @@
 
     // #16 图表懒加载：用骨架屏占位，IntersectionObserver 触发时再初始化 ECharts
     // 避免首次渲染图表导致页面卡顿（移动端尤其明显）
-    ["report-diffstat-chart", "report-verify-chart", "report-evidence-strength-chart", "report-blast-radius-chart"].forEach(function (id) {
+    ["report-evidence-map-chart", "report-risk-matrix-chart", "report-blast-radius-chart", "report-diffstat-chart", "report-verify-chart"].forEach(function (id) {
       const el = document.getElementById(id);
       if (el && !el.querySelector(".chart-skeleton")) {
         el.innerHTML = `<div class="chart-skeleton" aria-hidden="true"><div class="skeleton-bar skeleton-title"></div><div class="skeleton-grid"><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div><div class="skeleton-bar skeleton-cell"></div></div><div class="skeleton-bar skeleton-caption"></div></div>`;
@@ -2507,10 +2528,11 @@
   // 同时支持 #17 点击放大到模态框：每个图表容器有 .chart-zoom-btn 按钮
   function initLazyCharts(r, sessionData) {
     const chartSpecs = [
+      { id: "report-evidence-map-chart", render: IA.Charts.renderEvidenceMap },
+      { id: "report-risk-matrix-chart", render: IA.Charts.renderRiskMatrix },
+      { id: "report-blast-radius-chart", render: IA.Charts.renderBlastRadius },
       { id: "report-diffstat-chart", render: IA.Charts.renderDiffstat },
       { id: "report-verify-chart", render: IA.Charts.renderVerify },
-      { id: "report-evidence-strength-chart", render: IA.Charts.renderEvidenceStrength },
-      { id: "report-blast-radius-chart", render: IA.Charts.renderBlastRadius },
     ];
     chartSpecs.forEach(function (spec) {
       const el = document.getElementById(spec.id);
