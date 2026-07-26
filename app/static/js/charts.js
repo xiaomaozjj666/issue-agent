@@ -32,10 +32,16 @@
     tooltipBorder: "#30363d",
     bg: "#0d1117",
     splitArea: ["rgba(88,166,255,0.035)", "rgba(88,166,255,0.07)"],
-    riskLow: "rgba(63,185,80,0.16)",
-    riskMedium: "rgba(210,153,34,0.18)",
-    riskHigh: "rgba(210,153,34,0.26)",
-    riskCritical: "rgba(248,81,73,0.28)",
+    riskLow: "#183c24",
+    riskMedium: "#3b3217",
+    riskHigh: "#48291a",
+    riskCritical: "#442129",
+    riskLowHover: "#20532f",
+    riskMediumHover: "#55471c",
+    riskHighHover: "#61341d",
+    riskCriticalHover: "#5e2731",
+    riskCellBorder: "rgba(240,246,252,0.14)",
+    riskMarkerHigh: "#db6d28",
   };
 
   const PALETTE_LIGHT = {
@@ -52,10 +58,16 @@
     tooltipBorder: "#d0d7de",
     bg: "#ffffff",
     splitArea: ["rgba(9,105,218,0.03)", "rgba(9,105,218,0.065)"],
-    riskLow: "rgba(26,127,55,0.12)",
-    riskMedium: "rgba(154,103,0,0.12)",
-    riskHigh: "rgba(154,103,0,0.18)",
-    riskCritical: "rgba(207,34,46,0.20)",
+    riskLow: "#dafbe1",
+    riskMedium: "#fff8c5",
+    riskHigh: "#ffebc8",
+    riskCritical: "#ffebe9",
+    riskLowHover: "#aceebb",
+    riskMediumHover: "#fae17d",
+    riskHighHover: "#ffc680",
+    riskCriticalHover: "#ffcecb",
+    riskCellBorder: "rgba(31,35,40,0.18)",
+    riskMarkerHigh: "#bc6b00",
   };
 
   function getPalette() {
@@ -593,6 +605,10 @@
   function severityColor(severity, palette) {
     return ({ critical: palette.danger, high: palette.warning, medium: palette.primary, low: palette.muted })[severity] || palette.muted;
   }
+
+  function riskMarkerColor(severity, palette) {
+    return ({ critical: palette.danger, high: palette.riskMarkerHigh, medium: palette.warning, low: palette.success })[severity] || palette.muted;
+  }
   const GENERIC_ROOTS = {
     src: 1, lib: 1, libs: 1, app: 1, apps: 1, pkg: 1, pkgs: 1, package: 1, packages: 1,
     tests: 1, test: 1, testing: 1, docs: 1, doc: 1, documentation: 1,
@@ -778,22 +794,31 @@
     const like = likeLevels.indexOf(impact.likelihood) >= 0 ? impact.likelihood : "medium";
 
     // 单元格背景色：组合风险 = 严重度×可能性
-    function cellColor(s, l) {
+    function riskBand(s, l) {
       const score = sevVal[s] * likeVal[l];
-      if (score >= 9) return palette.riskCritical;
-      if (score >= 6) return palette.riskHigh;
-      if (score >= 3) return palette.riskMedium;
-      return palette.riskLow;
+      if (score >= 9) return "critical";
+      if (score >= 6) return "high";
+      if (score >= 3) return "medium";
+      return "low";
     }
     const cellData = [];
     sevLevels.forEach(function (s, yi) {
       likeLevels.forEach(function (l, xi) {
-        cellData.push({ value: [xi, yi], color: cellColor(s, l) });
+        const band = riskBand(s, l);
+        const key = band.charAt(0).toUpperCase() + band.slice(1);
+        cellData.push({
+          value: [xi, yi],
+          severity: s,
+          likelihood: l,
+          band: band,
+          color: palette["risk" + key],
+          hoverColor: palette["risk" + key + "Hover"],
+        });
       });
     });
     const issueX = likeLevels.indexOf(like);
     const issueY = sevLevels.indexOf(sev);
-    const markerColor = severityColor(sev, palette);
+    const markerColor = riskMarkerColor(sev, palette);
 
     setChartHeight(container, 300);
     fadeIn(container);
@@ -806,12 +831,20 @@
         backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
         textStyle: { color: palette.text, fontSize: 12 },
         position: smartTooltipPosition,
-        formatter: function () {
-          return '<div style="font-weight:600;">' + IA.escapeHtml(t("chart_risk_matrix")) + "</div>" +
+        formatter: function (params) {
+          const d = (params && params.data) || {};
+          const values = d.value || [];
+          const activeSev = d.severity || values[2] || sev;
+          const activeLike = d.likelihood || values[3] || like;
+          const activeColor = riskMarkerColor(activeSev, palette);
+          const heading = d.severity || values[2]
+            ? enumLabel("severity", activeSev) + " × " + enumLabel("likelihood", activeLike)
+            : t("chart_risk_matrix");
+          return '<div style="font-weight:600;">' + IA.escapeHtml(heading) + "</div>" +
             '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
-            ': <b style="color:' + markerColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>" +
+            ': <b style="color:' + activeColor + ';">' + IA.escapeHtml(enumLabel("severity", activeSev)) + "</b></div>" +
             '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_likelihood")) +
-            ': <b>' + IA.escapeHtml(enumLabel("likelihood", like)) + "</b></div>";
+            ': <b>' + IA.escapeHtml(enumLabel("likelihood", activeLike)) + "</b></div>";
         },
       }),
       grid: { left: 16, right: 28, top: 52, bottom: 42, containLabel: true },
@@ -843,6 +876,8 @@
       series: [
         {
           type: "custom",
+          dimensions: ["likelihoodIndex", "severityIndex", "severity", "likelihood"],
+          encode: { x: 0, y: 1, tooltip: [2, 3] },
           renderItem: function (params, api) {
             const d = cellData[params.dataIndex];
             const center = api.coord([api.value(0), api.value(1)]);
@@ -852,10 +887,28 @@
             return {
               type: "rect",
               shape: { x: center[0] - w / 2, y: center[1] - h / 2, width: w, height: h, r: 5 },
-              style: { fill: d.color },
+              style: { fill: d.color, stroke: palette.riskCellBorder, lineWidth: 0.6 },
+              emphasis: {
+                style: {
+                  fill: d.hoverColor,
+                  stroke: palette.textDim,
+                  lineWidth: 1.2,
+                  shadowBlur: 8,
+                  shadowColor: "rgba(0,0,0,0.24)",
+                },
+              },
             };
           },
-          data: cellData.map(function (d) { return { value: d.value }; }),
+          data: cellData.map(function (d) {
+            return {
+              value: [d.value[0], d.value[1], d.severity, d.likelihood],
+              severity: d.severity,
+              likelihood: d.likelihood,
+              band: d.band,
+              color: d.color,
+              itemStyle: { color: d.color },
+            };
+          }),
           silent: true,
           z: 1,
         },
@@ -881,7 +934,38 @@
             width: 72,
             overflow: "truncate",
           },
+          emphasis: {
+            scale: 1.18,
+            itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,0,0,0.34)" },
+          },
           z: 10,
+        },
+        {
+          type: "scatter",
+          name: "risk-cell-hit-area",
+          symbol: "rect",
+          symbolSize: [Math.max(54, Math.min(118, (container.clientWidth - 96) / 3 - 8)), 44],
+          data: cellData.map(function (d) {
+            return {
+              value: [d.value[0], d.value[1], d.severity, d.likelihood],
+              severity: d.severity,
+              likelihood: d.likelihood,
+              band: d.band,
+              emphasis: { itemStyle: { color: d.hoverColor } },
+            };
+          }),
+          itemStyle: { color: "rgba(0,0,0,0)" },
+          emphasis: {
+            scale: false,
+            itemStyle: {
+              borderColor: palette.textDim,
+              borderWidth: 1.2,
+              shadowBlur: 8,
+              shadowColor: "rgba(0,0,0,0.24)",
+            },
+          },
+          cursor: "pointer",
+          z: 5,
         },
       ],
     });

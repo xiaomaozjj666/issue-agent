@@ -399,8 +399,10 @@
   // 按文本节点递归拆分而非重写 textContent，保留子元素结构不被破坏
   function applySplitText(el) {
     if (!el || prefersReducedMotion()) return;
-    const total = (el.textContent || "").length;
+    const accessibleText = (el.textContent || "").trim();
+    const total = accessibleText.length;
     if (!total || total > 60) return; // 长标题跳过，避免逐字过多
+    el.setAttribute("aria-label", accessibleText);
     const spans = [];
     let charIdx = 0;
 
@@ -411,6 +413,7 @@
           const frag = document.createDocumentFragment();
           Array.from(child.textContent || "").forEach(function (ch) {
             const span = document.createElement("span");
+            span.setAttribute("aria-hidden", "true");
             span.textContent = ch === " " ? "\u00A0" : ch;
             span.style.display = "inline-block";
             span.style.opacity = "0";
@@ -851,8 +854,20 @@
   // 在 renderHero 完成后调用：全屏点阵背景 + 标题逐字入场 + 卡片聚光灯 + CTA 磁吸
   function applyHeroMotion(heroEl) {
     if (!heroEl) return;
-    // 保留低对比拓扑背景，卡片反馈统一交给 CSS hover / focus。
+    // 背景保持低对比，前景交互用于提示“这里可探索/可操作”。
     attachParticleNet(heroEl);
+    const titleEl = heroEl.querySelector(".hero-title");
+    if (titleEl) applySplitText(titleEl);
+    const subtitleEl = heroEl.querySelector(".hero-subtitle");
+    if (subtitleEl) applyBlurText(subtitleEl, 220);
+    heroEl.querySelectorAll(".hero-step").forEach(function (card) {
+      attachSpotlight(card, { intensity: 0.2, size: 300 });
+    });
+    heroEl.querySelectorAll(".hero-example").forEach(function (card) {
+      attachSpotlight(card, { intensity: 0.16, size: 320 });
+    });
+    const cta = heroEl.querySelector(".hero-cta-button");
+    if (cta) attachMagnet(cta, { strength: 0.12, radius: 90 });
   }
 
   // ── 全局动效初始化（页面加载后调用一次） ─────────────────
