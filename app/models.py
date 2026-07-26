@@ -18,6 +18,12 @@ class StreamRequest(BaseModel):
     issue_url: HttpUrl | None = None
     session_id: str | None = None
     message: str | None = None
+    # 应用内设置覆盖：仅当显式提供时才覆盖服务端环境变量默认值
+    language: Literal["zh", "en"] | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    thinking: Literal["enabled", "disabled"] | None = None
+    reasoning_effort: Literal["high", "max"] | None = None
+    review: bool | None = None
 
     @model_validator(mode="after")
     def _require_issue_or_session(self) -> "StreamRequest":
@@ -95,6 +101,14 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     issue_url: HttpUrl | None = None
     message: str = Field(min_length=1, max_length=32_000)
+    # 应用内设置覆盖
+    language: Literal["zh", "en"] | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    thinking: Literal["enabled", "disabled"] | None = None
+    reasoning_effort: Literal["high", "max"] | None = None
+    review: bool | None = None
+    # 重新生成：忽略上一条 assistant 回复，基于最近一条 user 消息重新请求
+    regenerate: bool = False
 
 
 class ChatResponse(BaseModel):
