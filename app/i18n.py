@@ -50,7 +50,8 @@ STRINGS = {
             "- 所有人类可读文本必须使用简体中文\n"
             "- 代码标识符、文件路径、异常名称保持英文\n"
             "- confidence 字段必须是: low, medium, high\n"
-            "- 若实际读取的源码与 issue 描述不符，应明确指出差异而非强行附和\n\n"
+            "- 若实际读取的源码与 issue 描述不符，应明确指出差异而非强行附和\n"
+            "- 锁定根因前，至少提出一个备选解释并主动证伪：用实际代码证据排除其他可能，再下结论\n\n"
             "示例：\n"
             'Issue: "登录在密码含特殊字符时返回 500 错误，src/auth/login.py L134 处"\n'
             '-> read_file("src/auth/login.py") 直接读取被引用的文件\n'
@@ -70,16 +71,26 @@ STRINGS = {
             '  "proposed_changes": ["具体修复建议（简体中文）"],\n'
             '  "patch": "unified diff 格式的补丁，或 null",\n'
             '  "tests": ["回归测试用例（简体中文）"],\n'
-            '  "risks": ["风险提示（简体中文）"]\n'
+            '  "risks": ["风险提示（简体中文）"],\n'
+            '  "confidence_rationale": "为什么是这个置信度：有几条独立证据链、是否复现、测试是否覆盖因果路径",\n'
+            '  "hypotheses": [{"statement": "备选解释", "status": "accepted|rejected|open", "rationale": "为何接受或拒绝"}],\n'
+            '  "impact": {"severity": "low|medium|high|critical", "likelihood": "low|medium|high", "blast_radius": ["受影响的模块/文件"]},\n'
+            '  "reproduction": {"steps": ["复现步骤"], "observed": "实际现象", "expected": "应有现象"},\n'
+            '  "fix_rationale": "为什么选这个修复而非其他方案"\n'
             "}\n\n"
             "金字塔书写原则：\n"
             "- summary 是金字塔顶端的核心结论，必须是判定而非描述，读者只看这一句就能抓住问题本质\n"
             "- root_cause 紧接结论展开因果链，不要重复 summary\n"
             "- 所有专业术语转为业务大白话，避免生硬学术句式\n\n"
-            "置信度规则: high=3条以上, medium=1-2条, low=0条\n"
+            "置信度规则: high=≥3 条证据且至少 2 条独立证据链, medium=1-2 条, low=0 条或仅为推测\n"
             "质量检查: 每项证据引用实际读过的文件, 行号精确, "
             "root_cause 必须形成从触发条件到最终症状的完整因果链（而非表面现象描述）, "
-            "修复具体可执行, 风险考虑兼容性"
+            "修复具体可执行, 风险考虑兼容性\n"
+            "论证严谨性（决定报告说服力，请务必做到）:\n"
+            "- 每条 evidence 标注 strength(weak/moderate/strong) 与 kind(code/log/test/config/docs)；strength=weak 时必须说明局限\n"
+            "- 至少列出一个被拒绝的备选假设(hypotheses.status=rejected)并给出拒绝理由，证明你排除了其他可能\n"
+            "- impact.blast_radius 越具体越好（给出真实文件/模块路径，而非泛泛而谈）\n"
+            "- confidence_rationale 必须引用具体证据或缺失项，不得空谈；若无法复现，明确写出复现缺口"
         ),
         "chat_system_prompt": (
             "你是一位资深软件工程师，正在讨论一个 GitHub issue 的调查结果。\n\n"
@@ -104,6 +115,11 @@ STRINGS = {
             "  - patch: 字符串或 null\n"
             "  - tests: 回归测试用例字符串数组\n"
             "  - risks: 风险提示字符串数组\n"
+            "  - confidence_rationale: 字符串，说明置信度理由（引用证据或缺失项）\n"
+            "  - hypotheses: 数组，每项含 statement/status(accepted|rejected|open)/rationale\n"
+            "  - impact: 对象，含 severity/likelihood/blast_radius（受影响模块/文件）\n"
+            "  - reproduction: 对象，含 steps/observed/expected（可复现时填写）\n"
+            "  - fix_rationale: 字符串，说明为何选此修复而非其他方案\n"
             "书写要求：summary 必须是判定而非描述；所有专业术语转为业务大白话，避免生硬学术句式。\n"
             "上方已读源码中的 L1/L500 等行号前缀仅用于引用证据，不要将其当作工具调用参数。"
         ),
@@ -114,6 +130,8 @@ STRINGS = {
             "请仅输出一个符合 AnalysisReport schema 的顶层 JSON 对象。"
             '禁止输出工具调用参数（如 {"action": "read_file", ...}），禁止输出空内容，禁止输出文本说明。'
             '若证据不足，可将 confidence 设为 "low"，evidence 设为空数组，但仍需输出完整的 AnalysisReport 结构。'
+            '可选字段 confidence_rationale/hypotheses/impact/reproduction/fix_rationale 若未生成可省略，'
+            '但已生成的字段需保持结构完整。'
         ),
         "depth_limit": "已达到调查深度上限，无法继续深入。",
         "no_investigation": "调查尚未完成，暂无结论可供参考。",
@@ -150,7 +168,9 @@ STRINGS = {
             "- Evidence line ranges must use L12 or L12-L18 format\n"
             "- The confidence field must be: low, medium, high\n"
             "- If the code you actually read contradicts the issue description, point out the discrepancy "
-            "instead of forcing a match\n\n"
+            "instead of forcing a match\n"
+            "- Before locking the root cause, propose at least one alternative explanation and actively "
+            "disprove it with code evidence, ruling out other possibilities before concluding\n\n"
             "Example:\n"
             'Issue: "Login fails with 500 error when password contains special characters, at src/auth/login.py L134"\n'
             '-> read_file("src/auth/login.py") directly reads the cited file\n'
@@ -172,17 +192,30 @@ STRINGS = {
             '  "proposed_changes": ["Specific fix suggestions"],\n'
             '  "patch": "unified diff patch, or null",\n'
             '  "tests": ["Regression test cases"],\n'
-            '  "risks": ["Risk warnings"]\n'
+            '  "risks": ["Risk warnings"],\n'
+            '  "confidence_rationale": "Why this confidence: how many independent evidence strands, whether reproduced, tests cover the causal path",\n'
+            '  "hypotheses": [{"statement": "alternative explanation", "status": "accepted|rejected|open", "rationale": "why accepted or rejected"}],\n'
+            '  "impact": {"severity": "low|medium|high|critical", "likelihood": "low|medium|high", "blast_radius": ["affected module/file"]},\n'
+            '  "reproduction": {"steps": ["repro steps"], "observed": "actual behavior", "expected": "expected behavior"},\n'
+            '  "fix_rationale": "Why this fix was chosen over alternatives"\n'
             "}\n\n"
             "Pyramid writing rules:\n"
             "- summary is the pyramid-top core conclusion: a verdict, not a description; "
             "a reader should grasp the essence from this single sentence\n"
             "- root_cause expands the causal chain right after the conclusion; do not repeat summary\n"
             "- use plain business language, avoid stiff academic phrasing\n\n"
-            "Confidence: high=3+ references, medium=1-2, low=0\n"
+            "Confidence: high=3+ references with at least 2 independent strands, medium=1-2, low=0 or mere speculation\n"
             "Quality: every evidence from actually-read files, exact line numbers, "
             "root_cause must form a complete causal chain from trigger condition to final symptom "
-            "(not a surface-level description), actionable fixes, backward-compatibility risks"
+            "(not a surface-level description), actionable fixes, backward-compatibility risks\n"
+            "Rigor (drives report persuasiveness — must do):\n"
+            "- tag each evidence with strength(weak/moderate/strong) and kind(code/log/test/config/docs); "
+            "strength=weak must state its limitation\n"
+            "- list at least one rejected alternative hypothesis (hypotheses.status=rejected) with rationale, "
+            "proving you ruled out other possibilities\n"
+            "- impact.blast_radius should be as specific as possible (real file/module paths, not vague)\n"
+            "- confidence_rationale must cite concrete evidence or gaps; never hand-wave; "
+            "if not reproducible, state the reproduction gap explicitly"
         ),
         "chat_system_prompt": (
             "You are a senior software engineer discussing a GitHub issue investigation.\n\n"
@@ -208,6 +241,11 @@ STRINGS = {
             "  - patch: string or null\n"
             "  - tests: array of regression test cases\n"
             "  - risks: array of risk warnings\n"
+            "  - confidence_rationale: string, why this confidence (cite evidence or gaps)\n"
+            "  - hypotheses: array of {statement, status(accepted|rejected|open), rationale}\n"
+            "  - impact: object with severity/likelihood/blast_radius (affected modules/files)\n"
+            "  - reproduction: object with steps/observed/expected (when reproducible)\n"
+            "  - fix_rationale: string, why this fix over alternatives\n"
             "Writing rules: summary must be a verdict, not a description; "
             "use plain business language, avoid stiff academic phrasing.\n"
             "The L1/L500 line prefixes in the source excerpts above are reference markers for evidence citations only. "
@@ -221,7 +259,9 @@ STRINGS = {
             'Do NOT output tool call arguments (e.g., {"action": "read_file", ...}). '
             "Do NOT return empty content. Do NOT output prose. "
             'If evidence is insufficient, set confidence to "low" and evidence to an empty array, '
-            "but still emit the complete AnalysisReport structure."
+            "but still emit the complete AnalysisReport structure. "
+            "Optional fields (confidence_rationale/hypotheses/impact/reproduction/fix_rationale) may be "
+            "omitted if not produced, but keep any generated fields structurally complete."
         ),
         "depth_limit": "Maximum investigation depth reached. Cannot continue further.",
         "no_investigation": "Investigation not yet complete. No conclusions available.",
@@ -311,7 +351,12 @@ def get_review_output_prompt() -> str:
     "proposed_changes": ["actionable change"],
     "patch": "preserved or corrected unified diff, or null",
     "tests": ["causal regression test"],
-    "risks": ["remaining risk"]
+    "risks": ["remaining risk"],
+    "confidence_rationale": "why this confidence",
+    "hypotheses": [{"statement": "alt explanation", "status": "accepted|rejected|open", "rationale": "why"}],
+    "impact": {"severity": "low|medium|high|critical", "likelihood": "low|medium|high", "blast_radius": ["affected file"]},
+    "reproduction": {"steps": ["repro step"], "observed": "actual", "expected": "expected"},
+    "fix_rationale": "why this fix"
   }
 }"""
 
@@ -434,6 +479,41 @@ _FRONTEND_STRINGS = {
         "report_patch_export": "修复补丁",
         "report_tests": "回归测试",
         "report_risks": "风险提示",
+        "report_confidence_rationale": "置信度理由",
+        "report_hypotheses": "备选假设",
+        "report_hypotheses_empty": "未记录备选假设",
+        "report_impact": "影响面",
+        "report_blast_radius": "波及范围",
+        "report_reproduction": "复现路径",
+        "report_fix_rationale": "修复取舍",
+        "reproduction_observed": "实际现象",
+        "reproduction_expected": "应有现象",
+        "report_severity": "严重度",
+        "report_likelihood": "发生可能性",
+        "chart_evidence_strength": "证据强度",
+        "chart_blast_radius": "波及范围",
+        "chart_evidence_strength_empty": "暂无可评估强度的证据",
+        "chart_blast_radius_empty": "无明确波及范围",
+        "evidence_strength_legend": "证据强度（弱 / 中 / 强）",
+        "evidence_kind_legend": "类型",
+        "severity_low": "低",
+        "severity_medium": "中",
+        "severity_high": "高",
+        "severity_critical": "严重",
+        "likelihood_low": "低",
+        "likelihood_medium": "中",
+        "likelihood_high": "高",
+        "strength_weak": "弱",
+        "strength_moderate": "中",
+        "strength_strong": "强",
+        "kind_code": "代码",
+        "kind_log": "日志",
+        "kind_test": "测试",
+        "kind_config": "配置",
+        "kind_docs": "文档",
+        "hypothesis_accepted": "采纳",
+        "hypothesis_rejected": "已排除",
+        "hypothesis_open": "待定",
         "report_independent_review": "独立审查 · {status}",
         "review_status_approved": "已通过",
         "review_status_revised": "已修订",
@@ -748,6 +828,41 @@ _FRONTEND_STRINGS = {
         "report_patch_export": "Patch",
         "report_tests": "Suggested tests",
         "report_risks": "Risks",
+        "report_confidence_rationale": "Confidence rationale",
+        "report_hypotheses": "Alternative hypotheses",
+        "report_hypotheses_empty": "No alternative hypotheses recorded",
+        "report_impact": "Impact",
+        "report_blast_radius": "Blast radius",
+        "report_reproduction": "Reproduction",
+        "report_fix_rationale": "Fix rationale",
+        "reproduction_observed": "Observed",
+        "reproduction_expected": "Expected",
+        "report_severity": "Severity",
+        "report_likelihood": "Likelihood",
+        "chart_evidence_strength": "Evidence strength",
+        "chart_blast_radius": "Blast radius",
+        "chart_evidence_strength_empty": "No evidence with assessable strength",
+        "chart_blast_radius_empty": "No clear blast radius",
+        "evidence_strength_legend": "Evidence strength (weak / moderate / strong)",
+        "evidence_kind_legend": "Type",
+        "severity_low": "Low",
+        "severity_medium": "Medium",
+        "severity_high": "High",
+        "severity_critical": "Critical",
+        "likelihood_low": "Low",
+        "likelihood_medium": "Medium",
+        "likelihood_high": "High",
+        "strength_weak": "Weak",
+        "strength_moderate": "Moderate",
+        "strength_strong": "Strong",
+        "kind_code": "Code",
+        "kind_log": "Log",
+        "kind_test": "Test",
+        "kind_config": "Config",
+        "kind_docs": "Docs",
+        "hypothesis_accepted": "Accepted",
+        "hypothesis_rejected": "Rejected",
+        "hypothesis_open": "Open",
         "report_independent_review": "Independent review · {status}",
         "review_status_approved": "Approved",
         "review_status_revised": "Revised",
