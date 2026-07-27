@@ -124,6 +124,7 @@
     review_status_unavailable: "Unavailable",
     investigation_trail: "Investigation trail",
     copy_button: "Copy",
+    locate_button: "Locate",
     copied: "Copied",
     copy_failed: "Copy failed",
     copy_code: "Copy code",
