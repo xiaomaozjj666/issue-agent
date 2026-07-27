@@ -223,12 +223,16 @@ test("renders responsive decision charts without overlaps or console errors", as
   const riskItem = page.locator(".risk-item").first();
   await riskItem.hover();
   await expect(riskItem).not.toHaveCSS("box-shadow", "none");
-  await expect(riskItem.getByRole("button", { name: "在风险矩阵中定位" })).toBeVisible();
-  await riskItem.getByRole("button", { name: "在风险矩阵中定位" }).click();
+  const riskLocate = riskItem.getByRole("button", { name: "在风险矩阵中定位" });
+  await expect(riskLocate).toContainText("定位");
+  await expect(riskItem.getByRole("button", { name: "复制风险提示" })).toContainText("复制");
+  await riskItem.locator(".report-item-primary").click();
   await expect(page.locator("#report-risk-matrix-section")).toHaveClass(/section-highlight/);
   const changeItem = page.locator(".change-item").first();
-  await expect(changeItem.getByRole("button", { name: "定位关联依据" })).toBeVisible();
-  await changeItem.getByRole("button", { name: "定位关联依据" }).click();
+  const changeLocate = changeItem.getByRole("button", { name: "定位关联依据" });
+  await expect(changeLocate).toContainText("定位");
+  await expect(changeItem.getByRole("button", { name: "复制修复方案" })).toContainText("复制");
+  await changeItem.locator(".report-item-primary").click();
   await expect(page.locator("#report-patch")).toHaveClass(/section-highlight/);
   await page.evaluate(() => { window.IssueAgent.copyToClipboard = async () => true; });
   await changeItem.getByRole("button", { name: "复制修复方案" }).click();
@@ -579,6 +583,8 @@ test("explains historical report capabilities and offers an explicit reanalysis 
   await expect(historicalActions.getByRole("button", { name: "查看数据" })).toBeEnabled();
   await expect(page.locator(".change-item").first().getByRole("button", { name: "定位关联依据" })).toBeVisible();
   await expect(page.locator(".risk-item").first().getByRole("button", { name: "在风险矩阵中定位" })).toBeVisible();
+  await expect(page.locator(".change-item .report-item-primary").first()).toHaveRole("button");
+  await expect(page.locator(".risk-item .report-item-primary").first()).toHaveRole("button");
 
   await page.getByRole("button", { name: "用当前 Agent 重新分析" }).click();
   await expect.poll(() => reanalysisPayload).not.toBeNull();

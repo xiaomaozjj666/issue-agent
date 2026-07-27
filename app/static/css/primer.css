@@ -5221,11 +5221,37 @@ body.modal-open {
   overflow-wrap: anywhere;
 }
 
+.report-item-primary {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: var(--fg);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.report-item-primary:hover,
+.report-item-primary:focus-visible {
+  color: var(--accent-emphasis);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-muted);
+  text-underline-offset: 3px;
+}
+
+.report-item-primary:focus-visible {
+  outline: 2px solid var(--accent-muted);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 .report-item-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  opacity: 0.72;
+  opacity: 0.88;
   transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
@@ -5240,13 +5266,18 @@ body.modal-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
+  width: auto;
+  min-width: 30px;
   height: 30px;
-  padding: 0;
-  border: 1px solid transparent;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--border-muted);
   border-radius: var(--radius);
   color: var(--muted);
-  background: transparent;
+  background: var(--canvas-subtle);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-standard),
               border-color var(--dur-fast) var(--ease-standard),
