@@ -29,7 +29,7 @@ from app.evidence import EvidenceValidator
 from app.i18n import get_final_output_prompt, get_report_phase_instruction, get_report_retry_prompt
 from app.json_utils import extract_json
 from app.models import AnalysisReport
-from app.provider import iter_deltas
+from app.provider import iter_deltas, record_model_request, record_model_usage
 from app.retry import build_attempt_plan
 from app.tools import ToolExecutor
 
@@ -55,6 +55,7 @@ class ReportGenerator:
         self,
         messages: list[dict],
         executor: ToolExecutor,
+        metrics: dict | None = None,
     ) -> AsyncGenerator[AgentEvent | AnalysisReport, None]:
         """流式生成报告，实时 yield reasoning_event 让用户看到思考过程。"""
         base_messages = self._build_report_messages(messages, executor)
@@ -63,6 +64,7 @@ class ReportGenerator:
         last_failure_reason = ""
         total_attempts = max(self._settings.max_report_retries, 1)
         for attempt in range(total_attempts):
+            record_model_request(metrics, "report", retry=attempt > 0)
             plan = build_attempt_plan(
                 self._settings,
                 base_messages=base_messages,
@@ -94,7 +96,14 @@ class ReportGenerator:
 
             content_parts: list[str] = []
             has_choices = False
-            async for delta in iter_deltas(stream):
+            usage_response = None
+
+            def capture_usage(chunk) -> None:
+                nonlocal usage_response
+                if getattr(chunk, "usage", None) is not None:
+                    usage_response = chunk
+
+            async for delta in iter_deltas(stream, on_chunk=capture_usage):
                 has_choices = True
 
                 # 实时推送 reasoning_content 到前端（DeepSeek thinking 模式）
@@ -106,6 +115,8 @@ class ReportGenerator:
 
                 if delta.content:
                     content_parts.append(delta.content)
+            if usage_response is not None:
+                record_model_usage(metrics, usage_response, "report")
 
             if not has_choices:
                 last_raw_content = ""
@@ -151,13 +162,15 @@ class ReportGenerator:
 
         raise ModelResponseError("The model returned an invalid analysis report")
 
-    async def generate(self, messages: list[dict], executor: ToolExecutor) -> AnalysisReport:
+    async def generate(
+        self, messages: list[dict], executor: ToolExecutor, metrics: dict | None = None
+    ) -> AnalysisReport:
         """非流式包装器：消费所有 reasoning 事件并返回最终报告。
 
         供 CLI 和不需要实时 reasoning 的调用方使用。
         """
         report: AnalysisReport | None = None
-        async for item in self.generate_stream(messages, executor):
+        async for item in self.generate_stream(messages, executor, metrics):
             if isinstance(item, AnalysisReport):
                 report = item
         if report is None:

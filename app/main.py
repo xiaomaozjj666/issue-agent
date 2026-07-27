@@ -35,7 +35,7 @@ from app.circuit_breaker import CircuitBreaker
 from app.config import Settings, get_settings
 from app.errors import CircuitBreakerOpenError
 from app.events import cancelled_event, error_event, session_event
-from app.github import GitHubError, GitHubRateLimitError, GitHubResourceError
+from app.github import GitHubClient, GitHubError, GitHubRateLimitError, GitHubResourceError
 from app.i18n import get_frontend_strings
 from app.logging_config import setup_logging
 from app.models import (
@@ -51,6 +51,7 @@ from app.models import (
     SessionUpdateRequest,
     StreamRequest,
 )
+from app.provider import create_openai_client
 from app.services import (
     apply_fix,
     event_payload,
@@ -85,6 +86,24 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         recovery=settings.circuit_breaker_recovery,
     )
     _app.state.circuit_breaker = breaker
+
+    # Provider clients are process-scoped so HTTP/TLS pools survive individual
+    # analysis and chat requests. Per-request IssueAgent objects remain cheap
+    # coordinators and never close these shared clients.
+    openai_client = create_openai_client(settings)
+    github_client = GitHubClient(
+        settings.github_token,
+        max_file_bytes=settings.github_max_file_bytes,
+        timeout=settings.github_timeout,
+        max_retries=settings.github_max_retries,
+        cache_ttl=settings.github_cache_ttl_seconds,
+        cache_max_entries=settings.github_cache_max_entries,
+        cache_max_bytes=settings.github_cache_max_bytes,
+        max_tree_entries=settings.github_max_tree_entries,
+        close_on_exit=False,
+    )
+    _app.state.openai_client = openai_client
+    _app.state.github_client = github_client
 
     async def recover_stale_sessions() -> None:
         cutoff = datetime.now(UTC) - timedelta(seconds=settings.session_stale_after_seconds)
@@ -137,6 +156,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         breaker,
         max_concurrent=settings.batch_max_concurrent,
         max_queue_size=settings.batch_max_queue_size,
+        max_history=settings.batch_max_history,
+        client=openai_client,
+        github_client=github_client,
     )
     await task_queue.start()
     _app.state.task_queue = task_queue
@@ -154,6 +176,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await task_queue.stop()
         _app.state.session_manager = None
         await manager.close()
+        _app.state.openai_client = None
+        _app.state.github_client = None
+        await openai_client.close()
+        await github_client.aclose()
 
 
 app = FastAPI(title="GitHub Issue Agent", version="0.6.0", lifespan=lifespan)
@@ -232,6 +258,17 @@ def get_circuit_breaker(request: Request) -> CircuitBreaker:
 # Annotated dependency alias — avoids B008 lint warnings and reduces line length.
 SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
 CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
+
+
+def build_issue_agent(settings: Settings, breaker: CircuitBreaker) -> IssueAgent:
+    """Build a request coordinator backed by process-scoped provider clients."""
+    shared_github = getattr(app.state, "github_client", None)
+    return IssueAgent(
+        settings,
+        client=getattr(app.state, "openai_client", None),
+        github_client=shared_github.fork() if shared_github is not None else None,
+        circuit_breaker=breaker,
+    )
 
 
 def resolve_override_settings(req: PydanticBaseModel) -> Settings:
@@ -327,7 +364,7 @@ async def get_i18n(lang: str = Query(default="zh", pattern=r"^(zh|en)$")) -> dic
 
 @app.post("/analyze", response_model=AnalysisReport)
 async def analyze(request: AnalyzeRequest, breaker: CircuitBreakerDep) -> AnalysisReport:
-    agent = IssueAgent(resolve_override_settings(request), circuit_breaker=breaker)
+    agent = build_issue_agent(resolve_override_settings(request), breaker)
     try:
         return await agent.investigate(str(request.issue_url))
     except ValueError as error:
@@ -352,7 +389,7 @@ async def stream_analysis(
     request: StreamRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep
 ) -> StreamingResponse:
     settings = resolve_override_settings(request)
-    agent = IssueAgent(settings, circuit_breaker=breaker)
+    agent = build_issue_agent(settings, breaker)
 
     async def event_generator() -> AsyncIterator[str]:
         session: Session | None = None
@@ -445,7 +482,7 @@ async def stream_analysis(
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBreakerDep) -> ChatResponse:
-    agent = IssueAgent(resolve_override_settings(request), circuit_breaker=breaker)
+    agent = build_issue_agent(resolve_override_settings(request), breaker)
     session: Session | None = None
     try:
         if request.session_id:
@@ -530,7 +567,7 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
     if session.archived_at is not None:
         raise HTTPException(status_code=409, detail="Restore the archived session before continuing")
 
-    agent = IssueAgent(resolve_override_settings(request), circuit_breaker=breaker)
+    agent = build_issue_agent(resolve_override_settings(request), breaker)
     async with session.lock:
         session.status = "running"
         session.phase = "chatting"

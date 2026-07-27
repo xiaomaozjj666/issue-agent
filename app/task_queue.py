@@ -1,7 +1,7 @@
 """In-process async task queue for batch issue analysis.
 
 No Redis/Celery/arq — pure asyncio, matching the single-process deployment.
-Uses ``asyncio.Semaphore`` for concurrency control and in-memory storage.
+Uses a fixed set of asyncio workers for concurrency control and in-memory storage.
 
 Lifecycle: the queue is started in the FastAPI lifespan and cancelled on shutdown.
 """
@@ -9,16 +9,18 @@ Lifecycle: the queue is started in the FastAPI lifespan and cancelled on shutdow
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import secrets
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Literal
 
+from openai import AsyncOpenAI
+
 from app.agent import IssueAgent
 from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
+from app.github import GitHubClient
 from app.models import AnalysisReport
 
 logger = logging.getLogger(__name__)
@@ -60,7 +62,7 @@ class Batch:
 class TaskQueue:
     """Async task queue for batch issue investigations.
 
-    Manages a bounded pool of concurrent investigations using a semaphore.
+    Manages a bounded pool of concurrent investigations using fixed workers.
     Tasks are processed in FIFO order.
     """
 
@@ -71,14 +73,20 @@ class TaskQueue:
         *,
         max_concurrent: int = 2,
         max_queue_size: int = 100,
+        max_history: int = 100,
+        client: AsyncOpenAI | None = None,
+        github_client: GitHubClient | None = None,
     ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
         self._max_queue_size = max_queue_size
+        self._max_history = max_history
+        self._client = client
+        self._github_client = github_client
         self._batches: dict[str, Batch] = {}
         self._pending: asyncio.Queue[tuple[str, str]] = asyncio.Queue()  # (batch_id, task_id)
-        self._worker_task: asyncio.Task[None] | None = None
+        self._worker_tasks: list[asyncio.Task[None]] = []
         self._running = False
 
     @property
@@ -94,17 +102,20 @@ class TaskQueue:
         if self._running:
             return
         self._running = True
-        self._worker_task = asyncio.create_task(self._worker())
-        logger.info("TaskQueue worker started (max_concurrent=%d)", self._semaphore._value)
+        self._worker_tasks = [
+            asyncio.create_task(self._worker(), name=f"issue-agent-batch-{index + 1}")
+            for index in range(self._max_concurrent)
+        ]
+        logger.info("TaskQueue workers started (max_concurrent=%d)", self._max_concurrent)
 
     async def stop(self) -> None:
         """Cancel the background worker and mark pending tasks as cancelled."""
         self._running = False
-        if self._worker_task is not None:
-            self._worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._worker_task
-            self._worker_task = None
+        for worker in self._worker_tasks:
+            worker.cancel()
+        if self._worker_tasks:
+            await asyncio.gather(*self._worker_tasks, return_exceptions=True)
+        self._worker_tasks.clear()
 
         # Mark remaining pending tasks as cancelled
         while not self._pending.empty():
@@ -116,6 +127,10 @@ class TaskQueue:
                         if task.task_id == task_id and task.status == "pending":
                             task.status = "cancelled"
                             task.finished_at = monotonic()
+                    progress = batch.progress
+                    if progress["pending"] == 0 and progress["running"] == 0:
+                        batch.status = "partial"
+                self._pending.task_done()
             except asyncio.QueueEmpty:
                 break
 
@@ -135,6 +150,7 @@ class TaskQueue:
                 f"{len(issue_urls)} new > {self._max_queue_size} max"
             )
 
+        self._prune_completed_batches()
         batch_id = _new_id()
         tasks = [BatchTask(task_id=_new_id(), issue_url=url) for url in issue_urls]
         batch = Batch(batch_id=batch_id, tasks=tasks)
@@ -146,59 +162,64 @@ class TaskQueue:
         logger.info("Batch %s submitted with %d tasks", batch_id, len(tasks))
         return batch
 
+    def _prune_completed_batches(self) -> None:
+        overflow = len(self._batches) - self._max_history + 1
+        if overflow <= 0:
+            return
+        terminal = sorted(
+            (batch for batch in self._batches.values() if batch.status in {"completed", "partial"}),
+            key=lambda batch: batch.created_at,
+        )
+        for batch in terminal[:overflow]:
+            self._batches.pop(batch.batch_id, None)
+
     def get_batch(self, batch_id: str) -> Batch | None:
         """Retrieve a batch by ID."""
         return self._batches.get(batch_id)
 
     async def _worker(self) -> None:
-        """Background worker: dequeue and execute tasks one at a time."""
-        while self._running:
+        """Background worker: continuously dequeue and execute tasks."""
+        while True:
+            batch_id, task_id = await self._pending.get()
             try:
-                batch_id, task_id = await asyncio.wait_for(self._pending.get(), timeout=1.0)
-            except TimeoutError:
-                continue
+                await self._run_task(batch_id, task_id)
+            finally:
+                self._pending.task_done()
 
-            async with self._semaphore:
-                if not self._running:
-                    break
+    async def _run_task(self, batch_id: str, task_id: str) -> None:
+        batch = self._batches.get(batch_id)
+        task = next((item for item in batch.tasks if item.task_id == task_id), None) if batch else None
+        if task is None or batch is None:
+            logger.warning("Task %s/%s not found, skipping", batch_id, task_id)
+            return
 
-                batch = self._batches.get(batch_id)
-                task = None
-                if batch is not None:
-                    for t in batch.tasks:
-                        if t.task_id == task_id:
-                            task = t
-                            break
+        task.status = "running"
+        task.started_at = monotonic()
+        if batch.status == "pending":
+            batch.status = "running"
 
-                if task is None or batch is None:
-                    logger.warning("Task %s/%s not found, skipping", batch_id, task_id)
-                    continue
-
-                # Update batch + task status
-                task.status = "running"
-                task.started_at = monotonic()
-                if batch.status == "pending":
-                    batch.status = "running"
-
-                try:
-                    agent = IssueAgent(self._settings, circuit_breaker=self._circuit_breaker)
-                    try:
-                        task.result = await agent.investigate(task.issue_url)
-                        task.status = "completed"
-                    finally:
-                        await agent.aclose()
-                except Exception as exc:
-                    task.status = "failed"
-                    task.error = str(exc)[:500]
-                    logger.exception("Batch task %s failed: %s", task.task_id, task.issue_url)
-                finally:
-                    task.finished_at = monotonic()
-
-                # Update batch status
-                if batch is not None:
-                    progress = batch.progress
-                    if progress["pending"] == 0 and progress["running"] == 0:
-                        batch.status = "completed" if progress["failed"] == 0 else "partial"
+        agent = IssueAgent(
+            self._settings,
+            client=self._client,
+            github_client=self._github_client.fork() if self._github_client is not None else None,
+            circuit_breaker=self._circuit_breaker,
+        )
+        try:
+            task.result = await agent.investigate(task.issue_url)
+            task.status = "completed"
+        except asyncio.CancelledError:
+            task.status = "cancelled"
+            raise
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)[:500]
+            logger.exception("Batch task %s failed: %s", task.task_id, task.issue_url)
+        finally:
+            await agent.aclose()
+            task.finished_at = monotonic()
+            progress = batch.progress
+            if progress["pending"] == 0 and progress["running"] == 0:
+                batch.status = "completed" if progress["failed"] == 0 and progress["cancelled"] == 0 else "partial"
 
 
 def _new_id() -> str:

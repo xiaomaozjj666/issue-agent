@@ -118,6 +118,7 @@ async def test_reviewer_rejects_invalid_response(fake_client, fake_response, mak
         fake_client([fake_response(content="{}"), fake_response(content="{}")]),
     )
 
+    metrics: dict = {}
     with pytest.raises(ReviewResponseError):
         await reviewer.review(
             issue=make_issue(),
@@ -125,7 +126,12 @@ async def test_reviewer_rejects_invalid_response(fake_client, fake_response, mak
             file_cache={},
             files_read=[],
             line_counts={},
+            metrics=metrics,
         )
+
+    assert metrics["model_calls"] == 2
+    assert metrics["review_model_calls"] == 2
+    assert metrics["model_retries"] == 1
 
 
 def test_review_context_is_bounded(make_issue) -> None:

@@ -10,6 +10,7 @@ Tool dispatch uses a method-name convention (``_tool_<name>``) resolved via
 central if/elif chain.
 """
 
+import asyncio
 import json
 import logging
 import posixpath
@@ -26,6 +27,16 @@ logger = logging.getLogger(__name__)
 _MAX_LIST_ENTRIES = 80
 _MAX_GREP_RESULTS = 50
 _MAX_SEARCH_RESULTS = 50
+_DUPLICATE_TOOL_RESULT = "Duplicate tool call skipped; the unchanged result is already present in the conversation."
+_PARALLEL_SAFE_TOOLS = {
+    "read_file",
+    "list_directory",
+    "search_files",
+    "search_code",
+    "get_file_history",
+    "list_branches",
+    "get_file_at_commit",
+}
 
 
 _READ_ONLY_TOOLS = [
@@ -254,6 +265,7 @@ class ToolExecutor:
         self._line_counts = {path: content.count("\n") + 1 for path, content in self._file_cache.items()}
         self.pr_proposal: dict | None = None
         self.tools_used: list[str] = []
+        self._agent_result_cache: dict[str, str] = {}
 
     @property
     def file_cache(self) -> dict[str, str]:
@@ -281,6 +293,52 @@ class ToolExecutor:
             result = f"Error: {error}"
         self._record_observation(name, arguments, result)
         return result
+
+    async def execute_many(self, calls: list[tuple[str, dict]], *, timeout: float) -> tuple[list[str], int]:
+        """Execute a model tool-call batch while preserving response order.
+
+        Independent read-only calls run concurrently. Exact repeats from an
+        earlier model turn, or duplicates within the same batch, are replaced
+        with a short result so the LLM context does not grow with identical
+        source excerpts. Batches containing cache-dependent or write tools stay
+        sequential to preserve tool-call ordering semantics.
+        """
+        if not calls:
+            return [], 0
+
+        results: list[str | None] = [None] * len(calls)
+        pending: list[tuple[int, str, dict, str]] = []
+        seen_in_batch: set[str] = set()
+        duplicate_count = 0
+        for index, (name, arguments) in enumerate(calls):
+            key = _tool_call_key(name, arguments)
+            if key in self._agent_result_cache or key in seen_in_batch:
+                results[index] = _DUPLICATE_TOOL_RESULT
+                duplicate_count += 1
+                continue
+            seen_in_batch.add(key)
+            pending.append((index, name, arguments, key))
+
+        semaphore = asyncio.Semaphore(self._settings.max_parallel_tool_calls)
+
+        async def run(name: str, arguments: dict) -> str:
+            async with semaphore:
+                try:
+                    return await asyncio.wait_for(self.execute(name, arguments), timeout=timeout)
+                except TimeoutError:
+                    logger.warning("Tool %s timed out after %ss", name, timeout)
+                    return f"Error: Tool '{name}' timed out after {timeout:.0f}s"
+
+        if pending and all(name in _PARALLEL_SAFE_TOOLS for _, name, _, _ in pending):
+            pending_results = await asyncio.gather(*(run(name, arguments) for _, name, arguments, _ in pending))
+        else:
+            pending_results = [await run(name, arguments) for _, name, arguments, _ in pending]
+
+        for (index, _name, _arguments, key), result in zip(pending, pending_results, strict=True):
+            results[index] = result
+            if not result.startswith(("Error:", "File skipped:")):
+                self._agent_result_cache[key] = result
+        return [result or "Error: Tool returned no result" for result in results], duplicate_count
 
     @property
     def investigation_ledger(self) -> list[str]:
@@ -324,16 +382,17 @@ class ToolExecutor:
             source = await self._github.get_file(self._issue, path)
             # 并发预读场景下，await 期间其它协程可能已消耗预算，必须重新校验。
             # asyncio 单线程模型保证此同步块原子执行，不会再次被协程切换打断。
-            if len(self.files_read) >= self._max_files:
-                return f"File limit reached ({self._max_files}); use files already read."
-            remaining = self._max_total_context_chars - self._cached_chars
-            if remaining <= 0:
-                return "Source context limit reached; use files already read."
             full_content = source.content
-            self._file_cache[path] = source.content[: self._max_file_chars][:remaining]
-            self.files_read.append(path)
-            self._cached_chars += len(self._file_cache[path])
-            self._line_counts[path] = source.content.count("\n") + 1
+            if path not in self._file_cache:
+                if len(self.files_read) >= self._max_files:
+                    return f"File limit reached ({self._max_files}); use files already read."
+                remaining = self._max_total_context_chars - self._cached_chars
+                if remaining <= 0:
+                    return "Source context limit reached; use files already read."
+                self._file_cache[path] = source.content[: self._max_file_chars][:remaining]
+                self.files_read.append(path)
+                self._cached_chars += len(self._file_cache[path])
+                self._line_counts[path] = source.content.count("\n") + 1
 
         content = self._file_cache[path]
         cached_line_count = content.count("\n") + 1
@@ -521,6 +580,15 @@ def parse_tool_call(tool_call: Any) -> tuple[str, dict]:
     except (json.JSONDecodeError, TypeError):
         arguments = {}
     return name, arguments
+
+
+def _tool_call_key(name: str, arguments: dict) -> str:
+    """Return a stable key for exact model tool-call deduplication."""
+    try:
+        rendered = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        rendered = repr(arguments)
+    return f"{name}:{rendered}"
 
 
 def validate_pr_proposal(

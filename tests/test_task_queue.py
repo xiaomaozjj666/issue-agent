@@ -123,3 +123,84 @@ class TestTaskQueue:
         assert queue.batch_count == 1
         queue.submit(["url2"])
         assert queue.batch_count == 2
+
+    def test_submit_prunes_oldest_terminal_batch_history(self, settings, breaker):
+        queue = TaskQueue(settings, breaker, max_queue_size=10, max_history=2)
+        oldest = queue.submit(["url1"])
+        oldest.status = "completed"
+        middle = queue.submit(["url2"])
+        middle.status = "partial"
+
+        newest = queue.submit(["url3"])
+
+        assert queue.get_batch(oldest.batch_id) is None
+        assert queue.get_batch(middle.batch_id) is middle
+        assert queue.get_batch(newest.batch_id) is newest
+        assert queue.batch_count == 2
+
+    async def test_workers_honor_configured_concurrency(self, settings, breaker, monkeypatch):
+        active = 0
+        peak_active = 0
+        two_started = asyncio.Event()
+        release = asyncio.Event()
+
+        class FakeAgent:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            async def investigate(self, _issue_url):
+                nonlocal active, peak_active
+                active += 1
+                peak_active = max(peak_active, active)
+                if active == 2:
+                    two_started.set()
+                try:
+                    await release.wait()
+                    return MagicMock()
+                finally:
+                    active -= 1
+
+            async def aclose(self):
+                pass
+
+        monkeypatch.setattr("app.task_queue.IssueAgent", FakeAgent)
+        queue = TaskQueue(settings, breaker, max_concurrent=2, max_queue_size=10)
+        batch = queue.submit(["url1", "url2", "url3"])
+
+        await queue.start()
+        try:
+            await asyncio.wait_for(two_started.wait(), timeout=1)
+            assert peak_active == 2
+            assert batch.progress["running"] == 2
+            release.set()
+            await asyncio.wait_for(queue._pending.join(), timeout=1)
+            assert batch.status == "completed"
+            assert batch.progress["completed"] == 3
+        finally:
+            release.set()
+            await queue.stop()
+
+    async def test_stop_marks_running_tasks_cancelled(self, settings, breaker, monkeypatch):
+        started = asyncio.Event()
+
+        class BlockingAgent:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            async def investigate(self, _issue_url):
+                started.set()
+                await asyncio.Event().wait()
+
+            async def aclose(self):
+                pass
+
+        monkeypatch.setattr("app.task_queue.IssueAgent", BlockingAgent)
+        queue = TaskQueue(settings, breaker, max_concurrent=1, max_queue_size=10)
+        batch = queue.submit(["url1"])
+
+        await queue.start()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await queue.stop()
+
+        assert batch.tasks[0].status == "cancelled"
+        assert batch.status == "partial"

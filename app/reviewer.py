@@ -21,6 +21,7 @@ from app.i18n import (
 )
 from app.json_utils import extract_json
 from app.models import AnalysisReport, IssueData, ReviewAudit, ReviewOutcome
+from app.provider import record_model_request, record_model_usage
 from app.retry import build_attempt_plan
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class ReviewerAgent:
         file_cache: dict[str, str],
         files_read: list[str],
         line_counts: dict[str, int],
+        metrics: dict | None = None,
     ) -> ReviewOutcome:
         original_payload = report.model_dump(exclude={"review_audit", "files_examined", "evidence_audit"})
         context = _build_review_context(
@@ -75,6 +77,7 @@ class ReviewerAgent:
             return get_review_retry_prompt(raw, reason)
 
         for attempt in range(total_attempts):
+            record_model_request(metrics, "review", retry=attempt > 0)
             is_last = attempt == total_attempts - 1
             # 用 build_attempt_plan 统一构造 options（thinking 降级逻辑集中管理）
             plan = build_attempt_plan(
@@ -114,6 +117,7 @@ class ReviewerAgent:
                     response_format={"type": "json_object"},
                     max_tokens=self.settings.review_max_tokens,
                 )
+            record_model_usage(metrics, response, "review")
             if not response.choices:
                 last_raw_content = ""
                 last_failure_reason = "The reviewer returned no choices"
