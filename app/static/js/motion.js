@@ -485,16 +485,14 @@
     };
   }
 
-  // 聚光只用于持续存在的交互图表；动态列表统一使用 CSS hover 反馈。
+  // 图表使用清晰的边缘聚光；可操作报告项只用低强度高光提示点击区域。
   function applySpotlights(root) {
     if (!root || prefersReducedMotion()) return;
-    const selectors = [
-      ".report-chart",
-    ];
-    selectors.forEach(function (sel) {
-      root.querySelectorAll(sel).forEach(function (el) {
-        attachSpotlight(el);
-      });
+    root.querySelectorAll(".report-chart").forEach(function (el) {
+      attachSpotlight(el);
+    });
+    root.querySelectorAll(".change-item, .risk-item").forEach(function (el) {
+      attachSpotlight(el, { intensity: 0.14, size: 260 });
     });
   }
 
@@ -866,8 +864,13 @@
   // 在 renderReport 完成后调用，统一挂载所有报告相关动效
   function applyReportMotion(container) {
     if (!container) return;
-    // 报告属于高密度工作区：内容直接稳定呈现，只给可操作图表保留轻量聚光。
+    // AnimatedList + SpotlightCard + Magnet：克制地提示层级、点击区域和快捷操作。
+    applyScrollReveal(container, container.querySelectorAll(".change-item, .risk-item"));
+    applyReportListAnimation(container);
     applySpotlights(container);
+    container.querySelectorAll(".report-item-action").forEach(function (button) {
+      attachMagnet(button, { strength: 0.08, radius: 56 });
+    });
     // 平滑展开挂载到 TOC 和 patch details
     container.querySelectorAll(".report-toc, details#report-patch").forEach(function (d) {
       attachSmoothExpand(d);

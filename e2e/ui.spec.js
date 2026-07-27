@@ -223,15 +223,26 @@ test("renders responsive decision charts without overlaps or console errors", as
   const riskItem = page.locator(".risk-item").first();
   await riskItem.hover();
   await expect(riskItem).not.toHaveCSS("box-shadow", "none");
+  await expect(riskItem).toHaveAttribute("data-spotlight-active", "true");
   const riskLocate = riskItem.getByRole("button", { name: "在风险矩阵中定位" });
-  await expect(riskLocate).toContainText("定位");
-  await expect(riskItem.getByRole("button", { name: "复制风险提示" })).toContainText("复制");
+  await expect(riskLocate).toBeVisible();
+  await expect(riskItem.getByRole("button", { name: "复制风险提示" })).toBeVisible();
+  await riskLocate.hover();
+  await expect.poll(() => riskLocate.evaluate((button) => getComputedStyle(button, "::after").opacity)).toBe("1");
+  const riskActionFeedback = await riskLocate.evaluate((button) => ({
+    tooltip: getComputedStyle(button, "::after").content,
+    tooltipOpacity: getComputedStyle(button, "::after").opacity,
+    magnet: button.style.transform,
+  }));
+  expect(riskActionFeedback.tooltip).toContain("在风险矩阵中定位");
+  expect(riskActionFeedback.tooltipOpacity).toBe("1");
+  expect(riskActionFeedback.magnet).not.toBe("");
   await riskItem.locator(".report-item-primary").click();
   await expect(page.locator("#report-risk-matrix-section")).toHaveClass(/section-highlight/);
   const changeItem = page.locator(".change-item").first();
   const changeLocate = changeItem.getByRole("button", { name: "定位关联依据" });
-  await expect(changeLocate).toContainText("定位");
-  await expect(changeItem.getByRole("button", { name: "复制修复方案" })).toContainText("复制");
+  await expect(changeLocate).toBeVisible();
+  await expect(changeItem.getByRole("button", { name: "复制修复方案" })).toBeVisible();
   await changeItem.locator(".report-item-primary").click();
   await expect(page.locator("#report-patch")).toHaveClass(/section-highlight/);
   await page.evaluate(() => { window.IssueAgent.copyToClipboard = async () => true; });
