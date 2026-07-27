@@ -328,10 +328,10 @@ test("renders responsive decision charts without overlaps or console errors", as
     };
   })).toEqual({
     evidenceRoot: "#58a6ff",
-    riskMarker: "#db6d28",
-    riskLow: "rgba(63,185,80,0.09)",
-    riskCritical: "rgba(248,81,73,0.12)",
-    riskCriticalHover: "rgba(248,81,73,0.22)",
+    riskMarker: "#f0883e",
+    riskLow: "#1f4d32",
+    riskCritical: "#642b37",
+    riskCriticalHover: "#873e4b",
   });
   await page.keyboard.press("Tab");
   await expect(page.locator(".chart-modal-close")).toBeFocused();
