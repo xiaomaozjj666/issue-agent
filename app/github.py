@@ -13,6 +13,8 @@ import base64
 import binascii
 import logging
 import re
+from collections import OrderedDict
+from time import monotonic
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -142,6 +144,14 @@ STOP_WORDS = {
 RATE_LIMIT_STATUSES = {403, 429}
 
 
+def _cache_value_size(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    if isinstance(value, (list, tuple)):
+        return sum(_cache_value_size(item) for item in value)
+    return len(repr(value).encode("utf-8"))
+
+
 class GitHubError(RuntimeError):
     pass
 
@@ -191,6 +201,11 @@ class GitHubClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         write_enabled: bool = False,
+        cache_ttl: float = 300.0,
+        cache_max_entries: int = 512,
+        cache_max_bytes: int = 67_108_864,
+        max_tree_entries: int = 200_000,
+        close_on_exit: bool = True,
     ) -> None:
         headers = {
             "Accept": "application/vnd.github+json",
@@ -213,12 +228,83 @@ class GitHubClient:
         self._max_file_bytes = max_file_bytes
         self._max_retries = max_retries
         self._write_enabled = write_enabled
+        self._cache_ttl = cache_ttl
+        self._cache_max_entries = cache_max_entries
+        self._cache_max_bytes = cache_max_bytes
+        self._max_tree_entries = max_tree_entries
+        self._close_on_exit = close_on_exit
+        self._cache: OrderedDict[str, tuple[float, Any, int]] = OrderedDict()
+        self._cache_state = {"bytes": 0}
+        self._cache_lock = asyncio.Lock()
+        self.cache_hits = 0
+        self.cache_misses = 0
 
     async def __aenter__(self) -> "GitHubClient":
         return self
 
     async def __aexit__(self, *args: object) -> None:
+        if self._close_on_exit:
+            await self._client.aclose()
+
+    async def aclose(self) -> None:
         await self._client.aclose()
+
+    def fork(self) -> "GitHubClient":
+        """Return a lightweight request view sharing transport and cache state.
+
+        Cache counters remain local to the fork, so concurrent investigations
+        can report accurate per-session hit/miss metrics.
+        """
+        forked = object.__new__(GitHubClient)
+        forked._client = self._client
+        forked._max_file_bytes = self._max_file_bytes
+        forked._max_retries = self._max_retries
+        forked._write_enabled = self._write_enabled
+        forked._cache_ttl = self._cache_ttl
+        forked._cache_max_entries = self._cache_max_entries
+        forked._cache_max_bytes = self._cache_max_bytes
+        forked._max_tree_entries = self._max_tree_entries
+        forked._close_on_exit = False
+        forked._cache = self._cache
+        forked._cache_state = self._cache_state
+        forked._cache_lock = self._cache_lock
+        forked.cache_hits = 0
+        forked.cache_misses = 0
+        return forked
+
+    async def _cache_get(self, key: str) -> Any | None:
+        if self._cache_ttl <= 0:
+            self.cache_misses += 1
+            return None
+        now = monotonic()
+        async with self._cache_lock:
+            cached = self._cache.get(key)
+            if cached is None or cached[0] <= now:
+                if cached is not None:
+                    self._cache.pop(key, None)
+                    self._cache_state["bytes"] -= cached[2]
+                self.cache_misses += 1
+                return None
+            self._cache.move_to_end(key)
+            self.cache_hits += 1
+            return cached[1]
+
+    async def _cache_set(self, key: str, value: Any) -> None:
+        if self._cache_ttl <= 0:
+            return
+        size = _cache_value_size(value)
+        if size > self._cache_max_bytes:
+            return
+        async with self._cache_lock:
+            previous = self._cache.pop(key, None)
+            if previous is not None:
+                self._cache_state["bytes"] -= previous[2]
+            self._cache[key] = (monotonic() + self._cache_ttl, value, size)
+            self._cache_state["bytes"] += size
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._cache_max_entries or self._cache_state["bytes"] > self._cache_max_bytes:
+                _old_key, (_expires, _value, old_size) = self._cache.popitem(last=False)
+                self._cache_state["bytes"] -= old_size
 
     async def _get(self, path: str, **kwargs: Any) -> httpx.Response:
         """Perform a GET request with exponential back-off for transient errors.
@@ -367,6 +453,10 @@ class GitHubClient:
     async def get_tree(self, issue: IssueData) -> list[str]:
         branch = quote(issue.default_branch, safe="")
         repo_segment = self._repo_segment(issue.owner, issue.repo)
+        cache_key = f"tree:{repo_segment}:{issue.head_sha or issue.default_branch}"
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            return list(cached)
         try:
             response = await self._get(
                 f"/repos/{repo_segment}/git/trees/{branch}",
@@ -378,12 +468,73 @@ class GitHubClient:
             raise
         tree = response.json()
         if tree.get("truncated"):
-            raise GitHubError("Repository tree is too large for safe analysis")
-        return [item["path"] for item in tree["tree"] if item.get("type") == "blob"]
+            logger.info("Recursive GitHub tree was truncated; falling back to hierarchical traversal")
+            paths = await self._get_large_tree(repo_segment, issue.default_branch)
+        else:
+            paths = [item["path"] for item in tree.get("tree", []) if item.get("type") == "blob"]
+        if len(paths) > self._max_tree_entries:
+            raise GitHubError(
+                f"Repository contains more than {self._max_tree_entries} files; "
+                "narrow the repository or raise the limit"
+            )
+        await self._cache_set(cache_key, tuple(paths))
+        return paths
+
+    async def _get_large_tree(self, repo_segment: str, root_ref: str) -> list[str]:
+        """Recover a truncated recursive tree by walking only truncated subtrees."""
+
+        async def collect(ref: str, prefix: str, depth: int = 0) -> list[str]:
+            if depth > 50:
+                raise GitHubError("Repository tree nesting exceeds the safe traversal depth")
+            recursive = (
+                await self._get(
+                    f"/repos/{repo_segment}/git/trees/{quote(ref, safe='')}",
+                    params={"recursive": "1"},
+                )
+            ).json()
+            entries = recursive.get("tree", []) if isinstance(recursive, dict) else []
+            if not recursive.get("truncated"):
+                return [
+                    f"{prefix}{item['path']}"
+                    for item in entries
+                    if isinstance(item, dict) and item.get("type") == "blob" and isinstance(item.get("path"), str)
+                ]
+
+            shallow = (await self._get(f"/repos/{repo_segment}/git/trees/{quote(ref, safe='')}")).json()
+            shallow_entries = shallow.get("tree", []) if isinstance(shallow, dict) else []
+            files = [
+                f"{prefix}{item['path']}"
+                for item in shallow_entries
+                if isinstance(item, dict) and item.get("type") == "blob" and isinstance(item.get("path"), str)
+            ]
+            subtrees = [
+                (str(item["sha"]), f"{prefix}{item['path']}/")
+                for item in shallow_entries
+                if isinstance(item, dict)
+                and item.get("type") == "tree"
+                and isinstance(item.get("path"), str)
+                and item.get("sha")
+            ]
+            for start in range(0, len(subtrees), 6):
+                chunk = subtrees[start : start + 6]
+                nested = await asyncio.gather(*(collect(sha, path, depth + 1) for sha, path in chunk))
+                for child_files in nested:
+                    files.extend(child_files)
+                    if len(files) > self._max_tree_entries:
+                        raise GitHubError(
+                            f"Repository contains more than {self._max_tree_entries} files; traversal stopped"
+                        )
+            return files
+
+        return await collect(root_ref, "")
 
     async def get_file(self, issue: IssueData, path: str) -> SourceFile:
         encoded_path = quote(path, safe="/")
         repo_segment = self._repo_segment(issue.owner, issue.repo)
+        cache_key = f"file:{repo_segment}:{issue.head_sha or issue.default_branch}:{path}"
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            return SourceFile(path=path, content=str(cached))
         response = await self._get(
             f"/repos/{repo_segment}/contents/{encoded_path}",
             params={"ref": issue.default_branch},
@@ -400,7 +551,9 @@ class GitHubClient:
             raise GitHubFileSkipped(f"Invalid file content for {path}") from error
         if b"\x00" in raw:
             raise GitHubFileSkipped(f"Binary file skipped: {path}")
-        return SourceFile(path=path, content=raw.decode("utf-8", errors="replace"))
+        content = raw.decode("utf-8", errors="replace")
+        await self._cache_set(cache_key, content)
+        return SourceFile(path=path, content=content)
 
     # ── v0.3.0 extended API ─────────────────────────────────────────
 

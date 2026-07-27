@@ -143,16 +143,25 @@ Session 完整状态仅在关键节点（phase / report / done）写入 SQLite�
 
 - 5xx / 网络错误：指数退避重试（0.5s → 1s → 2s），最多 3 次
 - 429 Rate Limit：立即抛出 `GitHubRateLimitError`，不重试
-- 连接池：`httpx.Limits(max_connections=20, max_keepalive_connections=10)`
+- OpenAI/GitHub 连接池绑定应用生命周期，跨请求复用 TLS 连接
+- 仓库树与源码按 `owner/repo/head_sha` 做有界 TTL 缓存
+- GitHub 截断递归树时自动分层遍历，仍受最大文件数保护
 
-### 5. 证据审计 & 置信度
+### 5. 工具调度与停止条件
+
+- 同一模型轮次中的独立只读工具并发执行，结果仍按原调用顺序回灌
+- 精确重复调用只返回短提示，避免重复源码持续放大上下文
+- 连续重复工具轮次达到阈值后提前进入报告阶段
+- 批处理使用固定 worker 池，`BATCH_MAX_CONCURRENT` 对应真实并发数
+
+### 6. 证据审计 & 置信度
 
 `EvidenceValidator` 是纯确定性逻辑（无 LLM 调用）：
 - 验证 evidence 中的文件路径是否在 `files_read` 中
 - 验证行号范围 `L12-L45` 是否在实际读取的文件行数内
 - 无有效证据 → 强制 `confidence = "low"`
 
-### 6. 独立评审
+### 7. 独立评审
 
 `ReviewerAgent` 使用独立 LLM 调用（可配置不同模型）：
 - 挑战根因的因果链完整性
@@ -161,7 +170,7 @@ Session 完整状态仅在关键节点（phase / report / done）写入 SQLite�
 - 输出 `approved` / `revised` / `rejected`
 - 失败时安全降级为 investigator 原始报告
 
-### 7. 会话并发控制
+### 8. 会话并发控制
 
 - 进程内：per-session `asyncio.Lock` 序列化同 session 请求
 - 跨进程：SQLite OCC（optimistic concurrency control）via `version` 字段

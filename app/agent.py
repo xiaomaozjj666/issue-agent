@@ -43,7 +43,13 @@ from app.i18n import (
     t,
 )
 from app.models import AnalysisReport, ChatResponse, IssueData, ReviewAudit
-from app.provider import chat_request_options, iter_deltas
+from app.provider import (
+    chat_request_options,
+    create_openai_client,
+    iter_deltas,
+    record_model_request,
+    record_model_usage,
+)
 from app.report_generator import ReportGenerator
 from app.reviewer import ReviewerAgent
 from app.sessions import Session
@@ -66,11 +72,13 @@ class IssueAgent:
         settings: Settings,
         *,
         client: AsyncOpenAI | None = None,
+        github_client: GitHubClient | None = None,
         circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         self.settings = settings
         self._client: AsyncOpenAI | None = client
         self._owns_client = client is None
+        self._github_client = github_client
         self._circuit_breaker = circuit_breaker
         # 报告生成委托给独立的 ReportGenerator，避免 IssueAgent 单类过大。
         # client 延迟创建（_get_client），所以这里先用 None，首次生成报告时再绑定。
@@ -84,12 +92,7 @@ class IssueAgent:
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
-            self._client = AsyncOpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_base_url,
-                timeout=self.settings.openai_timeout,
-                max_retries=self.settings.openai_max_retries,
-            )
+            self._client = create_openai_client(self.settings)
             self._owns_client = True
         return self._client
 
@@ -114,20 +117,36 @@ class IssueAgent:
         investigation_start = monotonic()
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
         if session is not None:
-            session.metrics = {"model_calls": 0, "tool_calls": 0, "review_calls": 0, "files_read": 0}
+            session.metrics = {
+                "model_calls": 0,
+                "model_retries": 0,
+                "tool_calls": 0,
+                "duplicate_tool_calls": 0,
+                "review_calls": 0,
+                "files_read": 0,
+            }
         yield phase_event("fetching", "Fetching issue and repository tree")
 
-        async with GitHubClient(
+        github_context = self._github_client or GitHubClient(
             self.settings.github_token,
             max_file_bytes=self.settings.github_max_file_bytes,
             timeout=self.settings.github_timeout,
             max_retries=self.settings.github_max_retries,
-        ) as github:
+            cache_ttl=self.settings.github_cache_ttl_seconds,
+            cache_max_entries=self.settings.github_cache_max_entries,
+            cache_max_bytes=self.settings.github_cache_max_bytes,
+            max_tree_entries=self.settings.github_max_tree_entries,
+        )
+        async with github_context as github:
+            github_hits_before = int(getattr(github, "cache_hits", 0))
+            github_misses_before = int(getattr(github, "cache_misses", 0))
+            fetch_started = monotonic()
             issue = await github.get_issue(owner, repo, number)
             tree = await github.get_tree(issue)
             if session is not None:
                 session.issue = issue
                 session.tree = tree
+                session.metrics["fetch_ms"] = round((monotonic() - fetch_started) * 1000)
             yield start_event(issue.title, len(tree))
             logger.info("Fetched issue: %r (%d comments, %d files)", issue.title, len(issue.comments), len(tree))
 
@@ -164,6 +183,8 @@ class IssueAgent:
 
             tools = get_tool_definitions(self.settings)
             client = self._get_client()
+            duplicate_tool_rounds = 0
+            exploration_started = monotonic()
             for iteration in range(self.settings.max_agent_iterations):
                 # L3：调查总时长上限检测，在每轮迭代前检查，超时即抛出
                 # 避免模型反复调用工具陷入死循环，耗尽 API 额度
@@ -171,23 +192,23 @@ class IssueAgent:
                     raise TimeoutError(
                         f"Investigation exceeded {self.settings.investigation_timeout:.0f}s total timeout"
                     )
-                if session is not None:
-                    session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
+                record_model_request(session.metrics if session is not None else None, "exploration")
                 if self._circuit_breaker is not None:
                     response = await self._circuit_breaker.call(
                         client.chat.completions.create,
                         **chat_request_options(self.settings),
                         messages=messages,  # type: ignore[arg-type]
                         tools=tools,  # type: ignore[arg-type]
-                        max_tokens=self.settings.max_output_tokens,
+                        max_tokens=self.settings.max_exploration_tokens,
                     )
                 else:
                     response = await client.chat.completions.create(
                         **chat_request_options(self.settings),
                         messages=messages,  # type: ignore[arg-type]
                         tools=tools,  # type: ignore[arg-type]
-                        max_tokens=self.settings.max_output_tokens,
+                        max_tokens=self.settings.max_exploration_tokens,
                     )
+                record_model_usage(session.metrics if session is not None else None, response, "exploration")
 
                 if not response.choices:
                     raise ModelResponseError("The model returned no choices")
@@ -203,20 +224,28 @@ class IssueAgent:
                     logger.info("Agent finished exploration after %d iterations", iteration + 1)
                     break
 
-                for tc in msg.tool_calls:
-                    name, args = parse_tool_call(tc)
+                parsed_calls = [(tc, *parse_tool_call(tc)) for tc in msg.tool_calls]
+                for _tc, name, args in parsed_calls:
                     logger.info("Tool call %d: %s(%s)", iteration + 1, name, args)
                     yield tool_call_event(name, args, iteration + 1)
                     if session is not None:
                         session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
-                    try:
-                        result = await asyncio.wait_for(
-                            executor.execute(name, args),
-                            timeout=self.settings.tool_timeout,
-                        )
-                    except TimeoutError:
-                        result = f"Error: Tool '{name}' timed out after {self.settings.tool_timeout:.0f}s"
-                        logger.warning("Tool %s timed out after %ss", name, self.settings.tool_timeout)
+
+                tool_started = monotonic()
+                results, duplicate_count = await executor.execute_many(
+                    [(name, args) for _tc, name, args in parsed_calls],
+                    timeout=self.settings.tool_timeout,
+                )
+                if session is not None:
+                    session.metrics["tool_ms"] = int(session.metrics.get("tool_ms", 0)) + round(
+                        (monotonic() - tool_started) * 1000
+                    )
+                if session is not None and duplicate_count:
+                    session.metrics["duplicate_tool_calls"] = int(
+                        session.metrics.get("duplicate_tool_calls", 0)
+                    ) + duplicate_count
+
+                for (tc, name, _args), result in zip(parsed_calls, results, strict=True):
                     if session is not None:
                         # 同步 files_read 快照，让前端实时显示已读文件数（而非等到报告阶段）
                         session.metrics["files_read"] = len(executor.files_read)
@@ -224,26 +253,44 @@ class IssueAgent:
                             session.pending_pr = executor.pr_proposal
                     yield tool_result_event(name, result)
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+                if duplicate_count == len(parsed_calls):
+                    duplicate_tool_rounds += 1
+                    if duplicate_tool_rounds >= self.settings.max_duplicate_tool_rounds:
+                        logger.info(
+                            "Stopping exploration after %d exact-repeat tool rounds",
+                            duplicate_tool_rounds,
+                        )
+                        break
+                else:
+                    duplicate_tool_rounds = 0
             else:
                 logger.warning("Agent reached max iterations (%d)", self.settings.max_agent_iterations)
 
-            yield phase_event("verifying", "Validating evidence and preparing the report")
             if session is not None:
-                session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
+                session.metrics["exploration_ms"] = round((monotonic() - exploration_started) * 1000)
+            yield phase_event("verifying", "Validating evidence and preparing the report")
             # 流式生成报告：实时推送 reasoning 思考过程到前端，避免长时间黑盒等待
             report: AnalysisReport | None = None
-            async for item in self._get_report_generator().generate_stream(messages, executor):
+            report_started = monotonic()
+            async for item in self._get_report_generator().generate_stream(
+                messages,
+                executor,
+                session.metrics if session is not None else None,
+            ):
                 if isinstance(item, AgentEvent):
                     yield item
                 else:
                     report = item
             if report is None:
                 raise ModelResponseError("Report generation did not produce a result")
+            if session is not None:
+                session.metrics["report_ms"] = round((monotonic() - report_started) * 1000)
             if self.settings.independent_review:
                 yield phase_event("reviewing", "Running independent evidence review")
                 if session is not None:
-                    session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
                     session.metrics["review_calls"] = int(session.metrics.get("review_calls", 0)) + 1
+                review_started = monotonic()
                 try:
                     outcome = await ReviewerAgent(self.settings, client, circuit_breaker=self._circuit_breaker).review(
                         issue=issue,
@@ -251,6 +298,7 @@ class IssueAgent:
                         file_cache=executor.file_cache,
                         files_read=executor.files_read,
                         line_counts=executor.line_counts,
+                        metrics=session.metrics if session is not None else None,
                     )
                     report = outcome.report
                 except Exception:
@@ -259,6 +307,8 @@ class IssueAgent:
                     report.review_audit = ReviewAudit(status="unavailable", summary=message)
                     if message not in report.risks:
                         report.risks.append(message)
+                if session is not None:
+                    session.metrics["review_ms"] = round((monotonic() - review_started) * 1000)
                 yield review_event(
                     report.review_audit.status,
                     report.review_audit.summary,
@@ -269,6 +319,10 @@ class IssueAgent:
                 session.files_read = executor.files_read
                 session.report = report
                 session.metrics["files_read"] = len(executor.files_read)
+                session.metrics["github_cache_hits"] = int(getattr(github, "cache_hits", 0)) - github_hits_before
+                session.metrics["github_cache_misses"] = (
+                    int(getattr(github, "cache_misses", 0)) - github_misses_before
+                )
 
             yield report_event(report.model_dump())
 
@@ -343,11 +397,15 @@ class IssueAgent:
         if session.issue is None:
             raise ValueError("Session not initialized")
 
-        github = GitHubClient(
+        github = self._github_client or GitHubClient(
             self.settings.github_token,
             max_file_bytes=self.settings.github_max_file_bytes,
             timeout=self.settings.github_timeout,
             max_retries=self.settings.github_max_retries,
+            cache_ttl=self.settings.github_cache_ttl_seconds,
+            cache_max_entries=self.settings.github_cache_max_entries,
+            cache_max_bytes=self.settings.github_cache_max_bytes,
+            max_tree_entries=self.settings.github_max_tree_entries,
         )
         executor = self._build_executor(
             github,
@@ -379,7 +437,7 @@ class IssueAgent:
         github, executor, messages = self._chat_prepare(session, message)
         async with github:
             for _ in range(self.settings.max_agent_iterations):
-                session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
+                record_model_request(session.metrics, "chat")
                 collected_content_parts: list[str] = []
                 # 工具调用 chunk 按 index 累积：{index: {"id": ..., "name": ..., "arguments": "..."}}
                 tool_call_buffers: dict[int, dict[str, str]] = {}
@@ -389,7 +447,14 @@ class IssueAgent:
                     tools=tools,
                     max_tokens=self.settings.max_chat_tokens,
                 )
-                async for delta in iter_deltas(stream):
+                usage_response = None
+
+                def capture_usage(chunk) -> None:
+                    nonlocal usage_response
+                    if getattr(chunk, "usage", None) is not None:
+                        usage_response = chunk
+
+                async for delta in iter_deltas(stream, on_chunk=capture_usage):
                     # 只透传最终回复内容，不展示 reasoning_content（思考过程）
                     if delta.content:
                         collected_content_parts.append(delta.content)
@@ -401,11 +466,12 @@ class IssueAgent:
                             if tc.id:
                                 entry["id"] = tc.id
                             fn = getattr(tc, "function", None)
-                            if fn is not None:
-                                if fn.name:
-                                    entry["name"] = fn.name
-                                if fn.arguments:
-                                    entry["arguments"] += fn.arguments
+                            if fn is not None and fn.name:
+                                entry["name"] = fn.name
+                            if fn is not None and fn.arguments:
+                                entry["arguments"] += fn.arguments
+                if usage_response is not None:
+                    record_model_usage(session.metrics, usage_response, "chat")
 
                 collected_content = "".join(collected_content_parts)
                 # LLM 返回空 stream（零 chunk 或全部空 content）且无 tool 调用：
@@ -442,7 +508,8 @@ class IssueAgent:
                     }
                     return
 
-                # 有工具调用：依次执行，工具结果回灌到 messages
+                # 有工具调用：先发出调用事件，再批量执行独立只读工具。
+                parsed_calls: list[tuple[dict[str, str], str, dict]] = []
                 for entry in ordered_tool_calls:
                     if not entry["id"]:
                         continue
@@ -452,14 +519,18 @@ class IssueAgent:
                     except json.JSONDecodeError:
                         args = {}
                     yield {"type": "tool_call", "name": name, "args": args}
-                    try:
-                        result = await asyncio.wait_for(
-                            executor.execute(name, args),
-                            timeout=self.settings.tool_timeout,
-                        )
-                    except TimeoutError:
-                        result = f"Error: Tool '{name}' timed out after {self.settings.tool_timeout:.0f}s"
-                        logger.warning("Chat tool %s timed out after %ss", name, self.settings.tool_timeout)
+                    parsed_calls.append((entry, name, args))
+
+                results, duplicate_count = await executor.execute_many(
+                    [(name, args) for _entry, name, args in parsed_calls],
+                    timeout=self.settings.tool_timeout,
+                )
+                if duplicate_count:
+                    session.metrics["duplicate_tool_calls"] = int(
+                        session.metrics.get("duplicate_tool_calls", 0)
+                    ) + duplicate_count
+
+                for (entry, name, _args), result in zip(parsed_calls, results, strict=True):
                     session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     session.metrics["files_read"] = len(executor.files_read)
                     if executor.pr_proposal is not None:
@@ -483,8 +554,9 @@ class IssueAgent:
         github, executor, messages = self._chat_prepare(session, message)
         async with github:
             for _ in range(self.settings.max_agent_iterations):
-                session.metrics["model_calls"] = int(session.metrics.get("model_calls", 0)) + 1
+                record_model_request(session.metrics, "chat")
                 response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
+                record_model_usage(session.metrics, response, "chat")
                 if not response.choices:
                     raise ModelResponseError("The model returned no choices")
                 msg = response.choices[0].message
@@ -500,17 +572,16 @@ class IssueAgent:
                         tools_used=executor.tools_used,
                     )
 
-                for tc in msg.tool_calls:
-                    name, args = parse_tool_call(tc)
-                    # 非流式也加超时保护，与 _chat_stream 保持一致（修复评估发现的不一致）
-                    try:
-                        result = await asyncio.wait_for(
-                            executor.execute(name, args),
-                            timeout=self.settings.tool_timeout,
-                        )
-                    except TimeoutError:
-                        result = f"Error: Tool '{name}' timed out after {self.settings.tool_timeout:.0f}s"
-                        logger.warning("Chat tool %s timed out after %ss", name, self.settings.tool_timeout)
+                parsed_calls = [(tc, *parse_tool_call(tc)) for tc in msg.tool_calls]
+                results, duplicate_count = await executor.execute_many(
+                    [(name, args) for _tc, name, args in parsed_calls],
+                    timeout=self.settings.tool_timeout,
+                )
+                if duplicate_count:
+                    session.metrics["duplicate_tool_calls"] = int(
+                        session.metrics.get("duplicate_tool_calls", 0)
+                    ) + duplicate_count
+                for (tc, _name, _args), result in zip(parsed_calls, results, strict=True):
                     session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
                     session.metrics["files_read"] = len(executor.files_read)
                     if executor.pr_proposal is not None:
@@ -530,8 +601,10 @@ class IssueAgent:
     # 实际逻辑已抽到 app.report_generator.ReportGenerator；
     # 这里保留方法名以兼容现有测试和调用方（CLI、tests/test_agent.py）。
 
-    async def _generate_report(self, messages: list[dict], executor: ToolExecutor) -> AnalysisReport:
-        return await self._get_report_generator().generate(messages, executor)
+    async def _generate_report(
+        self, messages: list[dict], executor: ToolExecutor, metrics: dict | None = None
+    ) -> AnalysisReport:
+        return await self._get_report_generator().generate(messages, executor, metrics)
 
     def _build_report_messages(self, messages: list[dict], executor: ToolExecutor) -> list[dict]:
         return self._get_report_generator().build_report_messages(messages, executor)

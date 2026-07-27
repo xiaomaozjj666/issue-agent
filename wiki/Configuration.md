@@ -13,8 +13,8 @@
 | `OPENAI_MODEL` | `deepseek-v4-pro` | — | 调查模型名称 |
 | `OPENAI_THINKING` | `enabled` | `enabled` / `disabled` | DeepSeek thinking mode |
 | `OPENAI_REASONING_EFFORT` | `high` | `high` / `max` | 推理深度 |
-| `OPENAI_TIMEOUT` | `60` | 1–300 | 单次 LLM 请求超时（秒） |
-| `OPENAI_MAX_RETRIES` | `2` | 0–5 | SDK 层重试次数 |
+| `OPENAI_TIMEOUT` | `180` | 1–300 | 单次 LLM 请求超时（秒） |
+| `OPENAI_MAX_RETRIES` | `0` | 0–5 | SDK 层重试次数；默认由业务层控制报告与评审重试 |
 
 > **注意**: DeepSeek thinking mode 下单次请求可能需要 60–120s，建议 timeout ≥ 120。
 
@@ -28,6 +28,10 @@
 | `GITHUB_TIMEOUT` | `30` | 1–120 | GitHub API HTTP 超时（秒） |
 | `GITHUB_MAX_RETRIES` | `3` | 0–5 | 应用层指数退避重试次数（仅 5xx/网络错误） |
 | `GITHUB_MAX_FILE_BYTES` | `512000` | 4096–2000000 | 跳过超过此大小的文件 |
+| `GITHUB_CACHE_TTL_SECONDS` | `300` | 0–3600 | 按 commit 隔离的仓库树/源码缓存时间，`0` 为关闭 |
+| `GITHUB_CACHE_MAX_ENTRIES` | `512` | 16–10000 | 单进程缓存条目上限 |
+| `GITHUB_CACHE_MAX_BYTES` | `67108864` | 1048576–1073741824 | 单进程缓存总字节上限 |
+| `GITHUB_MAX_TREE_ENTRIES` | `200000` | 1000–1000000 | 大型仓库分层遍历的文件数安全上限 |
 
 **重试策略:**
 - 5xx 响应 / 网络错误 → 指数退避重试（0.5s × 2^attempt）
@@ -48,8 +52,11 @@
 | `MAX_PLANNING_PATHS` | `80` | 10–200 | 初始 prompt 中展示的最大路径数 |
 | `MAX_FILE_CHARS` | `16000` | 1000–50000 | 单文件最大保留字符数 |
 | `MAX_TOTAL_CONTEXT_CHARS` | `80000` | 5000–200000 | 源码 + 对话总上下文上限 |
+| `MAX_EXPLORATION_TOKENS` | `2000` | 500–8000 | 每轮工具规划的输出 token 上限 |
 | `MAX_OUTPUT_TOKENS` | `8000` | 500–16000 | 模型单次响应最大 token |
 | `MAX_AGENT_ITERATIONS` | `15` | 3–40 | 工具调用循环最大迭代次数 |
+| `MAX_PARALLEL_TOOL_CALLS` | `4` | 1–12 | 独立只读工具的最大并发数 |
+| `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | 1–5 | 连续精确重复工具轮次达到该值后提前生成报告 |
 | `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | 1000–50000 | 调查账本（搜索/历史/工具发现）保留上限 |
 | `MAX_CHAT_TOKENS` | `2000` | 500–16000 | 聊天模式单次响应最大 token |
 
@@ -89,6 +96,9 @@
 | `SESSION_RETENTION_DAYS` | `30` | 1–365 | 自动清理已完成会话的天数 |
 | `MAX_PR_FILES` | `20` | 1–50 | PR 提案最大文件数 |
 | `MAX_PR_TOTAL_BYTES` | `1000000` | 4096–10000000 | PR 提案最大总字节数 |
+| `BATCH_MAX_CONCURRENT` | `2` | 1–8 | 批量调查 worker 数 |
+| `BATCH_MAX_QUEUE_SIZE` | `100` | 1–500 | 批量待处理任务上限 |
+| `BATCH_MAX_HISTORY` | `100` | 10–10000 | 内存中保留的已完成批次上限 |
 
 ---
 

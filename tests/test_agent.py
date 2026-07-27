@@ -184,6 +184,49 @@ async def test_investigation_runs_independent_reviewer(fake_client, fake_respons
     assert session.metrics["model_calls"] == 4
 
 
+async def test_investigation_stops_after_repeated_exact_tool_rounds(
+    fake_client, fake_response, fake_tool_call, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    tool_call = fake_tool_call("read_file", {"path": "src/parser.py"})
+    report_data = {
+        "summary": "Parser bug",
+        "root_cause": "The parser implementation is incomplete.",
+        "confidence": "medium",
+        "evidence": [{"path": "src/parser.py", "lines": "L1", "reason": "Parser definition"}],
+        "proposed_changes": ["Implement parsing"],
+        "patch": None,
+        "tests": ["Add parser coverage"],
+        "risks": [],
+    }
+    client = fake_client(
+        [
+            fake_response(tool_calls=[tool_call]),
+            fake_response(tool_calls=[tool_call]),
+            fake_response(tool_calls=[tool_call]),
+            fake_response(content=json.dumps(report_data)),
+        ]
+    )
+    agent = IssueAgent(
+        Settings(
+            openai_api_key="test-key",
+            max_agent_iterations=10,
+            max_duplicate_tool_rounds=2,
+            independent_review=False,
+        ),
+        client=client,
+    )
+    session = Session(session_id="dedupe", issue_url="https://github.com/acme/widget/issues/1")
+
+    report = await agent.investigate("https://github.com/acme/widget/issues/1", session=session)
+
+    assert report.summary == "Parser bug"
+    assert session.metrics["duplicate_tool_calls"] == 2
+    assert session.metrics["exploration_model_calls"] == 3
+    assert session.metrics["report_model_calls"] == 1
+    assert len(client.chat.completions.calls) == 4
+
+
 async def test_investigation_degrades_safely_when_reviewer_fails(fake_client, fake_response, monkeypatch) -> None:
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     report_data = {
@@ -357,13 +400,17 @@ async def test_generate_report_retries_on_invalid_json_then_succeeds(
     executor = ToolExecutor(MagicMock(), Settings(openai_api_key="test-key"), make_issue(), ["src/parser.py"])
     executor._file_cache["src/parser.py"] = "parse(value)"
     executor.files_read.append("src/parser.py")
-    report = await agent._generate_report([{"role": "user", "content": "investigate"}], executor)
+    metrics: dict = {}
+    report = await agent._generate_report([{"role": "user", "content": "investigate"}], executor, metrics)
     # 第一次响应被拒，重试后成功
     assert report.summary == "Parser bug"
     assert len(agent._client.chat.completions.calls) == 2
     # 重试时的 messages 应包含错误反馈
     retry_call_messages = agent._client.chat.completions.calls[1]["messages"]
     assert any("AnalysisReport schema" in str(m.get("content", "")) for m in retry_call_messages)
+    assert metrics["model_calls"] == 2
+    assert metrics["report_model_calls"] == 2
+    assert metrics["model_retries"] == 1
 
 
 async def test_generate_report_retries_three_times_with_thinking_fallback(

@@ -121,12 +121,19 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `GITHUB_MAX_FILE_BYTES` | `512000` | Skip files larger than this |
 | `GITHUB_TIMEOUT` | `30` | HTTP timeout (seconds) for GitHub API calls |
 | `GITHUB_MAX_RETRIES` | `3` | App-level retries for transient GitHub errors (5xx, network) |
+| `GITHUB_CACHE_TTL_SECONDS` | `300` | Commit-scoped repository tree and source cache lifetime; set `0` to disable |
+| `GITHUB_CACHE_MAX_ENTRIES` | `512` | Maximum cached repository trees and source files per process |
+| `GITHUB_CACHE_MAX_BYTES` | `67108864` | Maximum combined memory used by cached repository data |
+| `GITHUB_MAX_TREE_ENTRIES` | `200000` | Safety limit for hierarchical traversal when GitHub truncates a recursive tree |
 | `MAX_CANDIDATE_FILES` | `12` | Max distinct source files per investigation |
 | `MAX_PLANNING_PATHS` | `80` | Max paths shown to the model in initial prompt |
 | `MAX_FILE_CHARS` | `16000` | Max retained characters from one file |
 | `MAX_TOTAL_CONTEXT_CHARS` | `80000` | Max retained source + chat characters |
+| `MAX_EXPLORATION_TOKENS` | `2000` | Output budget for each tool-planning model turn |
 | `MAX_OUTPUT_TOKENS` | `8000` | Max tokens per model response |
 | `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
+| `MAX_PARALLEL_TOOL_CALLS` | `4` | Maximum independent read-only tools executed concurrently |
+| `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | Stop exploration after this many exact-repeat tool rounds |
 | `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | Bounded search, history, branch, and tool findings retained for report synthesis |
 | `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
 | `INDEPENDENT_REVIEW` | `true` | Run the independent reviewer before publishing the final report |
@@ -142,6 +149,9 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `SESSION_RETENTION_DAYS` | `30` | Auto-purge completed/failed/cancelled sessions older than this on startup |
 | `MAX_PR_FILES` | `20` | Maximum number of files allowed in one PR proposal |
 | `MAX_PR_TOTAL_BYTES` | `1000000` | Maximum combined UTF-8 size of proposed file contents |
+| `BATCH_MAX_CONCURRENT` | `2` | Number of batch investigation workers |
+| `BATCH_MAX_QUEUE_SIZE` | `100` | Maximum pending batch tasks |
+| `BATCH_MAX_HISTORY` | `100` | Maximum completed batch records retained in memory |
 
 ### CLI Usage
 

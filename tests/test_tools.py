@@ -466,3 +466,112 @@ async def test_parallel_preload_respects_file_count_limit() -> None:
     assert cached_count <= 3, f"File count exceeded: {cached_count} > 3"
     limit_reached_count = sum(1 for r in results if "File limit reached" in r)
     assert limit_reached_count == 7
+
+
+async def test_execute_many_parallelizes_independent_reads() -> None:
+    active = 0
+    peak_active = 0
+    two_started = asyncio.Event()
+    release = asyncio.Event()
+    github = MagicMock()
+
+    async def get_file(_issue, path):
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        if active == 2:
+            two_started.set()
+        try:
+            await release.wait()
+            return SourceFile(path=path, content=path)
+        finally:
+            active -= 1
+
+    github.get_file = AsyncMock(side_effect=get_file)
+    executor = ToolExecutor(github, _SETTINGS, _make_issue(), ["a.py", "b.py"])
+    execution = asyncio.create_task(
+        executor.execute_many(
+            [("read_file", {"path": "a.py"}), ("read_file", {"path": "b.py"})],
+            timeout=1,
+        )
+    )
+
+    await asyncio.wait_for(two_started.wait(), timeout=1)
+    assert peak_active == 2
+    release.set()
+    results, duplicates = await execution
+
+    assert duplicates == 0
+    assert results == ["L1: a.py", "L1: b.py"]
+
+
+async def test_execute_many_skips_exact_duplicate_calls() -> None:
+    github = _make_github({"a.py": "content"})
+    executor = ToolExecutor(github, _SETTINGS, _make_issue(), ["a.py"])
+
+    first_results, first_duplicates = await executor.execute_many(
+        [("read_file", {"path": "a.py"}), ("read_file", {"path": "a.py"})],
+        timeout=1,
+    )
+    second_results, second_duplicates = await executor.execute_many(
+        [("read_file", {"path": "a.py"})],
+        timeout=1,
+    )
+
+    assert first_results[0] == "L1: content"
+    assert "Duplicate tool call skipped" in first_results[1]
+    assert "Duplicate tool call skipped" in second_results[0]
+    assert first_duplicates == 1
+    assert second_duplicates == 1
+    github.get_file.assert_awaited_once()
+
+
+async def test_execute_many_preserves_order_for_cache_dependent_tools() -> None:
+    github = _make_github({"a.py": "def target():\n    pass"})
+    executor = ToolExecutor(github, _SETTINGS, _make_issue(), ["a.py"])
+
+    results, duplicates = await executor.execute_many(
+        [("read_file", {"path": "a.py"}), ("grep_content", {"pattern": "target"})],
+        timeout=1,
+    )
+
+    assert duplicates == 0
+    assert "L1: def target():" in results[0]
+    assert "a.py:L1: def target():" in results[1]
+
+
+async def test_parallel_ranges_of_same_file_only_consume_cache_budget_once() -> None:
+    content = "line1\nline2\nline3\nline4"
+    two_started = asyncio.Event()
+    release = asyncio.Event()
+    call_count = 0
+    github = MagicMock()
+
+    async def get_file(_issue, path):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            two_started.set()
+        await release.wait()
+        return SourceFile(path=path, content=content)
+
+    github.get_file = AsyncMock(side_effect=get_file)
+    executor = ToolExecutor(github, _SETTINGS, _make_issue(), ["a.py"], max_total_context_chars=100)
+    execution = asyncio.create_task(
+        executor.execute_many(
+            [
+                ("read_file", {"path": "a.py", "start_line": 1, "end_line": 2}),
+                ("read_file", {"path": "a.py", "start_line": 3, "end_line": 4}),
+            ],
+            timeout=1,
+        )
+    )
+
+    await asyncio.wait_for(two_started.wait(), timeout=1)
+    release.set()
+    results, duplicates = await execution
+
+    assert duplicates == 0
+    assert results == ["L1: line1\nL2: line2", "L3: line3\nL4: line4"]
+    assert executor.files_read == ["a.py"]
+    assert executor.file_cache == {"a.py": content}

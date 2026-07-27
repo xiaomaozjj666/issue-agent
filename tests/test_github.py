@@ -303,6 +303,151 @@ async def test_get_file_skips_oversized_file() -> None:
             await github.get_file(issue, "src/huge.py")
 
 
+async def test_tree_and_file_cache_are_scoped_to_commit() -> None:
+    issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+        head_sha="abc123",
+    )
+    calls = {"tree": 0, "file": 0}
+    github = GitHubClient(cache_ttl=60)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "/git/trees/" in request.url.path:
+            calls["tree"] += 1
+            return httpx.Response(200, json={"tree": [{"path": "src/a.py", "type": "blob"}]})
+        calls["file"] += 1
+        return httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        assert await github.get_tree(issue) == ["src/a.py"]
+        assert await github.get_tree(issue) == ["src/a.py"]
+        assert (await github.get_file(issue, "src/a.py")).content == "print(1)"
+        assert (await github.get_file(issue, "src/a.py")).content == "print(1)"
+
+    assert calls == {"tree": 1, "file": 1}
+    assert github.cache_hits == 2
+    assert github.cache_misses == 2
+
+
+async def test_fork_shares_cache_but_keeps_request_metrics_local() -> None:
+    issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+        head_sha="abc123",
+    )
+    github = GitHubClient(cache_ttl=60, close_on_exit=False)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tree": [{"path": "src/a.py", "type": "blob"}]})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    first = github.fork()
+    second = github.fork()
+
+    assert await first.get_tree(issue) == ["src/a.py"]
+    assert await second.get_tree(issue) == ["src/a.py"]
+
+    assert first.cache_misses == 1
+    assert first.cache_hits == 0
+    assert second.cache_misses == 0
+    assert second.cache_hits == 1
+    assert github.cache_hits == github.cache_misses == 0
+    await github.aclose()
+
+
+async def test_cache_does_not_store_values_over_total_byte_limit() -> None:
+    issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+        head_sha="abc123",
+    )
+    request_count = 0
+    github = GitHubClient(cache_ttl=60, cache_max_bytes=4)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        await github.get_file(issue, "src/a.py")
+        await github.get_file(issue, "src/a.py")
+
+    assert request_count == 2
+    assert not github._cache
+    assert github._cache_state["bytes"] == 0
+
+
+async def test_truncated_tree_falls_back_to_hierarchical_traversal() -> None:
+    issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="feature/test",
+    )
+    github = GitHubClient(max_tree_entries=10_000)
+    requested_urls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        is_root = str(request.url).split("?", 1)[0].endswith("/git/trees/feature%2Ftest")
+        if is_root and request.url.params.get("recursive") == "1":
+            return httpx.Response(200, json={"truncated": True, "tree": []})
+        if is_root:
+            return httpx.Response(
+                200,
+                json={
+                    "tree": [
+                        {"path": "README.md", "type": "blob", "sha": "readme"},
+                        {"path": "src", "type": "tree", "sha": "src-sha"},
+                    ]
+                },
+            )
+        if request.url.path.endswith("/git/trees/src-sha"):
+            return httpx.Response(
+                200,
+                json={"tree": [{"path": "parser.py", "type": "blob", "sha": "parser"}]},
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        paths = await github.get_tree(issue)
+
+    assert paths == ["README.md", "src/parser.py"]
+    assert any("feature%2Ftest" in url for url in requested_urls)
+    assert all("%252F" not in url for url in requested_urls)
+
+
 async def test_repository_code_search_scopes_query_and_returns_fragments() -> None:
     issue = IssueData(
         owner="acme",
