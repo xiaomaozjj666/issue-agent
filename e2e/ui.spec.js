@@ -140,6 +140,12 @@ test("renders responsive decision charts without overlaps or console errors", as
     await expect(el.locator(".chart-zoom-btn"), "放大按钮不应覆盖 ECharts 工具栏").toHaveCount(0);
     const zoomButton = el.locator("xpath=..").locator(`.chart-zoom-btn[data-chart-id="${id}"]`);
     await expect(zoomButton).toHaveCount(1);
+    const actionBar = el.locator("xpath=..").locator(".chart-action-bar");
+    await expect(actionBar).toHaveAttribute("role", "toolbar");
+    await expect(actionBar.getByRole("button")).toHaveCount(4);
+    await expect(actionBar.getByRole("button", { name: "保存为图片" })).toBeEnabled();
+    await expect(actionBar.getByRole("button", { name: "还原" })).toBeEnabled();
+    await expect(actionBar.getByRole("button", { name: "查看数据" })).toBeEnabled();
     const zoomSize = await zoomButton.evaluate((button) => button.getBoundingClientRect().width);
     expect(zoomSize).toBeGreaterThanOrEqual(32);
     await expect(el).toHaveAttribute("aria-describedby", `${id}-data`);
@@ -147,6 +153,22 @@ test("renders responsive decision charts without overlaps or console errors", as
   }
   expect(optionalVendorRequests.filter((url) => url.includes("echarts.min.js"))).toHaveLength(1);
   expect(optionalVendorRequests.filter((url) => url.includes("highlight.min.js"))).toHaveLength(0);
+
+  const evidenceCard = page.locator("#report-evidence-map-section");
+  const chartDownload = page.waitForEvent("download");
+  await evidenceCard.getByRole("button", { name: "保存为图片" }).click();
+  await expect((await chartDownload).suggestedFilename()).toMatch(/\.png$/);
+  const restoreButton = evidenceCard.getByRole("button", { name: "还原" });
+  await restoreButton.click();
+  await expect(restoreButton).toHaveClass(/chart-action-complete/);
+  const dataButton = evidenceCard.getByRole("button", { name: "查看数据" });
+  await dataButton.click();
+  await expect(dataButton).toHaveAttribute("aria-expanded", "true");
+  await expect(evidenceCard.locator(".chart-data-panel")).toBeVisible();
+  await expect(evidenceCard.locator(".chart-data-table")).toContainText("src/a #1.py");
+  await evidenceCard.locator(".chart-data-close").click();
+  await expect(evidenceCard.locator(".chart-data-panel")).toBeHidden();
+  await expect(dataButton).toBeFocused();
 
   const minorOpacity = await page.locator("#report-diffstat-section").evaluate((card) => getComputedStyle(card).opacity);
   expect(minorOpacity).toBe("1");
@@ -201,6 +223,16 @@ test("renders responsive decision charts without overlaps or console errors", as
   const riskItem = page.locator(".risk-item").first();
   await riskItem.hover();
   await expect(riskItem).not.toHaveCSS("box-shadow", "none");
+  await expect(riskItem.getByRole("button", { name: "在风险矩阵中定位" })).toBeVisible();
+  await riskItem.getByRole("button", { name: "在风险矩阵中定位" }).click();
+  await expect(page.locator("#report-risk-matrix-section")).toHaveClass(/section-highlight/);
+  const changeItem = page.locator(".change-item").first();
+  await expect(changeItem.getByRole("button", { name: "定位关联依据" })).toBeVisible();
+  await changeItem.getByRole("button", { name: "定位关联依据" }).click();
+  await expect(page.locator("#report-patch")).toHaveClass(/section-highlight/);
+  await page.evaluate(() => { window.IssueAgent.copyToClipboard = async () => true; });
+  await changeItem.getByRole("button", { name: "复制修复方案" }).click();
+  await expect(page.locator("#toast")).toHaveText("已复制");
   const riskDot = await riskItem.locator(".risk-badge").evaluate((badge) => ({
     width: getComputedStyle(badge, "::before").width,
     color: getComputedStyle(badge, "::before").backgroundColor,
@@ -538,6 +570,15 @@ test("explains historical report capabilities and offers an explicit reanalysis 
   await expect(capabilities.locator('[data-capability="evidence"]')).toContainText("可用");
   await expect(capabilities.locator('[data-capability="patch"]')).toContainText("本次调查只给出诊断");
   await expect(capabilities.locator('[data-capability="timeline"]')).toContainText("没有可回放的逐步事件");
+
+  const historicalChart = page.locator("#report-evidence-map-chart");
+  await historicalChart.scrollIntoViewIfNeeded();
+  await expect(historicalChart.locator("canvas").first()).toBeVisible();
+  const historicalActions = historicalChart.locator("xpath=..").locator(".chart-action-bar");
+  await expect(historicalActions.getByRole("button")).toHaveCount(4);
+  await expect(historicalActions.getByRole("button", { name: "查看数据" })).toBeEnabled();
+  await expect(page.locator(".change-item").first().getByRole("button", { name: "定位关联依据" })).toBeVisible();
+  await expect(page.locator(".risk-item").first().getByRole("button", { name: "在风险矩阵中定位" })).toBeVisible();
 
   await page.getByRole("button", { name: "用当前 Agent 重新分析" }).click();
   await expect.poll(() => reanalysisPayload).not.toBeNull();

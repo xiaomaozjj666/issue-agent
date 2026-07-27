@@ -99,7 +99,10 @@
       if (chart.__iaClearResizeTimer) chart.__iaClearResizeTimer();
       chart.dispose();
       const replacement = render(dom, report, activeSession);
-      if (replacement) nextInstances.push(replacement);
+      if (replacement) {
+        dom.__iaChart = replacement;
+        nextInstances.push(replacement);
+      }
       requestAnimationFrame(function () { dom.style.opacity = "1"; });
     });
     reportChartInstances = nextInstances;
@@ -2247,11 +2250,14 @@
           const scopeHtml = scope.length
             ? `<span class="change-scope">${IA.escapeHtml(t("change_scope"))}: <code>${scope.map(IA.escapeHtml).join("</code>, <code>")}</code></span>`
             : "";
+          const evidenceIdx = (r.evidence || []).findIndex(function (item) { return scope.indexOf(item.path) >= 0; });
+          const target = evidenceIdx >= 0 ? `evidence:${evidenceIdx}` : (r.patch ? "patch" : "evidence");
           return (
             `<li class="change-item change-${priority.cls}">` +
               `<div class="change-head">` +
                 `<span class="change-priority change-priority-${priority.cls}" title="${IA.escapeAttr(priority.desc)}">${IA.escapeHtml(priority.label)}</span>` +
                 `<span class="change-text">${IA.escapeHtml(c)}</span>` +
+                `<span class="report-item-actions"><button type="button" class="report-item-action change-locate" data-change-target="${target}" aria-label="${IA.escapeAttr(t("change_locate"))}" title="${IA.escapeAttr(t("change_locate"))}">${IA.svgIcon("external")}</button><button type="button" class="report-item-action change-copy" data-change-index="${idx}" aria-label="${IA.escapeAttr(t("change_copy"))}" title="${IA.escapeAttr(t("change_copy"))}">${IA.svgIcon("copy")}</button></span>` +
               `</div>` +
               (scopeHtml ? `<div class="change-meta">${scopeHtml}</div>` : "") +
             `</li>`
@@ -2309,9 +2315,9 @@
     // #8 严重程度分级：前端解析 high/medium/low 关键词
     if (r.risks && r.risks.length) {
       const list = r.risks
-        .map(function (item) {
+        .map(function (item, idx) {
           const severity = classifyRisk(item);
-          return `<li class="risk-item risk-${severity}"><span class="risk-badge risk-badge-${severity}">${IA.escapeHtml(t("risk_severity_" + severity))}</span><span class="risk-text">${IA.escapeHtml(item)}</span></li>`;
+          return `<li class="risk-item risk-${severity}"><span class="risk-badge risk-badge-${severity}">${IA.escapeHtml(t("risk_severity_" + severity))}</span><span class="risk-text">${IA.escapeHtml(item)}</span><span class="report-item-actions"><button type="button" class="report-item-action risk-locate" data-risk-index="${idx}" aria-label="${IA.escapeAttr(t("risk_locate"))}" title="${IA.escapeAttr(t("risk_locate"))}">${IA.svgIcon("external")}</button><button type="button" class="report-item-action risk-copy" data-risk-index="${idx}" aria-label="${IA.escapeAttr(t("risk_copy"))}" title="${IA.escapeAttr(t("risk_copy"))}">${IA.svgIcon("copy")}</button></span></li>`;
         })
         .join("");
       parts.push(pushSection("report-risks", t("report_risks"), `<ul class="risk-list">${list}</ul>`));
@@ -2425,6 +2431,41 @@
         }
       });
     }
+
+    d.querySelectorAll(".change-locate").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const target = btn.dataset.changeTarget || "evidence";
+        if (target.indexOf("evidence:") === 0) return IA.jumpToEvidence(Number(target.split(":")[1]));
+        const section = document.getElementById(target === "patch" ? "report-patch" : "report-evidence");
+        if (section && section.tagName === "DETAILS") section.open = true;
+        if (section) IA.jumpToSection(section.id);
+      });
+    });
+    d.querySelectorAll(".change-copy, .risk-copy").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        const value = btn.classList.contains("change-copy") ? r.proposed_changes[Number(btn.dataset.changeIndex)] : r.risks[Number(btn.dataset.riskIndex)];
+        const copied = await IA.copyToClipboard(value || "");
+        flashToast(t(copied ? "copy_done" : "copy_failed"));
+      });
+    });
+    d.querySelectorAll(".risk-locate").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const section = document.getElementById("report-risk-matrix-section") || document.getElementById("report-impact");
+        if (!section) return;
+        IA.jumpToSection(section.id);
+        let attempts = 0;
+        const reveal = function () {
+          const el = document.getElementById("report-risk-matrix-chart");
+          const chart = el && window.echarts && window.echarts.getInstanceByDom(el);
+          if (!chart && attempts++ < 12) return setTimeout(reveal, 80);
+          if (!chart) return;
+          chart.dispatchAction({ type: "highlight", seriesIndex: 1, dataIndex: 0 });
+          chart.dispatchAction({ type: "showTip", seriesIndex: 1, dataIndex: 0 });
+          setTimeout(function () { chart.dispatchAction({ type: "downplay", seriesIndex: 1, dataIndex: 0 }); }, 1800);
+        };
+        reveal();
+      });
+    });
 
     // #11 指标网格点击下钻：跳转到对应章节
     d.querySelectorAll(".report-metric-card.clickable").forEach(function (card) {
@@ -2566,22 +2607,108 @@
     chartSpecs.forEach(function (spec) {
       const el = document.getElementById(spec.id);
       if (!el) return;
-      // #17 放大按钮：必须在 spec.render 之后添加——echarts.init 会清空容器
-      // 已有子元素，提前挂的按钮会被后续初始化直接吞掉
-      function addZoomBtn() {
+      function addActionBar() {
         const host = el.closest(".report-chart") || el;
-        if (host.querySelector('.chart-zoom-btn[data-chart-id="' + spec.id + '"]')) return;
-        const zoomBtn = document.createElement("button");
-        zoomBtn.type = "button";
-        zoomBtn.className = "chart-zoom-btn";
-        zoomBtn.dataset.chartId = spec.id;
-        zoomBtn.setAttribute("aria-label", t("chart_zoom"));
-        zoomBtn.title = t("chart_zoom");
-        zoomBtn.innerHTML = IA.svgIcon("external") ||
-          '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3.75 2h3.5a.75.75 0 0 1 0 1.5H4.5v7h7v-2.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-8.5a.75.75 0 0 1-.75-.75v-8.5A.75.75 0 0 1 3.75 2Z"/></svg>';
-        zoomBtn.addEventListener("click", function () { openChartModal(el, spec, r, sessionData); });
-        host.appendChild(zoomBtn);
+        const title = host.querySelector(".report-chart-title");
+        let header = host.querySelector(".report-chart-header");
+        if (!header) {
+          header = document.createElement("div");
+          header.className = "report-chart-header";
+          if (title) {
+            title.parentNode.insertBefore(header, title);
+            header.appendChild(title);
+          } else {
+            host.insertBefore(header, host.firstChild);
+          }
+        }
+        let bar = header.querySelector(".chart-action-bar");
+        if (bar) return bar;
+        bar = document.createElement("div");
+        bar.className = "chart-action-bar";
+        bar.setAttribute("role", "toolbar");
+        bar.setAttribute("aria-label", t("chart_actions"));
+        const actions = [
+          { action: "download", label: t("chart_save_image"), icon: "download" },
+          { action: "restore", label: t("chart_restore"), icon: "retry" },
+          { action: "data", label: t("chart_data_view"), icon: "report" },
+          { action: "zoom", label: t("chart_zoom"), icon: "external" },
+        ];
+        actions.forEach(function (item) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "chart-action-btn" + (item.action === "zoom" ? " chart-zoom-btn" : "");
+          button.dataset.chartAction = item.action;
+          button.dataset.chartId = spec.id;
+          button.setAttribute("aria-label", item.label);
+          button.title = item.label;
+          button.disabled = true;
+          button.innerHTML = IA.svgIcon(item.icon);
+          if (item.action === "data") button.setAttribute("aria-expanded", "false");
+          button.addEventListener("click", function () {
+            const chart = el.__iaChart;
+            if (!chart || chart.isDisposed()) return;
+            if (item.action === "zoom") {
+              openChartModal(el, spec, r, sessionData);
+              return;
+            }
+            if (item.action === "download") {
+              const dataUrl = chart.getDataURL({ pixelRatio: 2, backgroundColor: IA.Charts.getPalette().bg });
+              const rawTitle = (title && title.textContent) || "issue-agent-chart";
+              const filename = rawTitle.trim().replace(/[^\w\u4e00-\u9fff-]+/g, "-").replace(/^-+|-+$/g, "") || "issue-agent-chart";
+              const link = document.createElement("a");
+              link.href = dataUrl;
+              link.download = filename + ".png";
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+              return;
+            }
+            if (item.action === "restore") {
+              chart.dispatchAction({ type: "restore" });
+              chart.resize();
+              button.classList.add("chart-action-complete");
+              setTimeout(function () { button.classList.remove("chart-action-complete"); }, 900);
+              return;
+            }
+            let panel = host.querySelector(".chart-data-panel");
+            if (panel) {
+              panel.hidden = !panel.hidden;
+              button.setAttribute("aria-expanded", String(!panel.hidden));
+              return;
+            }
+            const tableId = el.getAttribute("aria-describedby");
+            const sourceTable = tableId ? document.getElementById(tableId) : null;
+            if (!sourceTable) {
+              flashToast(t("chart_data_unavailable"));
+              return;
+            }
+            panel = document.createElement("div");
+            panel.className = "chart-data-panel";
+            const closeButton = document.createElement("button");
+            closeButton.type = "button";
+            closeButton.className = "chart-data-close";
+            closeButton.setAttribute("aria-label", t("report_close"));
+            closeButton.innerHTML = IA.svgIcon("close");
+            const table = sourceTable.cloneNode(true);
+            table.removeAttribute("id");
+            table.classList.remove("sr-only");
+            table.classList.add("chart-data-table");
+            panel.appendChild(closeButton);
+            panel.appendChild(table);
+            host.appendChild(panel);
+            button.setAttribute("aria-expanded", "true");
+            closeButton.addEventListener("click", function () {
+              panel.hidden = true;
+              button.setAttribute("aria-expanded", "false");
+              button.focus();
+            });
+          });
+          bar.appendChild(button);
+        });
+        header.appendChild(bar);
+        return bar;
       }
+      const actionBar = addActionBar();
       function renderWhenReady() {
         const ready = window.echarts
           ? Promise.resolve(true)
@@ -2597,8 +2724,9 @@
           }
           const chart = spec.render(el, r, sessionData);
           if (chart) {
+            el.__iaChart = chart;
             reportChartInstances.push(chart);
-            addZoomBtn();
+            actionBar.querySelectorAll("button").forEach(function (button) { button.disabled = false; });
           } else if (!loaded) {
             checkCdnFailures();
           }

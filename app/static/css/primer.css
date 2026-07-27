@@ -2431,11 +2431,21 @@ a:hover {
 }
 .report-chart-title {
   min-height: 32px;
-  margin-bottom: var(--space-1);
-  padding-right: 40px;
+  margin: 0;
+  padding: 0;
   color: var(--fg-strong);
   font-size: var(--text-sm);
   font-weight: 600;
+}
+
+.report-chart-header {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .report-chart-canvas {
@@ -4501,11 +4511,14 @@ dialog::backdrop {
   border-radius: var(--radius-pill);
 }
 
-/* ── #17 图表放大按钮 ───────────────────────────────────── */
-.chart-zoom-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+/* 图表操作栏：下载、还原、数据视图、放大在所有报告中使用同一套入口。 */
+.chart-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chart-action-btn {
   display: inline-grid;
   place-items: center;
   width: 32px;
@@ -4516,7 +4529,6 @@ dialog::backdrop {
   color: var(--muted);
   cursor: pointer;
   opacity: 0.72;
-  z-index: 2;
   backdrop-filter: blur(4px);
   transition: opacity var(--dur-fast) var(--ease-standard),
               color var(--dur-fast) var(--ease-standard),
@@ -4524,17 +4536,95 @@ dialog::backdrop {
               border-color var(--dur-fast) var(--ease-standard);
 }
 
-.chart-zoom-btn:hover,
-.chart-zoom-btn:focus-visible {
+.chart-action-btn:hover,
+.chart-action-btn:focus-visible {
   opacity: 1;
   background: var(--accent-subtle);
   color: var(--accent);
   border-color: var(--accent-muted);
 }
 
-.chart-zoom-btn svg {
+.chart-action-btn:disabled {
+  cursor: wait;
+  opacity: 0.36;
+}
+
+.chart-action-btn.chart-action-complete {
+  border-color: var(--green-muted);
+  background: var(--green-subtle);
+  color: var(--green);
+  opacity: 1;
+}
+
+.chart-action-btn svg {
   width: 14px;
   height: 14px;
+}
+
+.chart-data-panel {
+  position: relative;
+  z-index: 4;
+  max-height: 320px;
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  overflow: auto;
+  border-top: 1px solid var(--border-muted);
+}
+
+.chart-data-panel[hidden] {
+  display: none;
+}
+
+.chart-data-close {
+  position: sticky;
+  top: 0;
+  float: right;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0 0 var(--space-2) var(--space-2);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chart-data-close:hover,
+.chart-data-close:focus-visible {
+  border-color: var(--accent-muted);
+  color: var(--accent);
+}
+
+.chart-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--fg);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.chart-data-table caption {
+  padding: 0 38px var(--space-2) 0;
+  color: var(--fg-strong);
+  font-weight: 600;
+  text-align: left;
+}
+
+.chart-data-table th,
+.chart-data-table td {
+  padding: 7px 8px;
+  border: 1px solid var(--border-muted);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.chart-data-table th {
+  background: var(--canvas-subtle);
+  color: var(--muted);
+  font-weight: 600;
 }
 
 /* ── #17 图表放大模态框 ─────────────────────────────────── */
@@ -4644,11 +4734,13 @@ body.modal-open {
 @media (max-width: 640px) {
   .report-chart-title {
     min-height: 40px;
-    padding-right: 48px;
   }
-  .chart-zoom-btn {
-    width: 40px;
-    height: 40px;
+  .chart-action-bar {
+    gap: 2px;
+  }
+  .chart-action-btn {
+    width: 36px;
+    height: 36px;
     opacity: 0.82;
   }
   .chart-modal {
@@ -4893,7 +4985,8 @@ body.modal-open {
 
 .risk-item {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -4909,6 +5002,12 @@ body.modal-open {
 
 .risk-item:hover {
   box-shadow: var(--shadow-sm);
+}
+
+.risk-item:focus-within,
+.change-item:focus-within {
+  border-color: var(--accent-muted);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
 .risk-item.risk-high {
@@ -5001,7 +5100,7 @@ body.modal-open {
 }
 
 .risk-text {
-  flex: 1 1 auto;
+  min-width: 0;
   color: var(--fg);
   font-size: var(--text-sm);
   line-height: 1.6;
@@ -5089,7 +5188,8 @@ body.modal-open {
 }
 
 .change-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: var(--space-2);
 }
@@ -5114,11 +5214,76 @@ body.modal-open {
 .change-priority-p2 { color: var(--muted); background: var(--neutral-subtle); border-color: var(--border); }
 
 .change-text {
-  flex: 1 1 auto;
+  min-width: 0;
   color: var(--fg);
   font-size: var(--text-base);
   line-height: 1.6;
   overflow-wrap: anywhere;
+}
+
+.report-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.72;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.risk-item:hover .report-item-actions,
+.risk-item:focus-within .report-item-actions,
+.change-item:hover .report-item-actions,
+.change-item:focus-within .report-item-actions {
+  opacity: 1;
+}
+
+.report-item-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard),
+              background var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+}
+
+.report-item-action:hover {
+  color: var(--accent-emphasis);
+  border-color: var(--accent-muted);
+  background: var(--accent-subtle);
+  transform: translateY(-1px);
+}
+
+.report-item-action:focus-visible {
+  color: var(--accent-emphasis);
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-muted);
+  outline-offset: 1px;
+}
+
+.report-item-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 480px) {
+  .risk-item,
+  .change-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .report-item-actions {
+    grid-column: 2;
+    justify-self: end;
+    opacity: 1;
+  }
 }
 
 .change-meta {
