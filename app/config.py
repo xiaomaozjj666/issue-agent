@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     github_timeout: float = Field(default=30.0, gt=0, le=120, description="HTTP timeout for GitHub API calls")
     github_max_retries: int = Field(default=3, ge=0, le=5, description="App-level retries for transient GitHub errors")
     github_max_file_bytes: int = Field(default=512_000, ge=4_096, le=2_000_000)
+    github_cache_ttl_seconds: float = Field(default=300.0, ge=0, le=3_600)
+    github_cache_max_entries: int = Field(default=512, ge=16, le=10_000)
+    github_cache_max_bytes: int = Field(default=67_108_864, ge=1_048_576, le=1_073_741_824)
+    github_max_tree_entries: int = Field(default=200_000, ge=1_000, le=1_000_000)
 
     # ── Tool execution ───────────────────────────────────────────────
     # 单个工具调用（如 search_code/grep_content 调用 GitHub API）的超时上限。
@@ -53,8 +57,15 @@ class Settings(BaseSettings):
     max_planning_paths: int = Field(default=80, ge=10, le=200)
     max_file_chars: int = Field(default=16_000, ge=1_000, le=50_000)
     max_total_context_chars: int = Field(default=80_000, ge=5_000, le=200_000)
+    max_exploration_tokens: int = Field(
+        default=2_000, ge=500, le=8_000, description="Output budget for each tool-planning model turn"
+    )
     max_output_tokens: int = Field(default=8_000, ge=500, le=16_000)
     max_agent_iterations: int = Field(default=15, ge=3, le=40)
+    max_parallel_tool_calls: int = Field(default=4, ge=1, le=12)
+    max_duplicate_tool_rounds: int = Field(
+        default=2, ge=1, le=5, description="Stop exploration after this many exact-repeat tool rounds"
+    )
     max_investigation_ledger_chars: int = Field(default=12_000, ge=1_000, le=50_000)
     max_chat_tokens: int = Field(default=2_000, ge=500, le=16_000)
 
@@ -87,6 +98,7 @@ class Settings(BaseSettings):
     # 批量分析并发数和队列容量：无外部 broker，纯 asyncio 实现。
     batch_max_concurrent: int = Field(default=2, ge=1, le=8)
     batch_max_queue_size: int = Field(default=100, ge=1, le=500)
+    batch_max_history: int = Field(default=100, ge=10, le=10_000)
 
 
 @lru_cache

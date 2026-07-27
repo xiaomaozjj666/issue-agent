@@ -30,8 +30,12 @@ async def test_lifespan_initializes_and_closes_session_manager() -> None:
     async with main_module.lifespan(app):
         assert hasattr(app.state, "session_manager")
         assert isinstance(app.state.session_manager, SessionManager)
+        assert app.state.openai_client is not None
+        assert app.state.github_client is not None
 
     assert app.state.session_manager is None
+    assert app.state.openai_client is None
+    assert app.state.github_client is None
 
 
 def test_web_ui_renders() -> None:
