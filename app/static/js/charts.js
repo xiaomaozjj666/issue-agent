@@ -32,15 +32,19 @@
     tooltipBorder: "#30363d",
     bg: "#0d1117",
     splitArea: ["rgba(88,166,255,0.035)", "rgba(88,166,255,0.07)"],
-    riskLow: "rgba(63,185,80,0.09)",
-    riskMedium: "rgba(210,153,34,0.09)",
-    riskHigh: "rgba(219,109,40,0.11)",
-    riskCritical: "rgba(248,81,73,0.12)",
-    riskLowHover: "rgba(63,185,80,0.18)",
-    riskMediumHover: "rgba(210,153,34,0.18)",
-    riskHighHover: "rgba(219,109,40,0.21)",
-    riskCriticalHover: "rgba(248,81,73,0.22)",
-    riskMarkerHigh: "#db6d28",
+    // Opaque semantic surfaces stay legible on #0d1117; low-alpha fills
+    // collapse into indistinguishable gray/brown on dark canvases.
+    riskLow: "#1f4d32",
+    riskMedium: "#51421e",
+    riskHigh: "#693b23",
+    riskCritical: "#642b37",
+    riskLowHover: "#2d6a40",
+    riskMediumHover: "#725b26",
+    riskHighHover: "#8a4d2b",
+    riskCriticalHover: "#873e4b",
+    riskMarkerHigh: "#f0883e",
+    riskGridBorder: "#161b22",
+    riskMarkerBorder: "#f0f6fc",
   };
 
   const PALETTE_LIGHT = {
@@ -66,6 +70,8 @@
     riskHighHover: "#ffc680",
     riskCriticalHover: "#ffcecb",
     riskMarkerHigh: "#bc6b00",
+    riskGridBorder: "#ffffff",
+    riskMarkerBorder: "#ffffff",
   };
 
   function getPalette() {
@@ -833,15 +839,15 @@
           band: band,
           itemStyle: {
             color: palette["risk" + key],
-            borderColor: palette.bg,
-            borderWidth: 6,
+            borderColor: palette.riskGridBorder,
+            borderWidth: 3,
             borderRadius: 7,
           },
           emphasis: {
             itemStyle: {
               color: palette["risk" + key + "Hover"],
-              borderColor: palette.bg,
-              borderWidth: 6,
+              borderColor: palette.riskGridBorder,
+              borderWidth: 3,
               shadowBlur: 3,
               shadowColor: "rgba(0,0,0,0.14)",
             },
@@ -921,7 +927,7 @@
           data: [{ value: [issueX, issueY], severity: sev, likelihood: like }],
           itemStyle: {
             color: markerColor,
-            borderColor: palette.bg || "#fff",
+            borderColor: palette.riskMarkerBorder || palette.bg || "#fff",
             borderWidth: 2.5,
             shadowBlur: 4,
             shadowColor: "rgba(0,0,0,0.2)",
