@@ -2189,6 +2189,120 @@ a:hover {
   overflow-wrap: anywhere;
 }
 
+/* 报告能力说明：旧报告缺少数据时明确状态，避免被误解为交互失效。 */
+.report-capabilities {
+  margin: 0 0 var(--space-5);
+  border-block: 1px solid var(--border-muted);
+  background: var(--canvas-inset);
+}
+
+.report-capabilities > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.report-capabilities-count {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.report-capabilities ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  list-style: none;
+}
+
+.report-capability {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-muted);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.report-capability-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-subtle);
+}
+
+.report-capability-unavailable .report-capability-dot {
+  background: var(--muted);
+  box-shadow: 0 0 0 3px var(--neutral-subtle);
+}
+
+.report-capability-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.report-capability-state {
+  color: var(--green);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.report-capability-unavailable .report-capability-state {
+  color: var(--muted);
+}
+
+.report-capability-detail {
+  grid-column: 2 / -1;
+  overflow-wrap: anywhere;
+}
+
+.report-reanalyze {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: 0 0 var(--space-3) 18px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--neutral-subtle);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.report-reanalyze:hover {
+  border-color: var(--accent-muted);
+  background: var(--accent-subtle);
+  color: var(--accent-emphasis);
+}
+
+.report-reanalyze svg {
+  width: 15px;
+  height: 15px;
+}
+
+.historical-summary-note {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
 /* 图表容器 */
 .report-charts-row {
   display: grid;
