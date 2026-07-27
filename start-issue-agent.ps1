@@ -10,8 +10,8 @@ $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $envFile = Join-Path $projectRoot ".env"
 $envExample = Join-Path $projectRoot ".env.example"
 
-# 候选端口列表：优先 8000，被其他应用占用时自动降级到 9123/9124/9125
-$CandidatePorts = @(8000, 9123, 9124, 9125)
+# Issue Agent 只使用 9123-9125，避免与本机 8000 端口的数据工作台混淆。
+$CandidatePorts = @(9123, 9124, 9125)
 $script:appPort = $null
 $script:appUrl = $null
 $script:healthUrl = $null

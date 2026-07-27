@@ -54,7 +54,7 @@ After completing Local Setup once, open the project folder and double-click:
 ```
 
 The launcher checks the local environment, starts the service, and opens the browser automatically.
-The launcher auto-selects an available port from `8000 → 9123 → 9124 → 9125` (it verifies each
+The launcher prefers the stable Issue Agent port `9123`, then falls back through `9124 → 9125` (it verifies each
 candidate is actually this app via the `/health` endpoint before reuse), so the visible URL may
 differ across machines. Keep the launcher terminal window open while using the agent; press `Ctrl+C`
 in that window to stop it. If the service is already running, the launcher only opens the existing
@@ -176,11 +176,11 @@ Inside chat mode:
 Start the server:
 
 ```bash
-python -m uvicorn app.main:app --port 8000 --reload
+python -m uvicorn app.main:app --port 9123 --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` for the Swagger UI. On Windows the bundled launcher
-(`打开 Issue Agent.cmd`) auto-selects a free port from `8000 → 9123 → 9124 → 9125`; in that
+Open `http://127.0.0.1:9123/docs` for the Swagger UI. On Windows the bundled launcher
+(`打开 Issue Agent.cmd`) prefers `9123` and falls back through `9124 → 9125`; in that
 case the launcher prints the actual URL in its terminal window.
 
 ### `POST /analyze`

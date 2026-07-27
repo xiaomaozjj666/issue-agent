@@ -2257,7 +2257,7 @@
               `<div class="change-head">` +
                 `<span class="change-priority change-priority-${priority.cls}" title="${IA.escapeAttr(priority.desc)}">${IA.escapeHtml(priority.label)}</span>` +
                 `<button type="button" class="change-text report-item-primary change-locate" data-change-target="${target}" title="${IA.escapeAttr(t("change_locate"))}">${IA.escapeHtml(c)}</button>` +
-                `<span class="report-item-actions"><button type="button" class="report-item-action change-locate" data-change-target="${target}" aria-label="${IA.escapeAttr(t("change_locate"))}" title="${IA.escapeAttr(t("change_locate"))}">${IA.svgIcon("external")}<span>${IA.escapeHtml(t("locate_button"))}</span></button><button type="button" class="report-item-action change-copy" data-change-index="${idx}" aria-label="${IA.escapeAttr(t("change_copy"))}" title="${IA.escapeAttr(t("change_copy"))}">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button></span>` +
+                `<span class="report-item-actions"><button type="button" class="report-item-action change-locate" data-change-target="${target}" aria-label="${IA.escapeAttr(t("change_locate"))}">${IA.svgIcon("external")}</button><button type="button" class="report-item-action change-copy" data-change-index="${idx}" aria-label="${IA.escapeAttr(t("change_copy"))}">${IA.svgIcon("copy")}</button></span>` +
               `</div>` +
               (scopeHtml ? `<div class="change-meta">${scopeHtml}</div>` : "") +
             `</li>`
@@ -2317,7 +2317,7 @@
       const list = r.risks
         .map(function (item, idx) {
           const severity = classifyRisk(item);
-          return `<li class="risk-item risk-${severity}"><span class="risk-badge risk-badge-${severity}">${IA.escapeHtml(t("risk_severity_" + severity))}</span><button type="button" class="risk-text report-item-primary risk-locate" data-risk-index="${idx}" title="${IA.escapeAttr(t("risk_locate"))}">${IA.escapeHtml(item)}</button><span class="report-item-actions"><button type="button" class="report-item-action risk-locate" data-risk-index="${idx}" aria-label="${IA.escapeAttr(t("risk_locate"))}" title="${IA.escapeAttr(t("risk_locate"))}">${IA.svgIcon("external")}<span>${IA.escapeHtml(t("locate_button"))}</span></button><button type="button" class="report-item-action risk-copy" data-risk-index="${idx}" aria-label="${IA.escapeAttr(t("risk_copy"))}" title="${IA.escapeAttr(t("risk_copy"))}">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button></span></li>`;
+          return `<li class="risk-item risk-${severity}"><span class="risk-badge risk-badge-${severity}">${IA.escapeHtml(t("risk_severity_" + severity))}</span><button type="button" class="risk-text report-item-primary risk-locate" data-risk-index="${idx}" title="${IA.escapeAttr(t("risk_locate"))}">${IA.escapeHtml(item)}</button><span class="report-item-actions"><button type="button" class="report-item-action risk-locate" data-risk-index="${idx}" aria-label="${IA.escapeAttr(t("risk_locate"))}">${IA.svgIcon("external")}</button><button type="button" class="report-item-action risk-copy" data-risk-index="${idx}" aria-label="${IA.escapeAttr(t("risk_copy"))}">${IA.svgIcon("copy")}</button></span></li>`;
         })
         .join("");
       parts.push(pushSection("report-risks", t("report_risks"), `<ul class="risk-list">${list}</ul>`));
