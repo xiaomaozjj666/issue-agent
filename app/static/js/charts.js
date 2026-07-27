@@ -145,9 +145,10 @@
   }
 
   // ── 公共工具栏：保存图片 + 刷新重绘 + 数据视图 ────────────
-  function toolbox(palette) {
+  function toolbox(palette, container) {
     const mobile = isMobile();
     return {
+      show: Boolean(container && container.classList.contains("chart-modal-canvas")),
       right: 0,
       top: 4,
       itemSize: mobile ? 18 : 16,
@@ -370,7 +371,7 @@
         data: [t("diffstat_added"), t("diffstat_removed")],
       },
       grid: { left: 8, right: 64, top: 32, bottom: 28, containLabel: true },
-      toolbox: toolbox(palette),
+      toolbox: toolbox(palette, container),
       title: {
         text: t("diffstat_stat", { files: stats.length, added: totalAdded, removed: totalRemoved }),
         left: "center",
@@ -543,7 +544,7 @@
         },
       }),
       grid: { left: 8, right: 88, top: 36, bottom: statText ? 28 : 12, containLabel: true },
-      toolbox: toolbox(palette),
+      toolbox: toolbox(palette, container),
       title: statText ? {
         text: statText,
         left: "center",
@@ -736,7 +737,7 @@
           axisTick: { show: false },
           axisLabel: { color: palette.text, fontSize: 11, width: isMobile() ? 88 : 128, overflow: "truncate" },
         },
-        toolbox: toolbox(palette),
+        toolbox: toolbox(palette, container),
         series: [{
           type: "bar",
           data: rows.map(function (r) { return { value: r.value, name: r.name, changed: r.changed, itemStyle: { color: palette.primary, borderRadius: [0, 3, 3, 0] } }; }),
@@ -779,7 +780,7 @@
               ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
           },
         }),
-        toolbox: toolbox(palette),
+        toolbox: toolbox(palette, container),
         series: [{
           type: "treemap",
           roam: false,
@@ -888,7 +889,7 @@
         },
       }),
       grid: { left: 16, right: 28, top: 52, bottom: 42, containLabel: true },
-      toolbox: toolbox(palette),
+      toolbox: toolbox(palette, container),
       xAxis: {
         type: "category",
         name: t("report_likelihood"),
@@ -1131,7 +1132,7 @@
             (d.reason ? '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:280px;white-space:normal;">' + IA.escapeHtml(d.reason) + "</div>" : "");
         },
       }),
-      toolbox: toolbox(palette),
+      toolbox: toolbox(palette, container),
       series: [evidenceSeries(layout)],
     });
 
