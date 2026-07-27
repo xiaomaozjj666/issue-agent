@@ -618,7 +618,8 @@
           ? session.owner + "/" + session.repo + (session.issue_number ? " #" + session.issue_number : "")
           : t("conversation_label");
       IA.Runtime.setCancelVisible(session.status === "running");
-      if (session.events && session.events.length) IA.Runtime.addEventTimeline(session.events, session.metrics);
+      const timeline = IA.Runtime.addEventTimeline(session.events || [], session.metrics);
+      if (!timeline && report) IA.Runtime.addHistoricalSummary(session);
       if (report) {
         renderReport(report);
         document.getElementById("report-toggle").style.display = "inline-flex";
@@ -2024,6 +2025,9 @@
       })
       .join("");
     parts.push(`<div class="report-metrics-grid">${metricsHtml}</div>`);
+    if (IA.Runtime.reportCapabilitiesHtml) {
+      parts.push(IA.Runtime.reportCapabilitiesHtml(r, activeSession || {}));
+    }
 
     // 3. ECharts 图表：把「调查实质」可视化，而非过程指标
     // - diffstat：补丁改动分布（git diff --stat 习惯）
@@ -2323,6 +2327,16 @@
     }
 
     d.innerHTML = parts.join("");
+
+    const reanalyzeButton = d.querySelector('[data-action="reanalyze-report"]');
+    if (reanalyzeButton && sessionData.issue_url) {
+      reanalyzeButton.addEventListener("click", function () {
+        const issueUrl = document.getElementById("issueUrl");
+        issueUrl.value = sessionData.issue_url;
+        toggleReport(false);
+        analyze();
+      });
+    }
 
     // #16 图表懒加载：用骨架屏占位，IntersectionObserver 触发时再初始化 ECharts
     // 避免首次渲染图表导致页面卡顿（移动端尤其明显）

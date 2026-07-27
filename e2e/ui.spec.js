@@ -503,6 +503,48 @@ test("keeps large investigation histories collapsed and report actions stable", 
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
 });
 
+test("explains historical report capabilities and offers an explicit reanalysis path", async ({ page }) => {
+  const historicalReport = {
+    ...report,
+    patch: "",
+    reproduction: null,
+    review_audit: { status: "not_run", summary: "", findings: [] },
+  };
+  const historicalDetail = {
+    ...detail("session-1", "旧报告"),
+    events: [],
+    report: historicalReport,
+  };
+  let reanalysisPayload = null;
+  await page.route("**/sessions?**", (route) => route.fulfill({ json: [summary("session-1", "旧报告")] }));
+  await page.route(/\/session\/session-1$/, (route) => route.fulfill({ json: historicalDetail }));
+  await page.route("**/stream", async (route) => {
+    reanalysisPayload = route.request().postDataJSON();
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body: 'data: {"type":"cancelled"}\n\ndata: {"type":"done"}\n\n',
+    });
+  });
+
+  await page.goto("/");
+  await historyCard(page, 1).click();
+  await expect(page.locator(".historical-summary")).toContainText("历史报告摘要");
+  await expect(page.locator(".historical-summary")).toContainText("不会补写不存在的过程");
+
+  await page.getByRole("button", { name: "查看完整报告" }).click();
+  const capabilities = page.locator(".report-capabilities");
+  await expect(capabilities).toContainText("1/5 可用");
+  await capabilities.locator("summary").click();
+  await expect(capabilities.locator('[data-capability="evidence"]')).toContainText("可用");
+  await expect(capabilities.locator('[data-capability="patch"]')).toContainText("本次调查只给出诊断");
+  await expect(capabilities.locator('[data-capability="timeline"]')).toContainText("没有可回放的逐步事件");
+
+  await page.getByRole("button", { name: "用当前 Agent 重新分析" }).click();
+  await expect.poll(() => reanalysisPayload).not.toBeNull();
+  expect(reanalysisPayload.issue_url).toBe("https://github.com/acme/widget/issues/1");
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toBeHidden();
+});
+
 test("@mobile keeps history and report flows inside the viewport", async ({ page }) => {
   await mockCompletedSessions(page);
   await page.goto("/");

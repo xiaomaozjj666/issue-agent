@@ -8,10 +8,14 @@
     return t(key, { count: value });
   }
 
-  function addEventTimeline(events, metrics) {
-    const meaningful = (events || []).filter(function (event) {
+  function meaningfulEvents(events) {
+    return (events || []).filter(function (event) {
       return ["phase", "tool_call", "review", "interrupted", "cancelled"].includes(event.type);
     });
+  }
+
+  function addEventTimeline(events, metrics) {
+    const meaningful = meaningfulEvents(events);
     if (!meaningful.length) return null;
 
     const container = document.getElementById("messages");
@@ -101,6 +105,70 @@
     return card;
   }
 
+  function addHistoricalSummary(session) {
+    if (!session || !session.report) return null;
+    const report = session.report;
+    const container = document.getElementById("messages");
+    const card = document.createElement("section");
+    card.className = "msg assistant investigation-timeline historical-summary";
+    const evidenceCount = (report.evidence || []).length;
+    const review = report.review_audit || { status: "not_run" };
+    const steps = [
+      t("historical_summary_report_saved"),
+      t("historical_summary_evidence", { count: evidenceCount }),
+      review.status === "not_run"
+        ? t("historical_summary_review_missing")
+        : t("review_progress", { status: IA.enumLabel("review_status", review.status) }),
+      report.patch ? t("historical_summary_patch_available") : t("historical_summary_patch_missing"),
+    ];
+    card.innerHTML =
+      `<div class="timeline-header"><span class="timeline-title">${IA.escapeHtml(t("historical_summary_title"))}</span></div>` +
+      `<p class="historical-summary-note">${IA.escapeHtml(t("historical_summary_note"))}</p>` +
+      `<div class="timeline-steps">${steps.map(function (label) {
+        return `<div class="timeline-step"><span>${IA.escapeHtml(label)}</span></div>`;
+      }).join("")}</div>`;
+    container.appendChild(card);
+    return card;
+  }
+
+  function reportCapabilitiesHtml(report, session) {
+    const reproduction = report.reproduction || {};
+    const review = report.review_audit || { status: "not_run" };
+    const capabilities = [
+      { key: "timeline", available: meaningfulEvents((session || {}).events).length > 0 },
+      { key: "evidence", available: Boolean(report.evidence && report.evidence.length) },
+      {
+        key: "reproduction",
+        available: Boolean((reproduction.steps && reproduction.steps.length) || reproduction.observed || reproduction.expected),
+      },
+      { key: "patch", available: Boolean(report.patch && String(report.patch).trim()) },
+      { key: "review", available: !["not_run", "unavailable"].includes(review.status) },
+    ];
+    const availableCount = capabilities.filter(function (item) { return item.available; }).length;
+    const rows = capabilities.map(function (item) {
+      const state = item.available ? "available" : "unavailable";
+      return (
+        `<li class="report-capability report-capability-${state}" data-capability="${item.key}">` +
+          `<span class="report-capability-dot" aria-hidden="true"></span>` +
+          `<span class="report-capability-name">${IA.escapeHtml(t("capability_" + item.key))}</span>` +
+          `<span class="report-capability-state">${IA.escapeHtml(t("capability_" + state))}</span>` +
+          (!item.available
+            ? `<span class="report-capability-detail">${IA.escapeHtml(t("capability_" + item.key + "_missing"))}</span>`
+            : "") +
+        `</li>`
+      );
+    }).join("");
+    const retry = availableCount < capabilities.length && session && session.issue_url
+      ? `<button type="button" class="report-reanalyze" data-action="reanalyze-report">${IA.svgIcon("retry")}<span>${IA.escapeHtml(t("report_reanalyze"))}</span></button>`
+      : "";
+    return (
+      `<details class="report-capabilities">` +
+        `<summary><span>${IA.escapeHtml(t("report_capabilities"))}</span><span class="report-capabilities-count">${IA.escapeHtml(t("report_capabilities_count", { available: availableCount, total: capabilities.length }))}</span></summary>` +
+        `<ul>${rows}</ul>${retry}` +
+      `</details>`
+    );
+  }
+
   function setCancelVisible(visible) {
     const button = document.getElementById("cancel-analysis");
     if (!button) return;
@@ -182,6 +250,8 @@
   // 不再向 window 暴露裸全局，避免命名污染）
   IA.Runtime = {
     addEventTimeline,
+    addHistoricalSummary,
+    reportCapabilitiesHtml,
     setCancelVisible,
     cancelAnalysis,
     setOnCancellationComplete,
