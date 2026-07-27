@@ -10,6 +10,7 @@ def test_windows_one_click_launcher_is_wired_to_powershell() -> None:
     assert 'start-issue-agent.ps1" %*' in command_launcher
     # 端口自适应：候选端口列表 + 端口选择函数
     assert "$CandidatePorts" in powershell_launcher
+    assert "$CandidatePorts = @(9123, 9124, 9125)" in powershell_launcher
     assert "Select-AvailablePort" in powershell_launcher
     assert "Test-IsIssueAgentOnPort" in powershell_launcher
     assert "Stop-LocalIssueAgent" in powershell_launcher
