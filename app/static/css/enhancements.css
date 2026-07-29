@@ -96,6 +96,7 @@
   background: transparent; border: 0; color: var(--fg); padding: 10px 12px;
   border-radius: var(--radius); cursor: pointer;
   animation: paletteItemIn var(--dur-base) var(--ease-out) both;
+  animation-delay: calc(var(--i, 1) * 30ms);
 }
 @keyframes paletteItemIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .palette-item:hover, .palette-item.active { background: var(--accent-subtle); }

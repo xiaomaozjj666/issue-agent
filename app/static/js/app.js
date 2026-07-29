@@ -1054,7 +1054,7 @@
         const url = btn.dataset.heroUrl;
         if (!url) return;
         document.getElementById("issueUrl").value = url;
-        analyze();
+        IA.analyze ? IA.analyze() : analyze();
       });
     });
 
@@ -2365,7 +2365,7 @@
         const issueUrl = document.getElementById("issueUrl");
         issueUrl.value = sessionData.issue_url;
         toggleReport(false);
-        analyze();
+        IA.analyze ? IA.analyze() : analyze();
       });
     }
 
@@ -3785,7 +3785,7 @@
     document.getElementById("theme-toggle-btn").addEventListener("click", toggleTheme);
     document.getElementById("report-theme-btn").addEventListener("click", toggleTheme);
     document.getElementById("toggle-history-btn").addEventListener("click", toggleMobileHistory);
-    document.getElementById("analyze-btn").addEventListener("click", analyze);
+    document.getElementById("analyze-btn").addEventListener("click", function () { IA.analyze ? IA.analyze() : analyze(); });
     document.getElementById("archive-toggle").addEventListener("click", toggleArchiveView);
     // E32: 初始化会话导入按钮
     setupImportButton();
@@ -3983,24 +3983,17 @@
     document.getElementById("issueUrl").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
-        analyze();
+        IA.analyze ? IA.analyze() : analyze();
       }
     });
     document.getElementById("dialog-cancel-btn").addEventListener("click", closeSessionDialog);
     document.getElementById("session-dialog-form").addEventListener("submit", submitSessionDialog);
 
-    // 全局快捷键：Cmd/Ctrl+K 聚焦搜索，Cmd/Ctrl+Enter 发送 chat
+    // 全局快捷键：Cmd/Ctrl+Enter 发送 chat（Cmd/Ctrl+K 由 enhancements.js 命令面板处理）
     document.addEventListener("keydown", function (event) {
       const mod = event.ctrlKey || event.metaKey;
       if (!mod) return;
-      if (event.key === "k" || event.key === "K") {
-        event.preventDefault();
-        const search = document.getElementById("history-search");
-        if (search) {
-          search.focus();
-          search.select();
-        }
-      } else if (event.key === "Enter") {
+      if (event.key === "Enter") {
         // Cmd/Ctrl+Enter 在任何位置都触发发送（仅当 chat 可用时）
         const inputBar = document.getElementById("input-bar");
         if (inputBar && inputBar.style.display !== "none" && !chatInProgress) {
@@ -4044,6 +4037,17 @@
       if (event.key !== "Escape") return;
       const dialog = document.getElementById("session-dialog");
       if (dialog && dialog.open) return;
+      // overlay 打开时让 enhancements.js 的统一 ESC 调度器处理，不叠加关闭报告
+      const palette = document.getElementById("command-palette");
+      const settings = document.getElementById("settings-panel");
+      const helpOverlay = document.getElementById("help-overlay");
+      const compareModal = document.getElementById("compare-modal");
+      if (
+        (palette && palette.getAttribute("aria-hidden") === "false") ||
+        (settings && settings.getAttribute("aria-hidden") === "false") ||
+        (helpOverlay && helpOverlay.getAttribute("aria-hidden") === "false") ||
+        (compareModal && compareModal.getAttribute("aria-hidden") === "false")
+      ) return;
       if (document.getElementById("main").classList.contains("report-open")) {
         toggleReport(false);
       }
@@ -4062,6 +4066,9 @@
   IA.addMsg = addMsg;
   IA.chat = chat;
   IA.analyze = analyze;
+  // 流式状态以 getter 暴露：变量会被重新赋值，需动态读取
+  Object.defineProperty(IA, "chatInProgress", { get: function () { return chatInProgress; } });
+  Object.defineProperty(IA, "analyzeInProgress", { get: function () { return analyzeInProgress; } });
   IA.loadSessions = loadSessions;
   IA.getReport = function () { return report; };
   IA.getActiveSession = function () { return activeSession; };

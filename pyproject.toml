@@ -72,8 +72,12 @@ known-first-party = ["app"]
 
 [tool.mypy]
 python_version = "3.11"
+files = ["app"]
 ignore_missing_imports = true
 warn_unused_configs = true
+# skip 第三方 stubs 的解析：本地 Python 3.14 的 numpy stubs 使用 PEP 695 语法，
+# 在 target_version=3.11 下会报 syntax error。项目不依赖 numpy。
+follow_imports = "skip"
 
 [tool.coverage.run]
 source = ["app"]

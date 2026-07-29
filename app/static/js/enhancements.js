@@ -147,7 +147,8 @@
       document.documentElement.lang = lang;
       // 重渲染动态内容：历史列表 与 当前会话（含报告标签）
       if (IA.loadSessions) IA.loadSessions();
-      if (IA.sessionId && IA.restoreSession) {
+      // 流式响应进行中时不重新加载会话（会取消流），仅更新 i18n 字符串
+      if (!IA.chatInProgress && !IA.analyzeInProgress && IA.sessionId && IA.restoreSession) {
         await IA.restoreSession(IA.sessionId);
       }
       toast(t("settings_language") + ": " + (lang === "zh" ? "中文" : "English"));
@@ -160,6 +161,8 @@
 
   /* ───────────────────────── 命令面板 (Cmd/Ctrl+K) ───────────────────────── */
   let palette = null, paletteInput = null, paletteResults = null, paletteItems = [], paletteIndex = 0;
+  // renderPalette 竞态保护：快速输入时旧请求不得覆盖新结果
+  let paletteRenderToken = 0;
   function buildPalette() {
     const p = make("div", "palette");
     p.id = "command-palette";
@@ -211,6 +214,7 @@
   }
   async function renderPalette(query) {
     if (!palette) return;
+    const myToken = ++paletteRenderToken;
     let items = [];
     // 操作
     paletteActions().forEach(function (a) {
@@ -219,6 +223,8 @@
     // 近期会话
     try {
       const sessions = await IA.apiJson("/sessions?archived=false&limit=12");
+      // 旧请求晚到时丢弃，避免覆盖最新结果
+      if (myToken !== paletteRenderToken) return;
       (sessions || []).forEach(function (s) {
         const repo = s.owner && s.repo ? s.owner + "/" + s.repo : (s.issue_url || "");
         const label = (repo + (s.issue_number ? " #" + s.issue_number : "") + " " + (s.title || "")).trim();
@@ -274,12 +280,12 @@
     else if (e.key === "Enter") { e.preventDefault(); activatePalette(paletteIndex); }
     else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
   }
-  function activatePalette(i) {
+  async function activatePalette(i) {
     const it = paletteItems[i];
     if (!it) return;
     closePalette();
     if (it.type === "action") it.data.run();
-    else if (it.type === "session" && IA.restoreSession) IA.restoreSession(it.id);
+    else if (it.type === "session" && IA.restoreSession) await IA.restoreSession(it.id);
   }
   function openPalette() {
     if (!palette) palette = buildPalette();
@@ -378,7 +384,7 @@
     btn.setAttribute("aria-label", t("report_search_placeholder"));
     btn.setAttribute("aria-pressed", "false");
     btn.title = t("report_search_placeholder");
-    btn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6.75 1.5a5.25 5.25 0 1 0 3.2 9.4l3.32 3.33a.75.75 0 1 0 1.06-1.06l-3.32-3.33A5.25 5.25 0 0 0 6.75 1.5ZM3.25 6.75a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0Z"/></svg>';
+    btn.innerHTML = svg("search");
     header.insertBefore(btn, el("report-close-btn"));
     btn.addEventListener("click", function () {
       const bar = el("report-search-bar");
@@ -738,7 +744,12 @@
     if (!IA.sessionId) return;
     try {
       const rep = await IA.apiJson("/session/" + encodeURIComponent(IA.sessionId) + "/report");
-      if (rep && IA.restoreSession) { IA.restoreSession(IA.sessionId); toast(t("retry_analysis")); }
+      if (rep && IA.restoreSession) {
+        try {
+          await IA.restoreSession(IA.sessionId);
+          toast(t("retry_analysis"));
+        } catch (e) { /* 恢复会话失败忽略 */ }
+      }
     } catch (e) { /* no report yet */ }
   }
 

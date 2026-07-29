@@ -8,10 +8,10 @@ Provides two storage backends:
 it selects the backend based on the configured ``db_path`` and manages
 per-session asyncio locks for in-process mutual exclusion.
 """
-
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 import logging
 import uuid
@@ -214,8 +214,10 @@ class SqliteStore:
             if row and row["metrics_json"]:
                 try:
                     db_metrics = json.loads(row["metrics_json"])
-                    # DB 值优先（它是工具调用期间实时写入的），内存值补充缺失的 key
-                    merged = {**session.metrics, **db_metrics}
+                    # 内存值优先：save 前刚设置的 duration_ms 等指标不会被 DB 旧值覆盖。
+                    # update_metrics 传入的就是 session.metrics，DB 与内存已同步，
+                    # 内存没有的 key（理论上不存在）由 DB 补充。
+                    merged = {**db_metrics, **session.metrics}
                     session.metrics = merged
                 except (json.JSONDecodeError, TypeError):
                     pass  # DB metrics 损坏时保留内存值
@@ -397,12 +399,29 @@ class SqliteStore:
             )
             await db.commit()
 
-    async def purge_old(self, retention_days: int) -> int:
-        """Delete terminal-state sessions older than retention_days."""
+    async def purge_old(self, retention_days: int) -> builtins.list[str]:
+        """Delete terminal-state sessions older than retention_days.
+
+        Returns the list of deleted session_id values so callers can clean
+        up in-memory state (e.g. SessionManager._locks).
+        """
         from datetime import UTC, datetime, timedelta
 
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat(timespec="seconds")
         async with self._conn() as db:
+            # 先查出即将删除的 session_id，供调用方清理内存状态
+            rows = await (
+                await db.execute(
+                    "SELECT session_id FROM sessions"
+                    " WHERE status IN ('completed','failed','cancelled')"
+                    " AND updated_at < ?",
+                    (cutoff,),
+                )
+            ).fetchall()
+            deleted_ids = [row["session_id"] for row in rows]
+            if not deleted_ids:
+                await db.commit()
+                return []
             # Delete associated events and PR proposals first (FK cascade may not cover pending_pr)
             await db.execute(
                 "DELETE FROM pending_pr WHERE session_id IN "
@@ -418,12 +437,12 @@ class SqliteStore:
                 " AND updated_at < ?)",
                 (cutoff,),
             )
-            cursor = await db.execute(
+            await db.execute(
                 "DELETE FROM sessions WHERE status IN ('completed','failed','cancelled') AND updated_at < ?",
                 (cutoff,),
             )
             await db.commit()
-        return cursor.rowcount
+        return deleted_ids
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -502,7 +521,11 @@ class SessionManager:
         MemoryStore is a no-op (returns 0).
         """
         if isinstance(self._store, SqliteStore):
-            return await self._store.purge_old(retention_days)
+            deleted_ids = await self._store.purge_old(retention_days)
+            # 清理已删除 session 对应的锁，避免 _locks 字典无限增长
+            for sid in deleted_ids:
+                self._locks.pop(sid, None)
+            return len(deleted_ids)
         return 0
 
     async def update_metrics(self, session_id: str, metrics: dict) -> None:

@@ -161,29 +161,39 @@ class ConnectionPool:
         self._pool: asyncio.LifoQueue[aiosqlite.Connection] = asyncio.LifoQueue()
         self._created = 0
         self._creation_lock = asyncio.Lock()
+        # 跟踪借出但未归还的连接，close() 时也能关闭它们
+        self._in_use: set[aiosqlite.Connection] = set()
 
     async def acquire(self) -> aiosqlite.Connection:
         """获取一个连接：优先复用空闲连接，不足时按需新建（不超过 size 上限）。"""
         try:
-            return self._pool.get_nowait()
+            conn = self._pool.get_nowait()
         except asyncio.QueueEmpty:
             pass
+        else:
+            self._in_use.add(conn)
+            return conn
         async with self._creation_lock:
             if self._created < self._size:
                 self._created += 1
                 try:
-                    return await get_db(self._path)
+                    conn = await get_db(self._path)
                 except Exception:
                     self._created -= 1
                     raise
+                self._in_use.add(conn)
+                return conn
         # 已达上限：等待其他协程归还连接，10s 超时避免永久阻塞
         try:
-            return await asyncio.wait_for(self._pool.get(), timeout=10.0)
+            conn = await asyncio.wait_for(self._pool.get(), timeout=10.0)
         except TimeoutError as exc:
             raise RuntimeError("Database connection pool exhausted — all connections in use") from exc
+        self._in_use.add(conn)
+        return conn
 
     async def release(self, conn: aiosqlite.Connection) -> None:
         """归还连接到池中。连接已关闭则直接丢弃并减少计数，避免复用坏连接。"""
+        self._in_use.discard(conn)
         # aiosqlite 关闭后内部 _conn 变为 None，不可复用
         if getattr(conn, "_conn", None) is None:
             async with self._creation_lock:
@@ -202,7 +212,8 @@ class ConnectionPool:
             await self.release(conn)
 
     async def close(self) -> None:
-        """关闭池中所有空闲连接。正在使用的连接由调用方自行关闭。"""
+        """关闭池中所有连接（空闲 + 借出），防止进程关闭时泄漏。"""
+        # 关闭空闲连接
         while not self._pool.empty():
             try:
                 conn = self._pool.get_nowait()
@@ -210,4 +221,9 @@ class ConnectionPool:
                 break
             with suppress(Exception):
                 await conn.close()
+        # 关闭仍在使用中的连接（异常关闭场景下防止泄漏）
+        for conn in list(self._in_use):
+            with suppress(Exception):
+                await conn.close()
+        self._in_use.clear()
         self._created = 0
