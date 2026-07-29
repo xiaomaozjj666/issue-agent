@@ -287,11 +287,11 @@
     hero_examples_title: "Real cases",
     hero_examples_desc: "Pick a case to start an analysis",
     hero_example_1_repo: "psf/requests",
-    hero_example_1_desc: "urllib3 redirect stripping Authorization",
+    hero_example_1_desc: "Connection pool leak on keep-alive reuse",
     hero_example_2_repo: "python/cpython",
-    hero_example_2_desc: "pathlib.Path glob performance regression",
+    hero_example_2_desc: "asyncio task cancellation swallowing exceptions",
     hero_example_3_repo: "pallets/flask",
-    hero_example_3_desc: "Blueprint static folder endpoint conflict",
+    hero_example_3_desc: "URL builder double-encoding special chars",
     hero_start_button: "Start analysis",
     chart_load_failed: "Chart library failed to load. Check your network or refresh.",
     cancel_failed_retry: "Cancel polling failed repeatedly. Check your network or refresh to see real status.",
@@ -381,13 +381,15 @@
   async function apiJson(url, options) {
     const response = await fetch(url, options);
     if (!response.ok) {
-      let detail = "Request failed";
+      let detail = "";
       try {
-        detail = (await response.json()).detail || detail;
+        detail = (await response.json()).detail || "";
       } catch (error) {
         console.warn("Unable to decode API error response", error);
       }
-      throw new Error(detail);
+      // 始终包含 HTTP 状态码，让用户能判断问题（502/504 网关错误、404 不存在等）
+      const prefix = "HTTP " + response.status;
+      throw new Error(detail ? prefix + ": " + detail : prefix);
     }
     return response.status === 204 ? null : response.json();
   }

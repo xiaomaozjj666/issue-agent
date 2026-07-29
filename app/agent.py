@@ -443,6 +443,7 @@ class IssueAgent:
         tools = get_tool_definitions(self.settings)
         github, executor, messages = await self._chat_prepare(session, message)
         async with github:
+          try:
             for _ in range(self.settings.max_agent_iterations):
                 record_model_request(session.metrics, "chat")
                 collected_content_parts: list[str] = []
@@ -482,8 +483,11 @@ class IssueAgent:
 
                 collected_content = "".join(collected_content_parts)
                 # LLM 返回空 stream（零 chunk 或全部空 content）且无 tool 调用：
-                # 不写入空 assistant 消息污染上下文，直接报错让用户重试
+                # 回滚已追加的 user 消息（避免 dangling user 无 assistant 回复污染下次上下文），
+                # 保留 file_cache 等已读取数据，直接报错让用户重试
                 if not collected_content and not tool_call_buffers:
+                    if session.messages and session.messages[-1].get("role") == "user":
+                        session.messages.pop()
                     yield {
                         "type": "error",
                         "message": "Model returned an empty response. Please try rephrasing your question.",
@@ -551,18 +555,26 @@ class IssueAgent:
                     messages.append(tool_msg)
                     session.messages.append(tool_msg)
 
-            # 达到迭代上限
+            # 达到迭代上限：追加一条 assistant 消息收尾，
+            # 避免上下文以未完成的 tool_call 结尾导致下次 API 报错
+            depth_reply = t("depth_limit")
+            session.messages.append({"role": "assistant", "content": depth_reply})
             self._chat_finalize(executor, session)
             yield {
                 "type": "done",
-                "reply": t("depth_limit"),
+                "reply": depth_reply,
                 "tools_used": executor.tools_used,
             }
+          except Exception:
+            # 异常路径也必须 finalize：回写 file_cache/files_read，保留 chat 期间已读文件
+            self._chat_finalize(executor, session)
+            raise
 
     async def _chat(self, session: Session, message: str) -> ChatResponse:
         tools = get_tool_definitions(self.settings)
         github, executor, messages = await self._chat_prepare(session, message)
         async with github:
+          try:
             for _ in range(self.settings.max_agent_iterations):
                 record_model_request(session.metrics, "chat")
                 response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
@@ -599,11 +611,16 @@ class IssueAgent:
                     tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": result}
                     messages.append(tool_msg)
                     session.messages.append(tool_msg)
+          except Exception:
+            self._chat_finalize(executor, session)
+            raise
 
+        depth_reply = t("depth_limit")
+        session.messages.append({"role": "assistant", "content": depth_reply})
         self._chat_finalize(executor, session)
         return ChatResponse(
             session_id=session.session_id,
-            reply=t("depth_limit"),
+            reply=depth_reply,
             tools_used=executor.tools_used,
         )
 
