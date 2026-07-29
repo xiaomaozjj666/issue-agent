@@ -48,6 +48,7 @@ class CircuitBreaker:
     _failure_count: int = 0
     _last_failure_time: float = 0.0
     _lock: asyncio.Lock | None = None
+    _probe_in_flight: bool = False  # HALF_OPEN 期间只允许一个探针
 
     def __post_init__(self) -> None:
         if self.threshold < 1:
@@ -84,6 +85,7 @@ class CircuitBreaker:
             if self._state == State.OPEN:
                 if monotonic() - self._last_failure_time >= self.recovery:
                     self._state = State.HALF_OPEN
+                    self._probe_in_flight = True
                     logger.info("Circuit breaker: OPEN → HALF_OPEN (probing)")
                 else:
                     remaining = self.recovery - (monotonic() - self._last_failure_time)
@@ -92,6 +94,11 @@ class CircuitBreaker:
                         f"Retry in {remaining:.0f}s "
                         f"(failures: {self._failure_count}/{self.threshold})"
                     )
+            elif self._state == State.HALF_OPEN and self._probe_in_flight:
+                # 已有探针在执行，其他请求继续 fast-fail
+                raise CircuitBreakerOpenError(
+                    "LLM provider circuit is half-open; waiting for probe result"
+                )
 
         # Execute the call *outside* the lock so concurrent requests
         # don't serialize on the API call itself.
@@ -110,6 +117,7 @@ class CircuitBreaker:
             self._last_failure_time = monotonic()
             if self._state == State.HALF_OPEN:
                 self._state = State.OPEN
+                self._probe_in_flight = False
                 logger.warning(
                     "Circuit breaker: HALF_OPEN probe failed → OPEN (%d/%d failures: %s)",
                     self._failure_count,
@@ -131,9 +139,11 @@ class CircuitBreaker:
                 logger.info("Circuit breaker: HALF_OPEN probe succeeded → CLOSED")
             self._state = State.CLOSED
             self._failure_count = 0
+            self._probe_in_flight = False
 
     def reset(self) -> None:
         """Force the circuit back to CLOSED (e.g. for testing or manual intervention)."""
         self._state = State.CLOSED
         self._failure_count = 0
         self._last_failure_time = 0.0
+        self._probe_in_flight = False

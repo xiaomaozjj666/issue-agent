@@ -27,8 +27,13 @@
   // ── 1. Counter：数字滚动动画 ────────────────────────────
   // ReactBits Components/Counter 复刻
   // 从 0 滚动到目标值，easeOutCubic 缓动让结尾减速，感知更自然
+  // rafId 存到元素 dataset，disposeReportCharts 时可取消
   function animateCounter(el, target, duration) {
     if (!el || prefersReducedMotion()) return;
+    // 取消上一次未完成的动画
+    if (el.dataset.counterRafId) {
+      cancelAnimationFrame(parseInt(el.dataset.counterRafId, 10));
+    }
     const isInteger = Number.isInteger(target);
     const start = 0;
     const startTime = performance.now();
@@ -45,12 +50,23 @@
       const current = start + (target - start) * eased;
       el.textContent = isInteger ? String(Math.round(current)) : current.toFixed(1);
       if (progress < 1) {
-        requestAnimationFrame(tick);
+        el.dataset.counterRafId = String(requestAnimationFrame(tick));
       } else {
         el.textContent = String(target);
+        delete el.dataset.counterRafId;
       }
     }
-    requestAnimationFrame(tick);
+    el.dataset.counterRafId = String(requestAnimationFrame(tick));
+  }
+
+  // 取消所有正在进行的 Counter 动画（disposeReportCharts 调用）
+  function cancelCounters(container) {
+    if (!container) return;
+    const els = container.querySelectorAll("[data-counter-raf-id]");
+    els.forEach(function (el) {
+      cancelAnimationFrame(parseInt(el.dataset.counterRafId, 10));
+      delete el.dataset.counterRafId;
+    });
   }
 
   // 扫描容器内的数字指标卡片，自动触发滚动
@@ -363,7 +379,8 @@
   }
 
   // ── 6. ThemeTransition：主题切换平滑过渡 ────────────────
-  // 全局体验：深浅色切换时所有颜色属性 350ms 平滑过渡，消除闪烁
+  // 用 CSS class 触发过渡，避免 querySelectorAll("*") 的 O(n²) 遍历
+  // .theme-transitioning 类下的元素由 CSS 统一加过渡，切换完移除类
   let themeTransitionActive = false;
   function attachThemeTransition() {
     if (prefersReducedMotion()) return;
@@ -372,21 +389,9 @@
     btn.addEventListener("click", function () {
       if (themeTransitionActive) return;
       themeTransitionActive = true;
-      const body = document.body;
-      body.style.transition = "background-color 350ms ease, color 350ms ease";
-      const allEls = body.querySelectorAll("*");
-      // 仅对关键元素加过渡，避免性能问题
-      allEls.forEach(function (el) {
-        if (el.querySelectorAll("*").length > 50) return; // 跳过大型容器
-        el.style.transition = (el.style.transition ? el.style.transition + ", " : "") +
-          "background-color 350ms ease, border-color 350ms ease, color 350ms ease";
-      });
+      document.body.classList.add("theme-transitioning");
       setTimeout(function () {
-        body.style.transition = "";
-        allEls.forEach(function (el) {
-          if (el.querySelectorAll("*").length > 50) return;
-          el.style.transition = "";
-        });
+        document.body.classList.remove("theme-transitioning");
         themeTransitionActive = false;
       }, 400);
     });
@@ -823,9 +828,12 @@
   // 现有 stagger 入场在渲染时一次性播完，用户滚到下方章节时无感；
   // 改用 IntersectionObserver：视口外的章节到达时才播入场动画，
   // root 传报告滚动容器（#report）；不支持 IO 时退化为直接显示
+  let scrollRevealObserver = null;
   function applyScrollReveal(scrollRoot, items) {
     if (!items || !items.length || prefersReducedMotion()) return;
     if (!("IntersectionObserver" in window)) return;
+    // 清理上一次报告的 observer，避免持有已移除 DOM 节点的引用
+    if (scrollRevealObserver) { scrollRevealObserver.disconnect(); scrollRevealObserver = null; }
     const rootRect = scrollRoot ? scrollRoot.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
     const toObserve = [];
     Array.prototype.slice.call(items).forEach(function (item) {
@@ -857,6 +865,7 @@
         }, 480);
       });
     }, { root: scrollRoot || null, rootMargin: "0px 0px -8% 0px", threshold: 0.05 });
+    scrollRevealObserver = io;
     toObserve.forEach(function (item) { io.observe(item); });
   }
 
@@ -926,6 +935,7 @@
     applyScrollReveal: applyScrollReveal,
     applyReportMotion: applyReportMotion,
     applyHeroMotion: applyHeroMotion,
+    cancelCounters: cancelCounters,
     init: init,
     prefersReducedMotion: prefersReducedMotion,
   };

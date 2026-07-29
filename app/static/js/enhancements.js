@@ -161,7 +161,7 @@
     p.innerHTML =
       '<div class="palette-spotlight" aria-hidden="true"></div>' +
       '<div class="palette-surface" role="dialog" aria-modal="true">' +
-        '<div class="palette-search">' + svg("search" || "") +
+        '<div class="palette-search">' + svg("search") +
           '<input id="palette-input" class="palette-input" type="text" autocomplete="off" placeholder="' + esc(t("palette_placeholder")) + '">' +
         '</div>' +
         '<div id="palette-results" class="palette-results"></div>' +
@@ -376,7 +376,15 @@
       header.parentNode.insertBefore(bar2, header.nextSibling);
       const input = el("report-search-input");
       input.focus();
-      input.addEventListener("input", function () { runReportSearch(input.value); });
+      // 250ms 防抖：大报告 TreeWalker 全量扫描，每次按键触发会卡顿
+      let searchTimer = null;
+      input.addEventListener("input", function () {
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+          searchTimer = null;
+          runReportSearch(input.value);
+        }, 250);
+      });
       el("report-search-prev").addEventListener("click", function () { gotoMark(-1); });
       el("report-search-next").addEventListener("click", function () { gotoMark(1); });
       el("report-search-close").addEventListener("click", function () { clearSearchMarks(); bar2.remove(); btn.setAttribute("aria-pressed", "false"); });
