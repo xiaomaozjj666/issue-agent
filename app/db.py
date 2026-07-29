@@ -176,8 +176,11 @@ class ConnectionPool:
                 except Exception:
                     self._created -= 1
                     raise
-        # 已达上限：等待其他协程归还连接
-        return await self._pool.get()
+        # 已达上限：等待其他协程归还连接，10s 超时避免永久阻塞
+        try:
+            return await asyncio.wait_for(self._pool.get(), timeout=10.0)
+        except TimeoutError as exc:
+            raise RuntimeError("Database connection pool exhausted — all connections in use") from exc
 
     async def release(self, conn: aiosqlite.Connection) -> None:
         """归还连接到池中。连接已关闭则直接丢弃并减少计数，避免复用坏连接。"""
