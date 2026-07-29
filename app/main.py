@@ -416,7 +416,16 @@ async def stream_analysis(
 
             event_stream = agent.investigate_stream(session.issue_url, session=session)
             try:
-                async for event in event_stream:
+                event_iter = event_stream.__aiter__()
+                while True:
+                    try:
+                        event = await asyncio.wait_for(event_iter.__anext__(), timeout=15.0)
+                    except TimeoutError:
+                        # SSE 心跳：防止 nginx 等反向代理因空闲超时断开连接
+                        yield ": keepalive\n\n"
+                        continue
+                    except StopAsyncIteration:
+                        break
                     if await session_mgr.is_cancel_requested(session.session_id):
                         await event_stream.aclose()
                         cancelled = cancelled_event()
@@ -582,7 +591,15 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
         try:
             if request.regenerate:
                 apply_regenerate(session, request)
-            async for event in agent.chat_stream(session, request.message):
+            chat_iter = agent.chat_stream(session, request.message).__aiter__()
+            while True:
+                try:
+                    event = await asyncio.wait_for(chat_iter.__anext__(), timeout=15.0)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                except StopAsyncIteration:
+                    break
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
             # Persist final state once the stream completes successfully
@@ -600,7 +617,7 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
         except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
             logger.exception("chat stream failed for session %s", session.session_id)
             await mark_session_failed(session_mgr, session, exc)
-            err_payload = json.dumps({"type": "error", "message": str(exc)[:500]}, ensure_ascii=False)
+            err_payload = json.dumps({"type": "error", "message": friendly_chat_error(exc)}, ensure_ascii=False)
             yield f"data: {err_payload}\n\n"
         finally:
             await agent.aclose()
@@ -847,11 +864,11 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     async with new_session.lock:
         await manager.save(new_session)
 
-    # 导入事件历史
+    # 导入事件历史：校验每个事件的 type 字段，跳过无效项避免 KeyError 导致整个导入中途失败
     events = body.get("events")
     if isinstance(events, list):
         for event in events:
-            if isinstance(event, dict):
+            if isinstance(event, dict) and event.get("type"):
                 await manager.append_event(new_session.session_id, event)
 
     refreshed = await manager.get(new_session.session_id)

@@ -573,6 +573,17 @@
     stopAnalysisTimer();
     currentPhaseText = "";
     analyzeInProgress = false;
+    // 统一清理 chat 状态：analyze() 取消旧 stream 时也需要中断进行中的 chat，
+    // 否则 chat 响应会写入新分析视图
+    if (chatAbortController) {
+      try {
+        chatAbortController.abort();
+      } catch (e) {
+        /* ignore */
+      }
+      chatAbortController = null;
+    }
+    chatInProgress = false;
     document.getElementById("progress").textContent = "";
   }
 
@@ -584,16 +595,6 @@
     // C1/C2 修复：切换会话前必须取消正在进行的分析流，否则旧 stream 事件
     // 会继续写 sessionId/渲染消息，覆盖用户刚切换到的会话视图
     await cancelCurrentStream();
-    // C3 修复：chat 进行中切换会话时也要中断 chat 请求，否则响应会落到新视图
-    if (chatAbortController) {
-      try {
-        chatAbortController.abort();
-      } catch (e) {
-        /* ignore */
-      }
-      chatAbortController = null;
-      chatInProgress = false;
-    }
     const myRequestId = ++restoreRequestId;
     const messagesContainer = document.getElementById("messages");
     // 会话切换骨架屏：复用 msg-skeleton 样式，与 chat 等待体验一致
@@ -662,6 +663,15 @@
       return true;
     } catch (error) {
       if (myRequestId !== restoreRequestId) return false;
+      // 失败时必须完整清理 UI 状态：否则旧报告面板仍显示，input-bar 仍指向旧 session，
+      // 继续发 chat 会发到不存在的会话上
+      sessionId = null;
+      IA.sessionId = null;
+      report = null;
+      activeSession = null;
+      resetWorkspace(true);
+      document.querySelector(".conversation-label").textContent = t("conversation_label");
+      IA.Runtime.setCancelVisible(false);
       messagesContainer.innerHTML = "";
       addMsg("error", error.message);
       return false;
@@ -765,6 +775,8 @@
   }
 
   async function archiveSession(session, archived) {
+    if (!session || pendingSessionOps.has(session.session_id)) return;
+    pendingSessionOps.add(session.session_id);
     const focusId = session && session.session_id;
     try {
       await IA.apiJson("/session/" + encodeURIComponent(session.session_id), {
@@ -794,10 +806,14 @@
       restoreFocusToSessionRow(focusId);
     } catch (error) {
       addMsg("error", error.message);
+    } finally {
+      pendingSessionOps.delete(session.session_id);
     }
   }
 
   async function deleteSession(session) {
+    if (!session || pendingSessionOps.has(session.session_id)) return;
+    pendingSessionOps.add(session.session_id);
     try {
       await IA.apiJson("/session/" + encodeURIComponent(session.session_id), { method: "DELETE" });
       if (session.session_id === sessionId) {
@@ -810,6 +826,8 @@
       await loadSessions();
     } catch (error) {
       addMsg("error", error.message);
+    } finally {
+      pendingSessionOps.delete(session.session_id);
     }
   }
 
@@ -1360,6 +1378,9 @@
   }
 
   let analyzeInProgress = false;
+
+  // session 操作防重入：追踪正在进行的删除/归档操作，防止连续点击触发多次请求
+  const pendingSessionOps = new Set();
 
   // 实时分析计时器：调查过程中在 progress 区域显示阶段文本和已用时间
   let analysisTimerId = null;
