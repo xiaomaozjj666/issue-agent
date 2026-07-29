@@ -1,6 +1,7 @@
 """API key authentication middleware."""
 
 import hmac
+import logging
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -8,7 +9,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 
-SKIP_PATHS = {"/health", "/", "/docs", "/openapi.json", "/favicon.ico"}
+logger = logging.getLogger(__name__)
+
+# /docs 和 /openapi.json 不在跳过列表中：当 api_key 已设置时，
+# Swagger UI 和 OpenAPI schema 也需要认证，防止 API 结构泄露
+SKIP_PATHS = {"/health", "/", "/favicon.ico"}
+
+_warned_no_api_key = False
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -18,6 +25,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         settings = get_settings()
         if not settings.api_key:
+            global _warned_no_api_key
+            if not _warned_no_api_key:
+                logger.warning(
+                    "API_KEY is not set — all endpoints are unauthenticated. "
+                    "Set API_KEY in production to require authentication."
+                )
+                _warned_no_api_key = True
             return await call_next(request)
 
         api_key = request.headers.get("X-API-Key")
