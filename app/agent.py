@@ -346,10 +346,9 @@ class IssueAgent:
     # ── non‑streaming wrappers (backward‑compatible) ─────────────────
 
     async def investigate(self, issue_url: str, *, session: Session | None = None) -> AnalysisReport:
-        if session is not None:
-            async with session.lock:
-                return await self._investigate_from_stream(issue_url, session=session)
-        return await self._investigate_from_stream(issue_url)
+        # 不全程持锁：与 /stream 端点一致，investigate_stream 内部修改 session 状态
+        # 时不持有 session.lock。全程持锁会阻塞 PATCH/DELETE 等操作长达数分钟。
+        return await self._investigate_from_stream(issue_url, session=session)
 
     async def _investigate_from_stream(self, issue_url: str, *, session: Session | None = None) -> AnalysisReport:
         report: AnalysisReport | None = None
@@ -497,6 +496,10 @@ class IssueAgent:
                 serialized: dict = {"role": "assistant", "content": collected_content}
                 ordered_tool_calls = [tool_call_buffers[i] for i in sorted(tool_call_buffers)]
                 if ordered_tool_calls:
+                    # 某些代理/网关返回空 tool_call id，生成合成 id 以保留工具调用意图
+                    for idx, entry in enumerate(ordered_tool_calls):
+                        if not entry["id"]:
+                            entry["id"] = f"call_{idx}"
                     serialized["tool_calls"] = [
                         {
                             "id": entry["id"],
@@ -504,13 +507,10 @@ class IssueAgent:
                             "function": {"name": entry["name"], "arguments": entry["arguments"]},
                         }
                         for entry in ordered_tool_calls
-                        if entry["id"]
                     ]
                 messages.append(serialized)
                 session.messages.append(serialized)
 
-                # 用过滤后的列表判断分支：某些代理/网关返回空 tool_call id，
-                # 此时 serialized["tool_calls"] 为空列表，不应进入工具执行分支
                 valid_tool_calls = serialized.get("tool_calls", [])
                 if not valid_tool_calls:
                     # 没有工具调用：回复完成
@@ -525,8 +525,6 @@ class IssueAgent:
                 # 有工具调用：先发出调用事件，再批量执行独立只读工具。
                 parsed_calls: list[tuple[dict[str, str], str, dict]] = []
                 for entry in ordered_tool_calls:
-                    if not entry["id"]:
-                        continue
                     name = entry["name"]
                     try:
                         args = json.loads(entry["arguments"]) if entry["arguments"] else {}

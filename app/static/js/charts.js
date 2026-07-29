@@ -447,6 +447,8 @@
   // 底部汇总读取率与补丁覆盖率 —— 结论、证据、改动三者是否对得上一眼可查。
   function renderVerify(container, report, sessionData) {
     if (!container) return null;
+    // 容器可能复用，先移除上一次的呼吸警示类，条件满足时再添加
+    container.classList.remove("pulse-ring");
     if (!isAvailable()) {
       container.innerHTML = '<div class="report-chart-fallback">' + IA.escapeHtml(t("chart_load_failed")) + '</div>';
       return null;
