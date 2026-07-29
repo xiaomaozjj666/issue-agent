@@ -28,7 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp, Scope
 
-from app.agent import IssueAgent, ModelResponseError
+from app.agent import IssueAgent, ModelResponseError, friendly_chat_error
 from app.auth import AuthMiddleware
 from app.build import get_build_id
 from app.circuit_breaker import CircuitBreaker
@@ -195,8 +195,8 @@ _rate_window_lock = asyncio.Lock()
 
 async def _check_rate_limit(api_key: str) -> None:
     settings = get_settings()
-    max_requests = int(getattr(settings, "rate_limit_requests", 30) or 30)
-    window_s = int(getattr(settings, "rate_limit_window_seconds", 60) or 60)
+    max_requests = settings.rate_limit_requests
+    window_s = settings.rate_limit_window_seconds
     now = time.monotonic()
     async with _rate_window_lock:
         bucket = _rate_window_buckets[api_key]
@@ -453,11 +453,14 @@ async def stream_analysis(
                 return
             yield error_event("This session changed in another process; reload it before continuing").to_sse()
         except Exception as exc:
+            # 详细堆栈进日志，客户端只拿脱敏后的友好消息
+            logger.exception("Stream failed for session %s", session.session_id if session else "unknown")
+            friendly = friendly_chat_error(exc)
             if session is not None:
                 async with session.lock:
                     session.status = "failed"
                     session.phase = "failed"
-                    session.error_message = str(exc)[:500]
+                    session.error_message = friendly[:500]
                     session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
                     try:
                         await session_mgr.save(session)
@@ -466,7 +469,7 @@ async def stream_analysis(
                             "Could not persist failure state for concurrently updated session %s",
                             session.session_id,
                         )
-            failure = error_event(str(exc))
+            failure = error_event(friendly)
             if session is not None:
                 await session_mgr.append_event(session.session_id, event_payload(failure))
             yield failure.to_sse()
@@ -814,7 +817,8 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     new_session.messages = sess_data.get("messages", []) or []
     new_session.files_read = sess_data.get("files_read", []) or []
     new_session.display_title = sess_data.get("display_title")
-    new_session.metrics = sess_data.get("metrics", {}) or {}
+    raw_metrics = sess_data.get("metrics", {})
+    new_session.metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
     new_session.error_message = sess_data.get("error_message")
     # 状态：导入的会话标记为 completed（避免被 stale 恢复逻辑误判为 running）
     new_session.status = "completed"
@@ -828,6 +832,7 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
         try:
             new_session.issue = IssueData.model_validate(issue_data)
         except Exception:
+            logger.warning("Failed to validate issue data on import; storing as None", exc_info=True)
             new_session.issue = None
 
     # 恢复 report 对象
@@ -836,6 +841,7 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
         try:
             new_session.report = AnalysisReport.model_validate(report_data)
         except Exception:
+            logger.warning("Failed to validate report data on import; storing as None", exc_info=True)
             new_session.report = None
 
     async with new_session.lock:

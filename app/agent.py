@@ -61,7 +61,7 @@ __all__ = ["IssueAgent", "ModelResponseError"]
 
 
 class IssueAgent:
-    """LLM-powered GitHub issue investigation agent.
+    """GitHub issue investigation agent.
 
     Manages the OpenAI client lifecycle and coordinates the multi-phase
     investigation: fetch → preload → explore → verify → report → review.
@@ -388,7 +388,7 @@ class IssueAgent:
             logger.exception("chat_stream failed for session %s", session.session_id)
             yield {"type": "error", "message": _friendly_chat_error(exc)}
 
-    def _chat_prepare(self, session: Session, message: str) -> tuple[GitHubClient, ToolExecutor, list[dict]]:
+    async def _chat_prepare(self, session: Session, message: str) -> tuple[GitHubClient, ToolExecutor, list[dict]]:
         """Chat 共享初始化：校验 session、构建 executor 与 messages。
 
         返回 (github, executor, messages)。调用方负责 ``async with github`` 管理
@@ -407,20 +407,27 @@ class IssueAgent:
             cache_max_bytes=self.settings.github_cache_max_bytes,
             max_tree_entries=self.settings.github_max_tree_entries,
         )
-        executor = self._build_executor(
-            github,
-            session.issue,
-            session.tree,
-            file_cache=session.file_cache,
-            files_read=session.files_read,
-        )
-        investigation_context = _build_investigation_context(session)
-        session.messages.append({"role": "user", "content": message})
-        messages = [
-            {"role": "system", "content": get_chat_system_prompt()},
-            {"role": "system", "content": investigation_context},
-            *session.messages,
-        ]
+        try:
+            executor = self._build_executor(
+                github,
+                session.issue,
+                session.tree,
+                file_cache=session.file_cache,
+                files_read=session.files_read,
+            )
+            investigation_context = _build_investigation_context(session)
+            session.messages.append({"role": "user", "content": message})
+            messages = [
+                {"role": "system", "content": get_chat_system_prompt()},
+                {"role": "system", "content": investigation_context},
+                *session.messages,
+            ]
+        except Exception:
+            # _chat_prepare 抛异常时，新建的 GitHubClient 未进入 async with，
+            # 必须手动关闭避免 httpx 连接池泄漏
+            if self._github_client is None:
+                await github.aclose()
+            raise
         return github, executor, messages
 
     def _chat_finalize(self, executor: ToolExecutor, session: Session) -> None:
@@ -434,7 +441,7 @@ class IssueAgent:
 
     async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
         tools = get_tool_definitions(self.settings)
-        github, executor, messages = self._chat_prepare(session, message)
+        github, executor, messages = await self._chat_prepare(session, message)
         async with github:
             for _ in range(self.settings.max_agent_iterations):
                 record_model_request(session.metrics, "chat")
@@ -498,7 +505,10 @@ class IssueAgent:
                 messages.append(serialized)
                 session.messages.append(serialized)
 
-                if not ordered_tool_calls:
+                # 用过滤后的列表判断分支：某些代理/网关返回空 tool_call id，
+                # 此时 serialized["tool_calls"] 为空列表，不应进入工具执行分支
+                valid_tool_calls = serialized.get("tool_calls", [])
+                if not valid_tool_calls:
                     # 没有工具调用：回复完成
                     self._chat_finalize(executor, session)
                     yield {
@@ -551,7 +561,7 @@ class IssueAgent:
 
     async def _chat(self, session: Session, message: str) -> ChatResponse:
         tools = get_tool_definitions(self.settings)
-        github, executor, messages = self._chat_prepare(session, message)
+        github, executor, messages = await self._chat_prepare(session, message)
         async with github:
             for _ in range(self.settings.max_agent_iterations):
                 record_model_request(session.metrics, "chat")
@@ -731,6 +741,14 @@ def _serialize_message(message: ChatCompletionMessage) -> dict:
     return msg
 
 
+def friendly_chat_error(exc: Exception) -> str:
+    """Map SDK/network exceptions to user-friendly messages for SSE error events.
+
+    Public alias so /stream and /chat/stream endpoints share the same mapping.
+    """
+    return _friendly_chat_error(exc)
+
+
 def _friendly_chat_error(exc: Exception) -> str:
     """Map SDK/network exceptions to user-friendly messages for SSE error events."""
     status = getattr(exc, "status_code", None)
@@ -752,7 +770,11 @@ def _friendly_chat_error(exc: Exception) -> str:
         return "Model response timed out. Please try again."
     if "Connection" in name or "APIConnection" in name:
         return "Unable to connect to the model service. Check your network."
-    return str(exc)[:500]
+    # 应用级异常（ValueError/KeyError 等内置异常）消息可读且无敏感信息，透传
+    # 其他未知异常只返回类型名，避免泄漏 SDK 内部文本（URL/key 片段）
+    if isinstance(exc, (ValueError, KeyError, TypeError, AttributeError, RuntimeError)):
+        return str(exc)[:500]
+    return f"Internal error: {type(exc).__name__}"
 
 
 def _trim_session_messages(messages: list[dict], max_chars: int, max_messages: int = 50) -> None:

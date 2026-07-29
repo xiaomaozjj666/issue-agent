@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     batch_max_concurrent: int = Field(default=2, ge=1, le=8)
     batch_max_queue_size: int = Field(default=100, ge=1, le=500)
     batch_max_history: int = Field(default=100, ge=10, le=10_000)
+    # ── Rate limiting ────────────────────────────────────────────────
+    # 按 API key 的滑动窗口限流（main.py 的 RateLimitMiddleware 使用）
+    rate_limit_requests: int = Field(default=30, ge=1, le=1000)
+    rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
 
 
 @lru_cache

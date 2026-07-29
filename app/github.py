@@ -306,6 +306,20 @@ class GitHubClient:
                 _old_key, (_expires, _value, old_size) = self._cache.popitem(last=False)
                 self._cache_state["bytes"] -= old_size
 
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Perform an HTTP request, wrapping transport errors as GitHubError.
+
+        Unlike ``_get``, this does NOT retry — write operations must be
+        idempotent-safe and we don't want to duplicate branch/file creation.
+        Transport-level failures (timeout, network, protocol) are converted to
+        ``GitHubError`` so callers' ``except GitHubError`` blocks (rollback,
+        502 mapping) fire correctly instead of leaking as 500.
+        """
+        try:
+            return await self._client.request(method, path, **kwargs)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise GitHubError(f"GitHub {method} request failed: {exc}") from exc
+
     async def _get(self, path: str, **kwargs: Any) -> httpx.Response:
         """Perform a GET request with exponential back-off for transient errors.
 
@@ -436,8 +450,8 @@ class GitHubClient:
         except GitHubError:
             # 获取 SHA 失败不阻断分析，降级为 HEAD
             pass
-        if len(comments) >= 200:
-            logger.info("Issue %s/%s#%d has >=200 comments; truncated to first 200", owner, repo, number)
+        if len(comments) > 200:
+            logger.info("Issue %s/%s#%d has %d comments; truncated to first 200", owner, repo, number, len(comments))
         return IssueData(
             owner=owner,
             repo=repo,
@@ -621,6 +635,11 @@ class GitHubClient:
     async def get_file_at_commit(self, issue: IssueData, path: str, sha: str) -> SourceFile:
         encoded_path = quote(path, safe="/")
         repo_segment = self._repo_segment(issue.owner, issue.repo)
+        # 缓存 (path, sha) 组合：同一调查中可能多次对比同一文件历史版本
+        cache_key = f"commit:{repo_segment}:{sha}:{encoded_path}"
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            return cached
         response = await self._get(
             f"/repos/{repo_segment}/contents/{encoded_path}",
             params={"ref": sha},
@@ -634,7 +653,9 @@ class GitHubClient:
             raise GitHubFileSkipped(f"Invalid file content for {path}") from error
         if b"\x00" in raw:
             raise GitHubFileSkipped(f"Binary file skipped: {path}")
-        return SourceFile(path=path, content=raw.decode("utf-8", errors="replace"))
+        source = SourceFile(path=path, content=raw.decode("utf-8", errors="replace"))
+        await self._cache_set(cache_key, source)
+        return source
 
     def _check_write_mode(self) -> None:
         if not self._write_enabled:
@@ -670,7 +691,8 @@ class GitHubClient:
     async def create_branch(self, owner: str, repo: str, branch: str, base_sha: str) -> dict:
         self._check_write_mode()
         repo_segment = self._repo_segment(owner, repo)
-        response = await self._client.post(
+        response = await self._request(
+            "POST",
             f"/repos/{repo_segment}/git/refs",
             json={"ref": f"refs/heads/{branch}", "sha": base_sha},
         )
@@ -683,7 +705,7 @@ class GitHubClient:
         self._check_write_mode()
         repo_segment = self._repo_segment(owner, repo)
         encoded_branch = quote(branch, safe="")
-        response = await self._client.delete(f"/repos/{repo_segment}/git/refs/heads/{encoded_branch}")
+        response = await self._request("DELETE", f"/repos/{repo_segment}/git/refs/heads/{encoded_branch}")
         if response.status_code not in {204, 404}:
             raise GitHubError(f"Failed to roll back branch: {response.text}")
 
@@ -706,7 +728,8 @@ class GitHubClient:
         current_sha = await self.get_file_sha(owner, repo, path, branch)
         if current_sha is not None:
             payload["sha"] = current_sha
-        response = await self._client.put(
+        response = await self._request(
+            "PUT",
             f"/repos/{repo_segment}/contents/{quote(path, safe='/')}",
             json=payload,
         )
@@ -725,7 +748,8 @@ class GitHubClient:
     ) -> dict:
         self._check_write_mode()
         repo_segment = self._repo_segment(owner, repo)
-        response = await self._client.post(
+        response = await self._request(
+            "POST",
             f"/repos/{repo_segment}/pulls",
             json={"title": title, "body": body, "head": head, "base": base},
         )
