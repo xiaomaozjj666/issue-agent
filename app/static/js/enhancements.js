@@ -64,6 +64,8 @@
 
   /* ───────────────────────── 应用内设置面板 ───────────────────────── */
   let settingsPanel = null;
+  // 焦点恢复：overlay 打开前记录活动元素，关闭后恢复，保持键盘导航上下文
+  let overlayLastFocus = null;
   function buildSettingsPanel() {
     const panel = make("aside", "drawer");
     panel.id = "settings-panel";
@@ -119,6 +121,7 @@
   }
   function openSettings() {
     if (!settingsPanel) settingsPanel = buildSettingsPanel();
+    overlayLastFocus = document.activeElement;
     settingsPanel.setAttribute("aria-hidden", "false");
     document.body.classList.add("drawer-open");
     setTimeout(function () { const s = el("set-language"); if (s) s.focus(); }, 60);
@@ -126,6 +129,10 @@
   function closeSettings() {
     if (settingsPanel) settingsPanel.setAttribute("aria-hidden", "true");
     document.body.classList.remove("drawer-open");
+    if (overlayLastFocus && typeof overlayLastFocus.focus === "function") {
+      try { overlayLastFocus.focus(); } catch (e) { /* ignore */ }
+      overlayLastFocus = null;
+    }
   }
 
   // 运行时热切换语言：拉取目标语言字符串表 → 更新 IA 内部表 → 重渲染界面与动态内容
@@ -276,6 +283,7 @@
   }
   function openPalette() {
     if (!palette) palette = buildPalette();
+    overlayLastFocus = document.activeElement;
     palette.setAttribute("aria-hidden", "false");
     document.body.classList.add("palette-open");
     renderPalette("");
@@ -284,6 +292,10 @@
   function closePalette() {
     if (palette) palette.setAttribute("aria-hidden", "true");
     document.body.classList.remove("palette-open");
+    if (overlayLastFocus && typeof overlayLastFocus.focus === "function") {
+      try { overlayLastFocus.focus(); } catch (e) { /* ignore */ }
+      overlayLastFocus = null;
+    }
   }
   async function downloadSession(id) {
     try {
@@ -324,9 +336,16 @@
   }
   function openHelp() {
     if (!helpOverlay) helpOverlay = buildHelp();
+    overlayLastFocus = document.activeElement;
     helpOverlay.setAttribute("aria-hidden", "false");
   }
-  function closeHelp() { if (helpOverlay) helpOverlay.setAttribute("aria-hidden", "true"); }
+  function closeHelp() {
+    if (helpOverlay) helpOverlay.setAttribute("aria-hidden", "true");
+    if (overlayLastFocus && typeof overlayLastFocus.focus === "function") {
+      try { overlayLastFocus.focus(); } catch (e) { /* ignore */ }
+      overlayLastFocus = null;
+    }
+  }
 
   /* ───────────────────────── 后端健康灯 ───────────────────────── */
   let healthTimer = null;
@@ -745,9 +764,28 @@
       }
     }, true);
     document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") {
-        if (helpOverlay && helpOverlay.getAttribute("aria-hidden") === "false") closeHelp();
-        if (compareModal && compareModal.getAttribute("aria-hidden") === "false") compareModal.setAttribute("aria-hidden", "true");
+      if (e.key !== "Escape") return;
+      // 统一 ESC 调度：按层级从上到下关闭最上层的 overlay，关闭后阻止其他监听器
+      // 避免一次 ESC 同时关闭 overlay 和背景报告面板
+      if (palette && palette.getAttribute("aria-hidden") === "false") {
+        closePalette();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (helpOverlay && helpOverlay.getAttribute("aria-hidden") === "false") {
+        closeHelp();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (compareModal && compareModal.getAttribute("aria-hidden") === "false") {
+        compareModal.setAttribute("aria-hidden", "true");
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (settingsPanel && settingsPanel.getAttribute("aria-hidden") === "false") {
+        closeSettings();
+        e.stopImmediatePropagation();
+        return;
       }
     });
   }

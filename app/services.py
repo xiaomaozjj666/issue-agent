@@ -206,6 +206,9 @@ async def apply_fix(
     if session.issue is None:
         raise HTTPException(status_code=409, detail="Session investigation is incomplete")
 
+    if session.status == "running":
+        raise HTTPException(status_code=409, detail="Session is still running — wait for it to complete")
+
     try:
         proposal = validate_pr_proposal(
             settings,

@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openai import APIError
 from pydantic import BaseModel as PydanticBaseModel
+from pydantic import Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp, Scope
@@ -233,6 +234,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         api_key = request.headers.get("X-API-Key", "")
         if api_key:
             await _check_rate_limit(api_key)
+        else:
+            # 无 API key 时按客户端 IP 限流兜底，防止未认证场景下被滥用
+            client_ip = request.client.host if request.client else "unknown"
+            await _check_rate_limit(client_ip)
         return await call_next(request)
 
 
@@ -507,9 +512,9 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBr
                 session.status = "running"
                 session.phase = "chatting"
                 session.error_message = None
+                if request.regenerate:
+                    apply_regenerate(session, request)
                 await session_mgr.save(session)
-            if request.regenerate:
-                apply_regenerate(session, request)
             result = await agent.chat(session, request.message)
             async with session.lock:
                 session.status = "completed"
@@ -584,13 +589,13 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
         session.status = "running"
         session.phase = "chatting"
         session.error_message = None
+        if request.regenerate:
+            apply_regenerate(session, request)
         await session_mgr.save(session)
 
     async def event_generator() -> AsyncIterator[str]:
         started_at = monotonic()
         try:
-            if request.regenerate:
-                apply_regenerate(session, request)
             chat_iter = agent.chat_stream(session, request.message).__aiter__()
             while True:
                 try:
@@ -882,7 +887,7 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
 # ── 批量分析 ──────────────────────────────────────────────────
 # 异步任务队列：提交多个 issue URL，后台逐一调查，轮询进度。
 class BatchSubmitRequest(PydanticBaseModel):
-    issue_urls: list[str]
+    issue_urls: list[str] = Field(max_length=100)
 
 
 class BatchTaskResponse(PydanticBaseModel):
