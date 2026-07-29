@@ -21,7 +21,7 @@ dependencies = [
   "jinja2>=3.1,<4",
   "openai>=2.11,<3",
   "pydantic-settings>=2.7,<3",
-  "rich>=13,<14",
+  "rich>=13,<16",
   "uvicorn[standard]>=0.34,<1",
 ]
 
@@ -35,7 +35,7 @@ Repository = "https://github.com/xiaomaozjj666/issue-agent"
 [project.optional-dependencies]
 dev = [
   "httpx2>=2,<3",
-  "mypy>=1.15,<2",
+  "mypy>=1.15,<3",
   "pip-audit>=2.7,<3",
   "pytest>=9.0.3,<10",
   "pytest-asyncio>=1.4,<2",
