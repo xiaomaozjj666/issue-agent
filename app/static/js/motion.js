@@ -219,6 +219,10 @@
       el.removeEventListener("mousemove", onMove);
       el.removeEventListener("mouseleave", onLeave);
       if (rafId) cancelAnimationFrame(rafId);
+      // 清理 attach 时设置的 inline 样式，避免元素复用时残留
+      el.style.transform = "";
+      el.style.transformStyle = "";
+      el.style.willChange = "";
     };
   }
 
@@ -227,98 +231,6 @@
     if (!container) return;
     const cards = container.querySelectorAll(".report-metric-card");
     cards.forEach(function (card) { attachTilt(card, { maxTilt: 1.5 }); });
-  }
-
-  // ── 4. Ripple：点击涟漪（全局事件委托） ─────────────────
-  // ReactBits Animations/Ripple 复刻
-  // 从点击点扩散的涟漪反馈，确认操作已接收
-  // 用全局 pointerdown 委托，一次注册覆盖所有匹配按钮，动态新增元素也自动生效
-  const RIPPLE_SELECTOR = [
-    ".primary-action",
-    "#report-toggle",
-    ".report-action",
-    ".patch-copy",
-    ".patch-download",
-    ".patch-view-btn",
-    ".session-action",
-    ".batch-btn",
-    "#theme-toggle-btn",
-    "#chat-send-btn",
-    "#chat-stop-btn",
-    ".retry-button",
-    "#report-fullscreen-btn",
-    "#report-split-btn",
-    "#report-default-fs-btn",
-    "#report-close-btn",
-    "#report-print-btn",
-    ".msg-action-btn",
-    "#cancel-analysis",
-    ".chart-zoom-btn",
-    ".evidence-load-more",
-    ".timeline-expand-btn",
-    ".report-back-top",
-    ".chart-modal-close",
-    ".history-empty-cta-btn",
-    ".import-session-btn",
-    ".icon-button",
-    ".theme-toggle",
-    ".mobile-history-toggle",
-    ".back-button",
-    "button[type='button']",
-  ].join(",");
-
-  let rippleDelegated = false;
-  function initRippleDelegation() {
-    if (rippleDelegated || prefersReducedMotion()) return;
-    rippleDelegated = true;
-    document.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0 && e.pointerType !== "touch") return; // 仅左键/触屏
-      const el = e.target.closest(RIPPLE_SELECTOR);
-      if (!el || el.disabled) return;
-      // 移动端触觉反馈：轻触按钮时 8ms 震动，增强操作确认感
-      // 仅在支持 vibrate API 且触屏场景下触发，桌面端无感
-      if (e.pointerType === "touch" && navigator.vibrate) {
-        try { navigator.vibrate(8); } catch (vErr) { /* ignore */ }
-      }
-      // 确保元素是定位上下文且不溢出
-      const cs = getComputedStyle(el);
-      if (cs.position === "static") el.style.position = "relative";
-      if (cs.overflow === "visible") el.style.overflow = "hidden";
-
-      const rect = el.getBoundingClientRect();
-      const size = Math.max(rect.width, rect.height);
-      const x = e.clientX - rect.left - size / 2;
-      const y = e.clientY - rect.top - size / 2;
-
-      const ripple = document.createElement("span");
-      ripple.className = "motion-ripple";
-      ripple.style.cssText =
-        "position:absolute;border-radius:50%;pointer-events:none;" +
-        "width:" + size + "px;height:" + size + "px;" +
-        "left:" + x + "px;top:" + y + "px;" +
-        "background:currentColor;opacity:0.22;" +
-        "transform:scale(0);transition:transform 480ms cubic-bezier(0.16,1,0.3,1),opacity 480ms ease-out;";
-      el.appendChild(ripple);
-
-      requestAnimationFrame(function () {
-        ripple.style.transform = "scale(2)";
-        ripple.style.opacity = "0";
-      });
-      setTimeout(function () {
-        if (ripple.parentNode) ripple.parentNode.removeChild(ripple);
-      }, 520);
-    }, { passive: true });
-  }
-
-  // 单元素挂载（向后兼容，内部委托已覆盖则跳过）
-  function attachRipple(el) {
-    if (!el || prefersReducedMotion()) return;
-    // 委托模式无需单独挂载，init 时已全局注册
-  }
-
-  // 批量挂载（向后兼容，委托模式已覆盖）
-  function attachRipples(root, selector) {
-    // 委托模式已覆盖所有匹配元素，无需操作
   }
 
   // ── 5. SmoothExpand：折叠区块平滑展开 ──────────────────
@@ -330,10 +242,17 @@
     const wrapper = detailsEl.querySelector(".patch-wrap") || detailsEl;
     if (!wrapper) return;
 
-    let isAnimating = false;
+    let pendingTimer = null;
     detailsEl.addEventListener("toggle", function () {
-      if (isAnimating) return;
-      isAnimating = true;
+      // 浏览器在 toggle 触发前已翻转 open 属性，不能用 isAnimating 守卫丢弃事件，
+      // 否则 open 属性与视觉状态会脱节。这里每次都清除上一次动画残留的 inline
+      // 样式与未触发的清理回调，再开始新动画。
+      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+      wrapper.style.gridTemplateRows = "";
+      wrapper.style.opacity = "";
+      wrapper.style.overflow = "";
+      wrapper.style.transition = "";
+      wrapper.style.display = "";
       if (detailsEl.open) {
         // 展开：0fr → 1fr
         wrapper.style.display = "grid";
@@ -347,13 +266,13 @@
             wrapper.style.opacity = "1";
           });
         });
-        setTimeout(function () {
+        pendingTimer = setTimeout(function () {
           wrapper.style.gridTemplateRows = "";
           wrapper.style.opacity = "";
           wrapper.style.overflow = "";
           wrapper.style.transition = "";
           wrapper.style.display = "";
-          isAnimating = false;
+          pendingTimer = null;
         }, 280);
       } else {
         // 折叠：1fr → 0fr
@@ -367,12 +286,12 @@
             wrapper.style.opacity = "0";
           });
         });
-        setTimeout(function () {
+        pendingTimer = setTimeout(function () {
           wrapper.style.gridTemplateRows = "";
           wrapper.style.opacity = "";
           wrapper.style.overflow = "";
           wrapper.style.transition = "";
-          isAnimating = false;
+          pendingTimer = null;
         }, 240);
       }
     });
@@ -684,7 +603,12 @@
     function tick(ts) {
       rafId = null;
       if (!canvas.isConnected) { teardown(); return; }
-      if (document.hidden || !heroVisible) return;
+      if (document.hidden || !heroVisible) {
+        if (!canvas.isConnected) { teardown(); return; }
+        // 页面隐藏时仍调度下一帧以便恢复后继续，但降低频率
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
       // 30fps 限帧：不到间隔只续帧不重绘
       if (ts - lastTs >= FRAME_MS) {
         lastTs = ts;
@@ -758,40 +682,6 @@
       }
       syncAnimation();
     }
-  }
-
-  // ── 11. ClickSpark：关键动作点击火花 ─────────────────────
-  // ReactBits Animations/ClickSpark 复刻（DOM 版，免 canvas）
-  // 用于关键 CTA 与图表操作：点击时短线从点击点向外迸发，
-  // 与 Ripple（面反馈）互补，确认操作已被接收。图表使用更克制的 6 线版本，
-  // 且事件层始终 pointer-events:none，不干扰 ECharts 的 tooltip / click / toolbox。
-  const SPARK_SELECTOR = ".primary-action, .hero-cta-button, .hero-example, .report-chart-canvas, .chart-zoom-btn";
-  let sparkDelegated = false;
-  function initClickSpark() {
-    if (sparkDelegated || prefersReducedMotion()) return;
-    sparkDelegated = true;
-    document.addEventListener("pointerdown", function (e) {
-      if (e.button !== 0 && e.pointerType !== "touch") return;
-      const el = e.target.closest(SPARK_SELECTOR);
-      if (!el || el.disabled) return;
-      const isChartInteraction = el.matches(".report-chart-canvas, .chart-zoom-btn");
-      const burst = document.createElement("span");
-      burst.className = "motion-spark-burst" + (isChartInteraction ? " motion-spark-burst--chart" : "");
-      // 固定定位到视口坐标，避免受按钮 overflow:hidden 裁剪
-      burst.style.left = e.clientX + "px";
-      burst.style.top = e.clientY + "px";
-      const rayCount = isChartInteraction ? 6 : 8;
-      for (let i = 0; i < rayCount; i++) {
-        const line = document.createElement("span");
-        line.className = "motion-spark-line";
-        line.style.setProperty("--spark-angle", (i * (360 / rayCount)) + "deg");
-        burst.appendChild(line);
-      }
-      document.body.appendChild(burst);
-      setTimeout(function () {
-        if (burst.parentNode) burst.parentNode.removeChild(burst);
-      }, 480);
-    }, { passive: true });
   }
 
   // ── 12. BlurText：模糊→清晰入场 ──────────────────────
@@ -921,8 +811,6 @@
     applySessionListMotion: applySessionListMotion,
     attachTilt: attachTilt,
     applyTiltToMetricCards: applyTiltToMetricCards,
-    attachRipple: attachRipple,
-    attachRipples: attachRipples,
     attachSmoothExpand: attachSmoothExpand,
     attachThemeTransition: attachThemeTransition,
     applySplitText: applySplitText,
@@ -930,7 +818,6 @@
     applySpotlights: applySpotlights,
     attachMagnet: attachMagnet,
     attachParticleNet: attachParticleNet,
-    initClickSpark: initClickSpark,
     applyBlurText: applyBlurText,
     applyScrollReveal: applyScrollReveal,
     applyReportMotion: applyReportMotion,

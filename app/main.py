@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
@@ -190,7 +190,7 @@ app = FastAPI(title="GitHub Issue Agent", version="0.6.0", lifespan=lifespan)
 # Default: 30 requests per 60 seconds. Controlled via RATE_LIMIT_REQUESTS and
 # RATE_LIMIT_WINDOW_SECONDS env vars (read from Settings).
 
-_rate_window_buckets: dict[str, list[float]] = defaultdict(list)
+_rate_window_buckets: dict[str, deque[float]] = defaultdict(deque)
 _rate_window_lock = asyncio.Lock()
 
 
@@ -204,7 +204,7 @@ async def _check_rate_limit(api_key: str) -> None:
         # Evict timestamps outside the window
         cutoff = now - window_s
         while bucket and bucket[0] < cutoff:
-            bucket.pop(0)
+            bucket.popleft()
         if len(bucket) >= max_requests:
             retry_after = int(bucket[0] + window_s - now + 1)
             raise HTTPException(
@@ -231,11 +231,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Health check is unauthenticated and low-cost — skip
         if request.url.path == "/health":
             return await call_next(request)
+        settings = get_settings()
         api_key = request.headers.get("X-API-Key", "")
-        if api_key:
+        # API_KEY 已配置时按 header 值限流；未配置时 X-API-Key 无认证意义，
+        # 攻击者可每次换一个随机值绕过限流，因此始终用客户端 IP 兜底
+        if settings.api_key and api_key:
             await _check_rate_limit(api_key)
         else:
-            # 无 API key 时按客户端 IP 限流兜底，防止未认证场景下被滥用
             client_ip = request.client.host if request.client else "unknown"
             await _check_rate_limit(client_ip)
         return await call_next(request)
@@ -456,7 +458,10 @@ async def stream_analysis(
             logger.info("Session %s completed with metrics %s", session.session_id, session.metrics)
         except asyncio.CancelledError:
             if session is not None:
-                await mark_stream_interrupted(session_mgr, session.session_id, started_at)
+                try:
+                    await mark_stream_interrupted(session_mgr, session.session_id, started_at)
+                except Exception:
+                    logger.exception("Failed to mark stream interrupted for session %s", session.session_id)
             raise
         except SessionConflictError:
             logger.warning("Concurrent update detected for session %s", session.session_id if session else "unknown")
@@ -595,6 +600,7 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
 
     async def event_generator() -> AsyncIterator[str]:
         started_at = monotonic()
+        chat_error_received = False
         try:
             chat_iter = agent.chat_stream(session, request.message).__aiter__()
             while True:
@@ -605,19 +611,31 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
                     continue
                 except StopAsyncIteration:
                     break
+                # 跟踪 error 事件：agent.chat_stream 吞掉异常并 yield error，
+                # 不走 except 分支，需要据此决定最终状态
+                if isinstance(event, dict) and event.get("type") == "error":
+                    chat_error_received = True
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
-            # Persist final state once the stream completes successfully
+            # 流结束：根据是否收到 error 事件决定最终状态
             async with session.lock:
-                session.status = "completed"
-                session.phase = "completed"
                 session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
+                if chat_error_received:
+                    session.status = "failed"
+                    session.phase = "failed"
+                    session.error_message = "Chat stream encountered an error"
+                else:
+                    session.status = "completed"
+                    session.phase = "completed"
                 await session_mgr.save(session)
         except asyncio.CancelledError:
             # 客户端断开连接（浏览器关闭/网络中断）：标记会话为中断，
             # 避免 session.status 永远卡在 "running" 且锁被持有
             logger.info("chat stream cancelled (client disconnect) for session %s", session.session_id)
-            await mark_stream_interrupted(session_mgr, session.session_id, started_at)
+            try:
+                await mark_stream_interrupted(session_mgr, session.session_id, started_at)
+            except Exception:
+                logger.exception("Failed to mark chat stream interrupted for session %s", session.session_id)
             raise
         except Exception as exc:  # noqa: BLE001 — surfaced to client via SSE
             logger.exception("chat stream failed for session %s", session.session_id)
@@ -778,6 +796,7 @@ async def export_session(session_id: str, manager: SessionMgr) -> JSONResponse:
             "tree": session.tree,
             "messages": session.messages,
             "files_read": session.files_read,
+            "file_cache": session.file_cache,
             "report": session.report.model_dump() if session.report else None,
             "display_title": session.display_title,
             "status": session.status,
@@ -788,6 +807,7 @@ async def export_session(session_id: str, manager: SessionMgr) -> JSONResponse:
             "updated_at": session.updated_at,
         },
         "events": events,
+        "pending_pr": session.pending_pr,
     }
     filename = f"session-{session_id}.json"
     return JSONResponse(
@@ -838,13 +858,16 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     new_session.tree = sess_data.get("tree", []) or []
     new_session.messages = sess_data.get("messages", []) or []
     new_session.files_read = sess_data.get("files_read", []) or []
+    raw_file_cache = sess_data.get("file_cache", {})
+    new_session.file_cache = raw_file_cache if isinstance(raw_file_cache, dict) else {}
     new_session.display_title = sess_data.get("display_title")
     raw_metrics = sess_data.get("metrics", {})
     new_session.metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
     new_session.error_message = sess_data.get("error_message")
-    # 状态：导入的会话标记为 completed（避免被 stale 恢复逻辑误判为 running）
+    # 状态：导入的会话标记为 completed（避免被 stale 恢复逻辑误判为 running），
+    # phase 与 status 保持一致，避免前端 UI 逻辑混乱
     new_session.status = "completed"
-    new_session.phase = sess_data.get("phase", "done") or "done"
+    new_session.phase = "completed"
 
     # 恢复 issue 对象
     issue_data = sess_data.get("issue")
@@ -869,10 +892,17 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     async with new_session.lock:
         await manager.save(new_session)
 
-    # 导入事件历史：校验每个事件的 type 字段，跳过无效项避免 KeyError 导致整个导入中途失败
+    # 恢复 pending_pr（导入后可继续 apply-fix）
+    pending_pr = body.get("pending_pr")
+    if isinstance(pending_pr, dict) and pending_pr:
+        await manager.save_pr_proposal(new_session.session_id, pending_pr)
+
+    # 导入事件历史：校验每个事件的 type 字段，跳过无效项避免 KeyError 导致整个导入中途失败。
+    # 限制事件数量防止恶意超大 payload 长时间阻塞写操作。
     events = body.get("events")
     if isinstance(events, list):
-        for event in events:
+        max_events = 5000
+        for event in events[:max_events]:
             if isinstance(event, dict) and event.get("type"):
                 await manager.append_event(new_session.session_id, event)
 

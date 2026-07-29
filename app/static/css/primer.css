@@ -4735,6 +4735,12 @@ body.modal-open {
   overflow: hidden;
 }
 
+/* 设置抽屉与命令面板打开时锁定 body 滚动 */
+body.drawer-open,
+body.palette-open {
+  overflow: hidden;
+}
+
 @media (max-width: 640px) {
   .report-chart-title {
     min-height: 40px;

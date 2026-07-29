@@ -247,7 +247,9 @@ class GitHubClient:
             await self._client.aclose()
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        # fork 共享父客户端的 httpx 连接池，不能关闭它
+        if self._close_on_exit:
+            await self._client.aclose()
 
     def fork(self) -> "GitHubClient":
         """Return a lightweight request view sharing transport and cache state.

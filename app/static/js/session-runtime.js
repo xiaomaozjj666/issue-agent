@@ -187,9 +187,11 @@
     const sessionId = window.IssueAgent.sessionId;
     if (!sessionId) return;
     const button = document.getElementById("cancel-analysis");
+    if (!button) return;
+    const progressEl = document.getElementById("progress");
     button.disabled = true;
     button.textContent = t("cancelling");
-    document.getElementById("progress").textContent = t("cancelling");
+    if (progressEl) progressEl.textContent = t("cancelling");
     try {
       await IA.apiJson(`/session/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
       button.style.display = "none";
@@ -197,7 +199,7 @@
     } catch (error) {
       button.disabled = false;
       button.textContent = t("cancel_button");
-      document.getElementById("progress").textContent = "";
+      if (progressEl) progressEl.textContent = "";
       if (window.IssueAgent.addMsg) window.IssueAgent.addMsg("error", error.message);
     }
   }
