@@ -215,7 +215,12 @@ class TaskQueue:
             task.error = str(exc)[:500]
             logger.exception("Batch task %s failed: %s", task.task_id, task.issue_url)
         finally:
-            await agent.aclose()
+            # aclose 可能抛 CancelledError（事件循环关闭期被取消），
+            # 用 try/except 包裹避免掩盖原异常；batch.status 计算必须执行
+            try:
+                await agent.aclose()
+            except Exception:
+                logger.exception("agent.aclose() failed during task cleanup")
             task.finished_at = monotonic()
             progress = batch.progress
             if progress["pending"] == 0 and progress["running"] == 0:

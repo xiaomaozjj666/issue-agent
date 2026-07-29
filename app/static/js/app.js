@@ -1884,6 +1884,10 @@
       try { scrollSpyObserver.disconnect(); } catch (e) { /* ignore */ }
       scrollSpyObserver = null;
     }
+    // 取消所有正在进行的 Counter 动画，避免操作已脱离文档的元素
+    if (IA.Motion && IA.Motion.cancelCounters) {
+      try { IA.Motion.cancelCounters(document.getElementById("report")); } catch (e) { /* ignore */ }
+    }
   }
 
   // 窗口尺寸变化时同步调整图表，避免溢出和留白
@@ -3716,12 +3720,17 @@
   document.addEventListener('issue-agent:report-theme', renderExportCharts);
   renderExportCharts();
 
-  // 窗口 resize 同步
+  // 窗口 resize 同步（120ms 防抖，与主应用一致）
+  var resizeTimer = null;
   window.addEventListener('resize', function(){
-    ['chart-diffstat','chart-verify'].forEach(function(id){
-      var el = document.getElementById(id);
-      if (el) { var inst = echarts.getInstanceByDom(el); if (inst) inst.resize(); }
-    });
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function(){
+      resizeTimer = null;
+      ['chart-diffstat','chart-verify'].forEach(function(id){
+        var el = document.getElementById(id);
+        if (el) { var inst = echarts.getInstanceByDom(el); if (inst) inst.resize(); }
+      });
+    }, 120);
   });
 
 })();

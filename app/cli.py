@@ -176,7 +176,7 @@ async def cmd_chat(url: str, save_patch: str | None = None) -> None:
 
 def main() -> None:
     setup_logging()
-    parser = argparse.ArgumentParser(description="GitHub Issue Agent — LLM-powered code investigation")
+    parser = argparse.ArgumentParser(description="GitHub Issue Agent — code investigation")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_analyze = sub.add_parser("analyze", help="One-shot issue analysis")

@@ -3115,9 +3115,9 @@ a:hover {
 }
 
 #issueUrl.drag-active {
-  border-color: var(--blue) !important;
-  box-shadow: 0 0 0 3px var(--blue-muted), var(--input-shadow) !important;
-  background: var(--blue-subtle);
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-muted), var(--input-shadow) !important;
+  background: var(--accent-subtle);
 }
 
 @keyframes invalid-shake {
@@ -5991,6 +5991,29 @@ body.modal-open {
 
 .report-metric-card {
   transform-style: flat;
+}
+
+/* 主题切换平滑过渡：motion.js 在 body 上加 .theme-transitioning 类，
+   CSS 对关键元素统一加颜色过渡，避免 JS 遍历 DOM 的性能开销 */
+.theme-transitioning,
+.theme-transitioning .report-metric-card,
+.theme-transitioning .evidence-item,
+.theme-transitioning .change-item,
+.theme-transitioning .risk-item,
+.theme-transitioning .session-row,
+.theme-transitioning .msg,
+.theme-transitioning #sidebar,
+.theme-transitioning #report-panel,
+.theme-transitioning input,
+.theme-transitioning button {
+  transition: background-color 350ms ease, border-color 350ms ease, color 350ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-transitioning,
+  .theme-transitioning * {
+    transition: none !important;
+  }
 }
 
 /* prefers-reduced-motion：禁用所有 motion.js 动效，
