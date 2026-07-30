@@ -166,7 +166,7 @@
     capability_unavailable: "Not saved",
     capability_timeline_missing: "This historical session has no replayable investigation events.",
     capability_evidence_missing: "The report has no citation-checked code evidence.",
-    capability_reproduction_missing: "The report has no verified reproduction steps.",
+    capability_reproduction_missing: "No runtime reproduction path included; verify conclusions against your environment.",
     capability_patch_missing: "This investigation produced a diagnosis without a code patch.",
     capability_review_missing: "The report has no usable independent review result.",
     view_source: "View source",
