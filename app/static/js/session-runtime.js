@@ -113,6 +113,10 @@
     card.className = "msg assistant investigation-timeline historical-summary";
     const evidenceCount = (report.evidence || []).length;
     const review = report.review_audit || { status: "not_run" };
+    const rep = report.reproduction || {};
+    const hasReproduction = Boolean(
+      (rep.steps && rep.steps.length) || rep.observed || rep.expected
+    );
     const steps = [
       t("historical_summary_report_saved"),
       t("historical_summary_evidence", { count: evidenceCount }),
@@ -120,6 +124,9 @@
         ? t("historical_summary_review_missing")
         : t("review_progress", { status: IA.enumLabel("review_status", review.status) }),
       report.patch ? t("historical_summary_patch_available") : t("historical_summary_patch_missing"),
+      hasReproduction
+        ? t("historical_summary_reproduction_available")
+        : t("historical_summary_reproduction_missing"),
     ];
     card.innerHTML =
       `<div class="timeline-header"><span class="timeline-title">${IA.escapeHtml(t("historical_summary_title"))}</span></div>` +
