@@ -15,6 +15,13 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
+# Guard for one-shot migrations that should run exactly once per process lifetime,
+# not per connection in the pool.  _migrate_report_enrichment does a full-table
+# scan over every session with a report; running it pool_size times on cold start
+# is wasteful and adds startup latency.
+_enrichment_migration_done = False
+_enrichment_migration_lock = asyncio.Lock()
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     session_id   TEXT PRIMARY KEY,
@@ -76,7 +83,7 @@ async def get_db(path: str) -> aiosqlite.Connection:
     await conn.execute("PRAGMA foreign_keys=ON")
     await conn.executescript(SCHEMA)
     await _migrate_sessions(conn)
-    await _migrate_report_enrichment(conn)
+    await _migrate_report_enrichment_once(conn)
     await _ensure_performance_indexes(conn)
     await conn.commit()
     return conn
@@ -142,6 +149,24 @@ async def _migrate_report_enrichment(conn: aiosqlite.Connection) -> None:
                 "UPDATE sessions SET report_json = ? WHERE session_id = ?",
                 (new_rj, sid),
             )
+
+
+async def _migrate_report_enrichment_once(conn: aiosqlite.Connection) -> None:
+    """Run _migrate_report_enrichment at most once per process lifetime.
+
+    The full-table scan is expensive and was previously called once per pooled
+    connection (pool size 5 => 5 redundant scans on cold start).  This wrapper
+    gates execution behind a module-level flag so the backfill runs only on the
+    first connection to open.
+    """
+    global _enrichment_migration_done
+    if _enrichment_migration_done:
+        return
+    async with _enrichment_migration_lock:
+        if _enrichment_migration_done:
+            return
+        await _migrate_report_enrichment(conn)
+        _enrichment_migration_done = True
 
 
 class ConnectionPool:

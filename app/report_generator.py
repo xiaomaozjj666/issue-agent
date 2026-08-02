@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from time import monotonic
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -56,14 +58,25 @@ class ReportGenerator:
         messages: list[dict],
         executor: ToolExecutor,
         metrics: dict | None = None,
+        *,
+        deadline: float | None = None,
     ) -> AsyncGenerator[AgentEvent | AnalysisReport, None]:
-        """流式生成报告，实时 yield reasoning_event 让用户看到思考过程。"""
+        """Stream report generation, yielding reasoning events for real-time display.
+
+        If *deadline* is set (monotonic timestamp), a ``TimeoutError`` is raised
+        before any retry attempt whose start would exceed it, preventing the
+        report phase from running unbounded after the exploration timeout.
+        """
         base_messages = self._build_report_messages(messages, executor)
 
         last_raw_content = ""
         last_failure_reason = ""
         total_attempts = max(self._settings.max_report_retries, 1)
         for attempt in range(total_attempts):
+            if deadline is not None and monotonic() > deadline:
+                raise asyncio.TimeoutError(
+                    f"Report generation exceeded process deadline at {deadline - monotonic():.1f}s remaining"
+                )
             record_model_request(metrics, "report", retry=attempt > 0)
             plan = build_attempt_plan(
                 self._settings,
@@ -163,14 +176,15 @@ class ReportGenerator:
         raise ModelResponseError("The model returned an invalid analysis report")
 
     async def generate(
-        self, messages: list[dict], executor: ToolExecutor, metrics: dict | None = None
+        self, messages: list[dict], executor: ToolExecutor, metrics: dict | None = None,
+        *, deadline: float | None = None,
     ) -> AnalysisReport:
         """非流式包装器：消费所有 reasoning 事件并返回最终报告。
 
         供 CLI 和不需要实时 reasoning 的调用方使用。
         """
         report: AnalysisReport | None = None
-        async for item in self.generate_stream(messages, executor, metrics):
+        async for item in self.generate_stream(messages, executor, metrics, deadline=deadline):
             if isinstance(item, AnalysisReport):
                 report = item
         if report is None:

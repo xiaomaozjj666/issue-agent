@@ -206,21 +206,21 @@ class SqliteStore:
     async def save(self, session: Session) -> None:
         session.updated_at = _now()
         async with self._conn() as db:
-            # 合并 DB 中最新的 metrics（可能被 update_metrics 实时更新过），
-            # 避免内存中的旧 metrics 覆盖工具调用期间写入的实时指标。
-            row = await (
-                await db.execute("SELECT metrics_json FROM sessions WHERE session_id=?", (session.session_id,))
-            ).fetchone()
+            # Merge DB metrics into memory: update_metrics writes directly to DB
+            # bypassing save(), so DB may hold keys the in-memory session lacks.
+            row = await (await db.execute(
+                "SELECT metrics_json FROM sessions WHERE session_id=?",
+                (session.session_id,),
+            )).fetchone()
             if row and row["metrics_json"]:
                 try:
                     db_metrics = json.loads(row["metrics_json"])
-                    # 内存值优先：save 前刚设置的 duration_ms 等指标不会被 DB 旧值覆盖。
-                    # update_metrics 传入的就是 session.metrics，DB 与内存已同步，
-                    # 内存没有的 key（理论上不存在）由 DB 补充。
+                    # DB supplements missing keys; memory overwrites existing
                     merged = {**db_metrics, **session.metrics}
                     session.metrics = merged
                 except (json.JSONDecodeError, TypeError):
-                    pass  # DB metrics 损坏时保留内存值
+                    pass
+
             cursor = await db.execute(
                 """UPDATE sessions SET issue_json=?, tree_json=?, messages_json=?, file_cache_json=?,
                    files_read_json=?, report_json=?, display_title=?, status=?, phase=?, metrics_json=?,
