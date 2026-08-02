@@ -50,25 +50,29 @@ async def test_save_metrics_memory_takes_precedence_over_db(tmp_path) -> None:
 
 
 async def test_save_metrics_db_supplements_missing_keys(tmp_path) -> None:
-    """DB 中存在但内存中缺失的 key 应由 DB 补充。"""
+    """save() writes metrics from memory directly — DB values no longer supplement memory.
+
+    Session.metrics is always the authoritative source; update_metrics syncs it to DB
+    synchronously.  The pre-SELECT + merge was removed to avoid a read-before-every-write
+    pattern that added latency on every save() call during streaming.
+    """
     manager = SessionManager(db_path=str(tmp_path / "metrics2.db"))
     session = await manager.create("https://github.com/a/b/issues/1")
     await manager.save(session)
 
     await manager.update_metrics(session.session_id, {"tool_calls": 5})
 
-    # 重新加载 session（内存 metrics 只有部分 key）
+    # 重新加载 session — metrics 完整加载
     reloaded = await manager.get(session.session_id)
     assert reloaded is not None
+    # 不 pop tool_calls：内存 metrics 是完整快照，save() 直接写入
     reloaded.metrics["duration_ms"] = 999
-    # tool_calls 不在内存中（模拟仅设置了 duration_ms）
-    reloaded.metrics.pop("tool_calls", None)
     await manager.save(reloaded)
 
     final = await manager.get(reloaded.session_id)
     assert final is not None
     assert final.metrics["duration_ms"] == 999
-    assert final.metrics["tool_calls"] == 5, "DB 中的 tool_calls 应补充到内存"
+    assert final.metrics["tool_calls"] == 5, "metrics 从 DB 完整加载后保持不变"
     await manager.close()
 
 

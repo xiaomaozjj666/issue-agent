@@ -99,6 +99,14 @@ def event_payload(event: AgentEvent) -> dict:
     return {"type": event.type, "data": event.data, "message": event.message}
 
 
+# Transient event types that should NOT be persisted to the event log.
+# These fire at per-token frequency during streaming (thinking/reasoning deltas)
+# and would generate thousands of individual SQLite INSERT+commit operations,
+# severely throttling the LLM stream. They are surfaced via SSE to the frontend
+# but have no replay value after the session ends.
+_TRANSIENT_EVENT_TYPES: frozenset[str] = frozenset({"thinking", "reasoning"})
+
+
 async def record_agent_event(
     manager: SessionManager,
     session: Session,
@@ -107,13 +115,13 @@ async def record_agent_event(
 ) -> None:
     """Append an agent event to the durable event log.
 
-    Only persists the event record; session state (phase/metrics) is updated
-    in-memory but NOT written to the database on every call.  This reduces
-    SQLite write amplification significantly during streaming.  The caller
-    is responsible for calling ``manager.save(session)`` at key checkpoints
-    (e.g. phase transitions, completion).
+    Transient events (thinking/reasoning deltas) are skipped — they fire at
+    per-token frequency and provide no replay value.  The caller is responsible
+    for calling ``manager.save(session)`` at key checkpoints (phase transitions,
+    completion).
     """
-    await manager.append_event(session.session_id, event_payload(event))
+    if event.type not in _TRANSIENT_EVENT_TYPES:
+        await manager.append_event(session.session_id, event_payload(event))
     if event.type == "phase" and event.data:
         session.phase = str(event.data.get("phase", session.phase))
     session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
