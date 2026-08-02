@@ -115,6 +115,7 @@ class IssueAgent:
         """
         owner, repo, number = parse_issue_url(issue_url)
         investigation_start = monotonic()
+        deadline = investigation_start + self.settings.investigation_timeout
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
         if session is not None:
             session.metrics = {
@@ -188,7 +189,7 @@ class IssueAgent:
             for iteration in range(self.settings.max_agent_iterations):
                 # L3：调查总时长上限检测，在每轮迭代前检查，超时即抛出
                 # 避免模型反复调用工具陷入死循环，耗尽 API 额度
-                if monotonic() - investigation_start > self.settings.investigation_timeout:
+                if monotonic() > deadline:
                     raise TimeoutError(
                         f"Investigation exceeded {self.settings.investigation_timeout:.0f}s total timeout"
                     )
@@ -277,6 +278,7 @@ class IssueAgent:
                 messages,
                 executor,
                 session.metrics if session is not None else None,
+                deadline=deadline,
             ):
                 if isinstance(item, AgentEvent):
                     yield item
@@ -299,6 +301,7 @@ class IssueAgent:
                         files_read=executor.files_read,
                         line_counts=executor.line_counts,
                         metrics=session.metrics if session is not None else None,
+                        deadline=deadline,
                     )
                     report = outcome.report
                 except Exception:
@@ -438,6 +441,36 @@ class IssueAgent:
         )
         _trim_session_messages(session.messages, max(history_budget, 0))
 
+    async def _chat_execute_tools(
+        self,
+        executor: ToolExecutor,
+        session: Session,
+        tool_specs: list[tuple[str, str, dict]],  # (call_id, name, args)
+        messages: list[dict],
+    ) -> tuple[list[str], int]:
+        """Execute parsed tool calls, update session metrics, append results.
+
+        Shared between ``_chat`` and ``_chat_stream`` to eliminate the duplicated
+        execute → metrics → append loop.  Returns (results, duplicate_count).
+        """
+        results, duplicate_count = await executor.execute_many(
+            [(name, args) for _id, name, args in tool_specs],
+            timeout=self.settings.tool_timeout,
+        )
+        if duplicate_count:
+            session.metrics["duplicate_tool_calls"] = int(
+                session.metrics.get("duplicate_tool_calls", 0)
+            ) + duplicate_count
+        for (tc_id, _name, _args), result in zip(tool_specs, results, strict=True):
+            session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
+            session.metrics["files_read"] = len(executor.files_read)
+            if executor.pr_proposal is not None:
+                session.pending_pr = executor.pr_proposal
+            tool_msg = {"role": "tool", "tool_call_id": tc_id, "content": result}
+            messages.append(tool_msg)
+            session.messages.append(tool_msg)
+        return results, duplicate_count
+
     async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
         tools = get_tool_definitions(self.settings)
         github, executor, messages = await self._chat_prepare(session, message)
@@ -523,7 +556,7 @@ class IssueAgent:
                     return
 
                 # 有工具调用：先发出调用事件，再批量执行独立只读工具。
-                parsed_calls: list[tuple[dict[str, str], str, dict]] = []
+                tool_specs: list[tuple[str, str, dict]] = []  # (call_id, name, args)
                 for entry in ordered_tool_calls:
                     name = entry["name"]
                     try:
@@ -531,27 +564,13 @@ class IssueAgent:
                     except json.JSONDecodeError:
                         args = {}
                     yield {"type": "tool_call", "name": name, "args": args}
-                    parsed_calls.append((entry, name, args))
+                    tool_specs.append((entry["id"], name, args))
 
-                results, duplicate_count = await executor.execute_many(
-                    [(name, args) for _entry, name, args in parsed_calls],
-                    timeout=self.settings.tool_timeout,
+                results, _duplicate = await self._chat_execute_tools(
+                    executor, session, tool_specs, messages
                 )
-                if duplicate_count:
-                    session.metrics["duplicate_tool_calls"] = int(
-                        session.metrics.get("duplicate_tool_calls", 0)
-                    ) + duplicate_count
-
-                for (entry, name, _args), result in zip(parsed_calls, results, strict=True):
-                    session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
-                    session.metrics["files_read"] = len(executor.files_read)
-                    if executor.pr_proposal is not None:
-                        session.pending_pr = executor.pr_proposal
-                    # 工具结果事件：让前端展示调用参数与结果摘要
+                for (tc_id, name, _args), result in zip(tool_specs, results, strict=True):
                     yield {"type": "tool_result", "name": name, "preview": result[:1200]}
-                    tool_msg = {"role": "tool", "tool_call_id": entry["id"], "content": result}
-                    messages.append(tool_msg)
-                    session.messages.append(tool_msg)
 
             # 达到迭代上限：追加一条 assistant 消息收尾，
             # 避免上下文以未完成的 tool_call 结尾导致下次 API 报错
@@ -592,23 +611,8 @@ class IssueAgent:
                         tools_used=executor.tools_used,
                     )
 
-                parsed_calls = [(tc, *parse_tool_call(tc)) for tc in msg.tool_calls]
-                results, duplicate_count = await executor.execute_many(
-                    [(name, args) for _tc, name, args in parsed_calls],
-                    timeout=self.settings.tool_timeout,
-                )
-                if duplicate_count:
-                    session.metrics["duplicate_tool_calls"] = int(
-                        session.metrics.get("duplicate_tool_calls", 0)
-                    ) + duplicate_count
-                for (tc, _name, _args), result in zip(parsed_calls, results, strict=True):
-                    session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
-                    session.metrics["files_read"] = len(executor.files_read)
-                    if executor.pr_proposal is not None:
-                        session.pending_pr = executor.pr_proposal
-                    tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": result}
-                    messages.append(tool_msg)
-                    session.messages.append(tool_msg)
+                tool_specs = [(tc.id, *parse_tool_call(tc)) for tc in msg.tool_calls]
+                await self._chat_execute_tools(executor, session, tool_specs, messages)
           except Exception:
             self._chat_finalize(executor, session)
             raise
