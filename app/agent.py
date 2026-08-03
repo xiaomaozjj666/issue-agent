@@ -1,4 +1,4 @@
-"""Core investigation agent: orchestrates LLM tool-calling loop and report generation.
+"""Issue 调查 agent，调用 LLM 工具链，生成排查报告。
 
 Architecture:
 - ``IssueAgent`` owns the OpenAI client lifecycle and delegates report
@@ -707,10 +707,9 @@ class IssueAgent:
     ):
         """Stream chat completion chunks from the model.
 
-        Returns an async iterable of ``ChatCompletionChunk``. The caller is
-        responsible for accumulating ``delta.content`` and ``delta.tool_calls``
-        fragments; reasoning_content is intentionally ignored (not surfaced to
-        the end user).
+        Returns an async iterable of ``ChatCompletionChunk``. Caller
+        accumulates ``delta.content`` and ``delta.tool_calls``
+        fragments; reasoning_content is ignored (not shown to user).
         """
         client = self._get_client()
         kwargs: dict = {

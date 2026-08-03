@@ -221,7 +221,7 @@ class GitHubClient:
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             # GitHub API returns 301 for case-mismatched owner/repo (e.g.
             # httpie/httpie -> HTTPie/httpie). Follow redirects so callers
-            # always see the canonical 200 response, not a 3xx body that
+            # always see the real 200 response, not a 3xx body that
             # would break .json() parsing.
             follow_redirects=True,
         )

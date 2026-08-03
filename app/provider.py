@@ -1,4 +1,4 @@
-"""Provider-specific request options and streaming helpers for OpenAI-compatible chat APIs."""
+"""各 provider 的请求选项和流式处理，兼容 OpenAI chat API。"""
 
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
