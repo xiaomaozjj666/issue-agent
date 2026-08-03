@@ -18,7 +18,6 @@ dist/
 reports/
 data/
 .qoder/
-.workbuddy/
 *.tmp_*.json
 _ui_charts_*.png
 .coverage
