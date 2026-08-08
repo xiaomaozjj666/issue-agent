@@ -569,7 +569,7 @@ class IssueAgent:
                 results, _duplicate = await self._chat_execute_tools(
                     executor, session, tool_specs, messages
                 )
-                for (tc_id, name, _args), result in zip(tool_specs, results, strict=True):
+                for (_tc_id, name, _args), result in zip(tool_specs, results, strict=True):
                     yield {"type": "tool_result", "name": name, "preview": result[:1200]}
 
             # 达到迭代上限：追加一条 assistant 消息收尾，

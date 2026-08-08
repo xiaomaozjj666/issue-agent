@@ -4,7 +4,6 @@
 messages 由 reviewer 自行构造（需额外附加 assistant 消息承认上次输出 + user 反馈）。
 """
 
-import asyncio
 import json
 import logging
 from time import monotonic
@@ -81,7 +80,7 @@ class ReviewerAgent:
 
         for attempt in range(total_attempts):
             if deadline is not None and monotonic() > deadline:
-                raise asyncio.TimeoutError(
+                raise TimeoutError(
                     f"Review exceeded process deadline at {deadline - monotonic():.1f}s remaining"
                 )
             record_model_request(metrics, "review", retry=attempt > 0)

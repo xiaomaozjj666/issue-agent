@@ -1,6 +1,6 @@
 """多级重试策略：报告生成和审查共用同一套 thinking 降级机制。
 
-策略（参考 DeepSeek TUI、Claude Code 的 reasoning_effort 处理）：
+策略（参考主流 reasoning 模型的 thinking 降级处理）：
 - 第 1 次：沿用配置的 thinking 模式（reasoning_effort=high）
 - 中间几次：保留 thinking，附加错误反馈让模型纠正格式
 - 最后一次：降级 thinking disabled，全部 token 预算给 content 保底
