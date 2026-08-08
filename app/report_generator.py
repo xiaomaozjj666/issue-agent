@@ -6,7 +6,7 @@
 - _generate_report: 非流式兼容包装器（供 CLI 和测试使用）
 - _append_report_retry_feedback: 重试时附加错误反馈
 
-参考业界实践（Claude Code、DeepSeek TUI、OpenAI o3 reasoning_effort）：
+参考主流 reasoning 模型的业界实践：
 - 流式输出 reasoning_content，避免长时间黑盒等待
 - 多级重试：第 1 次 thinking enabled + reasoning_effort high，
   中间次 thinking enabled + 错误反馈，最后一次 thinking disabled 保底
@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from time import monotonic
@@ -74,7 +73,7 @@ class ReportGenerator:
         total_attempts = max(self._settings.max_report_retries, 1)
         for attempt in range(total_attempts):
             if deadline is not None and monotonic() > deadline:
-                raise asyncio.TimeoutError(
+                raise TimeoutError(
                     f"Report generation exceeded process deadline at {deadline - monotonic():.1f}s remaining"
                 )
             record_model_request(metrics, "report", retry=attempt > 0)
