@@ -7,7 +7,8 @@ module.exports = defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // 始终单 worker：多个 worker 共享同一 webServer + :memory: SQLite 会互相干扰（会话/图表状态串扰）。
+  workers: 1,
   reporter: process.env.CI ? [["line"], ["html", { open: "never" }]] : "line",
   use: {
     baseURL: "http://127.0.0.1:18765",
