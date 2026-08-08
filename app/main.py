@@ -228,18 +228,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Health check is unauthenticated and low-cost — skip
-        if request.url.path == "/health":
+        path = request.url.path
+        # 健康检查、静态资源与 favicon 不消耗 LLM 额度，豁免限流；
+        # 否则单次页面加载（HTML+JS/CSS/图表）即消耗约 11 次配额，UI 一刷新就被 429。
+        if path == "/health" or path.startswith("/static") or path == "/favicon.ico":
             return await call_next(request)
         settings = get_settings()
         api_key = request.headers.get("X-API-Key", "")
-        # API_KEY 已配置时按 header 值限流；未配置时 X-API-Key 无认证意义，
-        # 攻击者可每次换一个随机值绕过限流，因此始终用客户端 IP 兜底
-        if settings.api_key and api_key:
-            await _check_rate_limit(api_key)
-        else:
-            client_ip = request.client.host if request.client else "unknown"
-            await _check_rate_limit(client_ip)
+        try:
+            # API_KEY 已配置时按 header 值限流；未配置时 X-API-Key 无认证意义，
+            # 攻击者可每次换一个随机值绕过限流，因此始终用客户端 IP 兜底
+            if settings.api_key and api_key:
+                await _check_rate_limit(api_key)
+            else:
+                client_ip = request.client.host if request.client else "unknown"
+                await _check_rate_limit(client_ip)
+        except HTTPException as exc:
+            # BaseHTTPMiddleware.dispatch 内抛异常会被 ASGI TaskGroup 包装成未处理
+            # 异常组 → 浏览器收到 500 而非 429（前端 JS 加载失败）。这里自行构造响应。
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers=exc.headers,
+            )
         return await call_next(request)
 
 
