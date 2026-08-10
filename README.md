@@ -21,6 +21,10 @@ Every requested file is normalized and validated against the repository tree bef
 - 💬 **Interactive chat** — follow-up conversations with session persistence
 - 🗂️ **Session workspace** — searchable history with durable investigation events, metrics, cancellation, and recovery
 - ⚡ **Concurrency safety** — optimistic session versions prevent silent cross-worker overwrite
+- 🔁 **Circuit breaker** — fast-fail LLM calls after repeated provider failures, so the app keeps responding during outages
+- 🚦 **Rate limiting** — per-API-key sliding-window limiter (falls back to client IP) with health checks and static assets exempt
+- ⚙️ **Batch analysis** — queue multiple issue investigations on a background async task queue and poll progress
+- 💾 **Session export/import** — download any session as JSON and restore it into a new session
 - 🖥️ **Dual interface** — REST API (FastAPI) + CLI
 - 🐳 **Docker support** — ready-to-use Dockerfile
 
@@ -34,6 +38,9 @@ Every requested file is normalized and validated against the repository tree bef
 - Treats Issue text and repository content as untrusted prompt data.
 - Limits candidate files and total model context.
 - Limits model output with `MAX_OUTPUT_TOKENS` (8,000 by default).
+- Rate-limits requests with a per-API-key sliding window (`RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS`,
+  30 requests per 60 s by default); falls back to the client IP when no `API_KEY` is configured. Health checks
+  and static assets are exempt so the web UI keeps loading under bursts.
 - Bounds the planning path index and planning output independently.
 - Serializes requests within each session and bounds retained source and chat context.
 - Supplies numbered source lines and removes evidence with unknown paths, malformed ranges, or lines
@@ -134,6 +141,8 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
 | `MAX_PARALLEL_TOOL_CALLS` | `4` | Maximum independent read-only tools executed concurrently |
 | `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | Stop exploration after this many exact-repeat tool rounds |
+| `TOOL_TIMEOUT` | `60` | Per-tool execution timeout in seconds |
+| `INVESTIGATION_TIMEOUT` | `600` | Max wall-clock seconds for a single investigation |
 | `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | Bounded search, history, branch, and tool findings retained for report synthesis |
 | `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
 | `INDEPENDENT_REVIEW` | `true` | Run the independent reviewer before publishing the final report |
@@ -149,9 +158,14 @@ pull-request write permissions when enabling `WRITE_MODE`.
 | `SESSION_RETENTION_DAYS` | `30` | Auto-purge completed/failed/cancelled sessions older than this on startup |
 | `MAX_PR_FILES` | `20` | Maximum number of files allowed in one PR proposal |
 | `MAX_PR_TOTAL_BYTES` | `1000000` | Maximum combined UTF-8 size of proposed file contents |
+| `MAX_SESSION_IMPORT_BYTES` | `5242880` | Maximum size of an imported session JSON payload |
 | `BATCH_MAX_CONCURRENT` | `2` | Number of batch investigation workers |
 | `BATCH_MAX_QUEUE_SIZE` | `100` | Maximum pending batch tasks |
 | `BATCH_MAX_HISTORY` | `100` | Maximum completed batch records retained in memory |
+| `CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive provider failures that trip the circuit breaker |
+| `CIRCUIT_BREAKER_RECOVERY` | `30` | Seconds to wait before probing a half-open circuit |
+| `RATE_LIMIT_REQUESTS` | `30` | Maximum requests per rate-limit window per key |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding rate-limit window length in seconds |
 
 ### CLI Usage
 
@@ -245,7 +259,16 @@ SSE events: `delta` (content chunk), `tool_call` / `tool_result` (tool activity)
 
 ### `GET /health`
 
-Returns `{"status": "ok"}`.
+Returns `{"status": "ok", "app": "issue-agent", "build_id": "..."}`.
+
+### `GET /i18n`
+
+Returns the frontend string dictionary for a language, used by the web UI to switch language
+without a reload. Accepts a `lang` query parameter (`zh` or `en`):
+
+```text
+GET /i18n?lang=en
+```
 
 ### Session history
 
@@ -256,6 +279,27 @@ Returns `{"status": "ok"}`.
 - `POST /session/{session_id}/cancel` requests cancellation of a running investigation.
 - `GET /session/{session_id}/proposal` returns a safe PR proposal preview without file contents.
 - `DELETE /session/{session_id}` permanently deletes a session.
+- `GET /session/{session_id}/export` downloads the full session (messages, report, events, metrics, pending PR) as a JSON file.
+- `POST /session/import` restores an exported session JSON into a new session with a fresh session id.
+
+### Batch analysis
+
+`POST /batch` submits multiple issue URLs to an in-process async task queue; workers run
+investigations in the background and results are polled:
+
+```json
+{
+  "issue_urls": [
+    "https://github.com/owner/repo/issues/123",
+    "https://github.com/owner/repo/issues/456"
+  ]
+}
+```
+
+Returns a `batch_id` with per-task status. Poll progress with `GET /batch/{batch_id}`; a batch
+finishes as `completed` when every task succeeds, or `partial` when some tasks failed or were
+cancelled. Queue capacity is bounded by `BATCH_MAX_QUEUE_SIZE` and concurrency by
+`BATCH_MAX_CONCURRENT`.
 
 ### `POST /session/{session_id}/apply-fix` (write mode)
 
