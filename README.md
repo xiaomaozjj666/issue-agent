@@ -1,73 +1,84 @@
 # GitHub Issue Agent
 
-[![CI](https://github.com/xiaomaozjj666/issue-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaomaozjj666/issue-agent/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+一个默认只读的 GitHub Issue 分析智能体：抓取 Issue、自主探索仓库源码、调用 OpenAI 兼容模型，输出带行级证据的结构化根因分析与修复建议报告。适合需要自动化定位 Issue 根因、生成修复补丁的开发者、开源维护者与团队。
 
-A read-only-by-default FastAPI agent that fetches a GitHub Issue, selects relevant repository source
-files, and asks an OpenAI-compatible model for a structured root-cause and fix report. An opt-in write
-mode can prepare pull request proposals, which require a separate explicit confirmation before creation.
+## 功能特性
 
-Unlike a one-shot repository prompt, analysis uses a bounded tool-calling loop. The model explores a
-real repository path index, reads selected source excerpts, and then produces a line-grounded report.
-Every requested file is normalized and validated against the repository tree before it is fetched.
+- 🔍 **有界工具调用循环** — 模型在受限循环中自主探索：目录树浏览、全仓库代码搜索、按行号读取源码、Git 提交历史、分支列表、指定提交下的文件快照；支持并行执行独立只读工具并自动去重重复调用
+- 🛡️ **证据审计** — 确定性交叉核验模型结论与实际读取的文件与行号，无有效证据支撑的根因强制 `confidence: low`
+- 🧭 **独立评审** — 独立的评审 Agent 基于原始源码证据挑战根因、备选假设、修复与测试建议，输出再次校验，评审服务不可用时安全降级
+- 📊 **结构化报告** — JSON 输出：摘要、根因（完整因果链）、代码证据（路径 + 行号 + 理由 + 强度）、置信度、修复建议、统一 diff 补丁、建议测试、风险，以及备选假设、影响面、复现路径等增强字段
+- 💬 **交互式聊天** — 调查后继续追问，可调用工具，支持 `/regenerate` 重新生成回答
+- 🗂️ **会话工作区** — SQLite 持久化，可搜索、归档、恢复、取消、删除；导出 / 导入完整会话 JSON 用于跨实例备份迁移
+- ⚡ **并发安全** — 会话版本号乐观锁，防止多 worker / 多进程静默覆盖
+- 🔁 **熔断器** — LLM 供应商连续失败后快速失败，应用在故障期间仍能响应
+- 🚦 **限流** — 按 API key 的滑动窗口限流（未配置时按客户端 IP 兜底），健康检查与静态资源豁免
+- ⚙️ **批量分析** — 一次提交多个 Issue 到进程内异步任务队列后台分析，轮询进度
+- 💾 **会话导出 / 导入** — 任意会话可下载为 JSON，导入后生成全新会话继续使用
+- 🖥️ **双接口** — FastAPI REST API + Rich 终端 CLI + 内嵌 Web UI（带图表）
+- 🐳 **Docker 支持** — 现成 Dockerfile，非 root 用户运行，含健康检查
 
-## Features
+## 安全模型
 
-- 🔍 **Tool-calling loop** — explores paths, repository-wide code search, source files, and Git history with bounded tools
-- 🛡️ **Evidence audit** — cross-checks model claims against actually-read files, forces `confidence: low` when unsupported
-- 🧭 **Independent review** — a separate reviewer agent challenges the root cause, alternatives, fix status, and tests
-- 📊 **Structured reports** — JSON output with summary, root cause, code evidence, proposed changes, unified diff patches, tests, and risks
-- 💬 **Interactive chat** — follow-up conversations with session persistence
-- 🗂️ **Session workspace** — searchable history with durable investigation events, metrics, cancellation, and recovery
-- ⚡ **Concurrency safety** — optimistic session versions prevent silent cross-worker overwrite
-- 🔁 **Circuit breaker** — fast-fail LLM calls after repeated provider failures, so the app keeps responding during outages
-- 🚦 **Rate limiting** — per-API-key sliding-window limiter (falls back to client IP) with health checks and static assets exempt
-- ⚙️ **Batch analysis** — queue multiple issue investigations on a background async task queue and poll progress
-- 💾 **Session export/import** — download any session as JSON and restore it into a new session
-- 🖥️ **Dual interface** — REST API (FastAPI) + CLI
-- 🐳 **Docker support** — ready-to-use Dockerfile
+- 仅接受 `https://github.com/{owner}/{repo}/issues/{number}` 形式的 URL
+- 默认使用只读 GitHub REST API 端点，绝不执行仓库代码
+- 仓库写入只发生在 `POST /session/{session_id}/apply-fix`，且同时满足：`WRITE_MODE=true`、存在校验通过的存储提案、请求带显式 `confirm=true`
+- 创建 PR 前会基于仓库默认分支重新校验提案；写入中途失败会回滚临时分支
+- 将 Issue 文本与仓库内容视为不可信提示数据，注入其中的指令不会被遵循
+- 限制候选文件数、模型上下文与输出 token（默认 8000）
+- 提供带行号的源码片段，删除未知路径、格式错误或超出所给范围的证据
+- 独立评审输出再次经证据校验，评审不可用时安全降级为调查报告
 
-## Safety model
+## 技术栈
 
-- Only accepts `https://github.com/{owner}/{repo}/issues/{number}` URLs.
-- Uses read-only GitHub REST API endpoints by default and never executes repository code.
-- Repository writes happen only through `POST /session/{session_id}/apply-fix`, which requires `WRITE_MODE=true`, a validated
-  stored proposal, and a separate explicit `confirm=true` request.
-- PR proposals are revalidated before writing; incomplete write flows attempt to roll back their temporary branch.
-- Treats Issue text and repository content as untrusted prompt data.
-- Limits candidate files and total model context.
-- Limits model output with `MAX_OUTPUT_TOKENS` (8,000 by default).
-- Rate-limits requests with a per-API-key sliding window (`RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS`,
-  30 requests per 60 s by default); falls back to the client IP when no `API_KEY` is configured. Health checks
-  and static assets are exempt so the web UI keeps loading under bursts.
-- Bounds the planning path index and planning output independently.
-- Serializes requests within each session and bounds retained source and chat context.
-- Supplies numbered source lines and removes evidence with unknown paths, malformed ranges, or lines
-  outside the exact source excerpt given to the model.
-- Returns an evidence audit and forces confidence to `low` when no valid source reference supports the
-  reported root cause.
-- Runs a bounded independent reviewer after deterministic evidence validation; reviewer output is validated again
-  and safely degrades to the investigator report if the review provider is unavailable.
+| 层 | 技术 |
+|---|---|
+| 语言 | Python 3.11+ |
+| Web 框架 | FastAPI + Uvicorn |
+| LLM 接入 | OpenAI Python SDK（OpenAI 兼容接口，默认 DeepSeek） |
+| HTTP 客户端 | httpx（连接池 + 指数退避重试） |
+| 存储 | aiosqlite（SQLite，异步连接池 + 乐观锁） |
+| 配置 | pydantic-settings（环境变量 / .env，frozen 单例） |
+| 前端 | 原生 JavaScript + Primer CSS（无构建步骤）+ ECharts 图表 + DOMPurify/Marked 渲染 |
+| CLI | Rich |
+| 测试 | pytest + pytest-asyncio + pytest-cov + Playwright (E2E) |
+| 质量 | ruff（lint）+ mypy（类型检查）+ pip-audit（依赖漏洞扫描） |
 
-## Quick Start
+## 快速开始
 
-### Windows one-click launcher
+### 本地安装
 
-After completing Local Setup once, open the project folder and double-click:
+需要 Python 3.11 或更高版本。
 
-```text
-打开 Issue Agent.cmd
+**Windows（PowerShell）**
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[dev]"
+Copy-Item .env.example .env
 ```
 
-The launcher checks the local environment, starts the service, and opens the browser automatically.
-The launcher prefers the stable Issue Agent port `9123`, then falls back through `9124 → 9125` (it verifies each
-candidate is actually this app via the `/health` endpoint before reuse), so the visible URL may
-differ across machines. Keep the launcher terminal window open while using the agent; press `Ctrl+C`
-in that window to stop it. If the service is already running, the launcher only opens the existing
-page instead of starting a duplicate process. After updating the project, the launcher compares
-build identities and automatically replaces a stale local process. To force a clean restart
-manually, run `./start-issue-agent.ps1 -Restart` from PowerShell.
+**Linux / macOS（bash）**
+
+```bash
+python -m venv .venv
+./.venv/bin/python -m pip install -e ".[dev]"
+cp .env.example .env
+```
+
+编辑 `.env`，至少设置：
+
+```dotenv
+OPENAI_API_KEY=<your-key>
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-v4-pro
+```
+
+私有仓库或需要更高 GitHub 限流时，设置 `GITHUB_TOKEN=<your-token>`。建议使用仅授予 contents 与 issues 只读权限的 fine-grained token；只有开启 `WRITE_MODE` 时才需要 contents 与 pull-requests 的写权限。
+
+### Windows 一键启动
+
+完成本地安装后，双击项目根目录下的 `打开 Issue Agent.cmd`。启动器会检查环境、启动服务并自动打开浏览器；默认使用端口 `9123`，被占用时依次回退 `9124 → 9125`（会先通过 `/health` 确认端口上确实运行的是本应用），实际地址以启动器终端输出为准。使用期间请保持启动器窗口开启，`Ctrl+C` 停止；若服务已在运行，则只打开已有页面。代码更新后启动器会对比构建标识并自动替换过期的本地进程；强制干净重启可执行 `.\start-issue-agent.ps1 -Restart`。
 
 ### Docker
 
@@ -76,251 +87,124 @@ docker build -t issue-agent .
 docker run -p 8000:8000 --env-file .env -v issue-agent-data:/app/data issue-agent
 ```
 
-The container always listens on `8000` internally; map it to any host port you like
-(`-p HOST:8000`).
+容器内固定监听 `8000`，可映射到任意宿主端口（`-p HOST:8000`）。
 
-### Local Setup
-
-Requires Python 3.11 or newer.
-
-**Windows (PowerShell):**
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -e ".[dev]"
-Copy-Item .env.example .env
-```
-
-**Linux/macOS (bash):**
+### CLI 使用
 
 ```bash
-python -m venv .venv
-./.venv/bin/python -m pip install -e ".[dev]"
-cp .env.example .env
-```
-
-Edit `.env` and set at least:
-
-```dotenv
-OPENAI_API_KEY=your-key
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-pro
-```
-
-Set `GITHUB_TOKEN` for private repositories and to avoid GitHub's low anonymous rate limit. Use a
-fine-grained token with read-only access to repository contents and issues. Only grant contents and
-pull-request write permissions when enabling `WRITE_MODE`.
-
-### Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | *(required)* | API key for the LLM provider |
-| `OPENAI_BASE_URL` | `https://api.deepseek.com` | Base URL for the OpenAI-compatible API |
-| `OPENAI_MODEL` | `deepseek-v4-pro` | Investigator model name |
-| `OPENAI_THINKING` | `enabled` | DeepSeek thinking mode (`enabled` or `disabled`) |
-| `OPENAI_REASONING_EFFORT` | `high` | DeepSeek reasoning effort (`high` or `max`) |
-| `OPENAI_TIMEOUT` | `180` | Request timeout in seconds (DeepSeek thinking mode often needs 60–120s) |
-| `OPENAI_MAX_RETRIES` | `0` | SDK-level retry attempts; the agent owns its own multi-level retry for report generation |
-| `LOG_LEVEL` | `INFO` | Application log level |
-| `LOG_FORMAT` | `console` | Log format (`console` or newline-delimited `json`) |
-| `GITHUB_TOKEN` | *(optional)* | GitHub PAT for higher rate limits |
-| `GITHUB_MAX_FILE_BYTES` | `512000` | Skip files larger than this |
-| `GITHUB_TIMEOUT` | `30` | HTTP timeout (seconds) for GitHub API calls |
-| `GITHUB_MAX_RETRIES` | `3` | App-level retries for transient GitHub errors (5xx, network) |
-| `GITHUB_CACHE_TTL_SECONDS` | `300` | Commit-scoped repository tree and source cache lifetime; set `0` to disable |
-| `GITHUB_CACHE_MAX_ENTRIES` | `512` | Maximum cached repository trees and source files per process |
-| `GITHUB_CACHE_MAX_BYTES` | `67108864` | Maximum combined memory used by cached repository data |
-| `GITHUB_MAX_TREE_ENTRIES` | `200000` | Safety limit for hierarchical traversal when GitHub truncates a recursive tree |
-| `MAX_CANDIDATE_FILES` | `12` | Max distinct source files per investigation |
-| `MAX_PLANNING_PATHS` | `80` | Max paths shown to the model in initial prompt |
-| `MAX_FILE_CHARS` | `16000` | Max retained characters from one file |
-| `MAX_TOTAL_CONTEXT_CHARS` | `80000` | Max retained source + chat characters |
-| `MAX_EXPLORATION_TOKENS` | `2000` | Output budget for each tool-planning model turn |
-| `MAX_OUTPUT_TOKENS` | `8000` | Max tokens per model response |
-| `MAX_AGENT_ITERATIONS` | `15` | Max tool-calling loop iterations |
-| `MAX_PARALLEL_TOOL_CALLS` | `4` | Maximum independent read-only tools executed concurrently |
-| `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | Stop exploration after this many exact-repeat tool rounds |
-| `TOOL_TIMEOUT` | `60` | Per-tool execution timeout in seconds |
-| `INVESTIGATION_TIMEOUT` | `600` | Max wall-clock seconds for a single investigation |
-| `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | Bounded search, history, branch, and tool findings retained for report synthesis |
-| `MAX_CHAT_TOKENS` | `2000` | Max tokens per chat message |
-| `INDEPENDENT_REVIEW` | `true` | Run the independent reviewer before publishing the final report |
-| `REVIEW_MODEL` | *(same as investigator)* | Optional separate model for independent review |
-| `REVIEW_MAX_TOKENS` | `8000` | Maximum output tokens for the reviewer decision |
-| `MAX_REVIEW_CONTEXT_CHARS` | `32000` | Maximum issue, report, and source context supplied to the reviewer |
-| `MAX_REPORT_RETRIES` | `3` | Report-generation retry count (incl. first try): first attempt uses the configured thinking mode, middle attempts retry with error feedback, the final attempt degrades to thinking disabled as a fallback |
-| `LANGUAGE` | `zh` | Response language (`zh` or `en`) |
-| `API_KEY` | *(optional)* | Require this value in the `X-API-Key` request header |
-| `WRITE_MODE` | `false` | Allow validated PR proposals and confirmed GitHub writes |
-| `SESSION_DB_PATH` | `data/sessions.db` | SQLite path for persistent sessions; use `:memory:` for ephemeral tests |
-| `SESSION_STALE_AFTER_SECONDS` | `1800` | Mark running sessions older than this heartbeat window as interrupted |
-| `SESSION_RETENTION_DAYS` | `30` | Auto-purge completed/failed/cancelled sessions older than this on startup |
-| `MAX_PR_FILES` | `20` | Maximum number of files allowed in one PR proposal |
-| `MAX_PR_TOTAL_BYTES` | `1000000` | Maximum combined UTF-8 size of proposed file contents |
-| `MAX_SESSION_IMPORT_BYTES` | `5242880` | Maximum size of an imported session JSON payload |
-| `BATCH_MAX_CONCURRENT` | `2` | Number of batch investigation workers |
-| `BATCH_MAX_QUEUE_SIZE` | `100` | Maximum pending batch tasks |
-| `BATCH_MAX_HISTORY` | `100` | Maximum completed batch records retained in memory |
-| `CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive provider failures that trip the circuit breaker |
-| `CIRCUIT_BREAKER_RECOVERY` | `30` | Seconds to wait before probing a half-open circuit |
-| `RATE_LIMIT_REQUESTS` | `30` | Maximum requests per rate-limit window per key |
-| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding rate-limit window length in seconds |
-
-### CLI Usage
-
-```bash
-# One-shot analysis
+# 单次分析
 issue-agent analyze https://github.com/owner/repo/issues/123
 
-# Save the generated patch
+# 保存生成的补丁
 issue-agent analyze https://github.com/owner/repo/issues/123 --save-patch fix.patch
 
-# Interactive chat mode
+# 交互式聊天模式
 issue-agent chat https://github.com/owner/repo/issues/123
 ```
 
-Inside chat mode:
-- Type questions to discuss the issue
-- `/save <file>` — save the generated patch
-- `/quit` or `/exit` — end the session
+聊天模式内：`/save <file>` 保存补丁，`/quit` 或 `/exit` 退出。
 
-## API
-
-Start the server:
+### 启动 API 服务
 
 ```bash
 python -m uvicorn app.main:app --port 9123 --reload
 ```
 
-Open `http://127.0.0.1:9123/docs` for the Swagger UI. On Windows the bundled launcher
-(`打开 Issue Agent.cmd`) prefers `9123` and falls back through `9124 → 9125`; in that
-case the launcher prints the actual URL in its terminal window.
+浏览器打开 `http://127.0.0.1:9123/docs` 查看 Swagger UI，访问 `http://127.0.0.1:9123/` 使用内嵌 Web UI。
 
-### `POST /analyze`
+## 配置
 
-```json
-{
-  "issue_url": "https://github.com/owner/repo/issues/123"
-}
-```
+所有配置通过环境变量或 `.env` 文件提供（pydantic-settings）。请勿把 `.env` 提交到仓库（已被 `.gitignore` 与 `.dockerignore` 排除）。以下为常用配置项：
 
-Returns an `AnalysisReport` with summary, root cause, confidence, evidence, proposed changes, patch, tests, and risks.
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPENAI_API_KEY` | 必填 | LLM 供应商 API key |
+| `OPENAI_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容 API 地址 |
+| `OPENAI_MODEL` | `deepseek-v4-pro` | 调查模型名 |
+| `OPENAI_THINKING` | `enabled` | 思考模式（`enabled` / `disabled`） |
+| `OPENAI_REASONING_EFFORT` | `high` | 思考强度（`high` / `max`） |
+| `OPENAI_TIMEOUT` | `180` | 单次请求超时（秒），思考模式常需 60–120s |
+| `GITHUB_TOKEN` | 可选 | GitHub 令牌，提高限流额度并访问私有仓库 |
+| `GITHUB_MAX_FILE_BYTES` | `512000` | 跳过大于此字节数的文件 |
+| `GITHUB_TIMEOUT` | `30` | GitHub API 请求超时（秒） |
+| `GITHUB_CACHE_TTL_SECONDS` | `300` | 仓库树 / 源码缓存有效期，`0` 关闭 |
+| `MAX_CANDIDATE_FILES` | `12` | 单次调查最多读取的不同源码文件数 |
+| `MAX_PLANNING_PATHS` | `80` | 初始提示中展示的候选路径数 |
+| `MAX_FILE_CHARS` | `16000` | 单个文件最多保留字符数 |
+| `MAX_TOTAL_CONTEXT_CHARS` | `80000` | 保留的源码 + 对话总字符上限 |
+| `MAX_EXPLORATION_TOKENS` | `2000` | 每轮规划输出 token 预算 |
+| `MAX_OUTPUT_TOKENS` | `8000` | 每次模型响应最大 token 数 |
+| `MAX_AGENT_ITERATIONS` | `15` | 工具调用循环最大迭代次数 |
+| `MAX_PARALLEL_TOOL_CALLS` | `4` | 并行执行的最大只读工具数 |
+| `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | 连续重复工具轮次上限，触发即停止探索 |
+| `TOOL_TIMEOUT` | `60` | 单工具执行超时（秒） |
+| `INVESTIGATION_TIMEOUT` | `600` | 单次调查最大墙钟时间（秒） |
+| `INDEPENDENT_REVIEW` | `true` | 是否运行独立评审 |
+| `REVIEW_MODEL` | 同调查模型 | 独立评审模型（可选） |
+| `LANGUAGE` | `zh` | 响应语言（`zh` / `en`） |
+| `API_KEY` | 可选 | 设置后在 `X-API-Key` 请求头校验，否则全站开放 |
+| `WRITE_MODE` | `false` | 是否允许校验过的 PR 提案与确认后的写操作 |
+| `SESSION_DB_PATH` | `data/sessions.db` | SQLite 路径，`:memory:` 用于测试 |
+| `SESSION_RETENTION_DAYS` | `30` | 启动时自动清理早于该天数的终态会话 |
+| `MAX_PR_FILES` | `20` | 单个 PR 提案最多文件数 |
+| `MAX_PR_TOTAL_BYTES` | `1000000` | 提案内容总字节上限 |
+| `MAX_SESSION_IMPORT_BYTES` | `5242880` | 导入会话 JSON 大小上限 |
+| `BATCH_MAX_CONCURRENT` | `2` | 批量分析并发 worker 数 |
+| `BATCH_MAX_QUEUE_SIZE` | `100` | 批量待处理队列容量 |
+| `CIRCUIT_BREAKER_THRESHOLD` | `5` | 触发熔断的连续失败次数 |
+| `CIRCUIT_BREAKER_RECOVERY` | `30` | 熔断后探活等待秒数 |
+| `RATE_LIMIT_REQUESTS` | `30` | 每个限流窗口每个 key 的最大请求数 |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | 滑动限流窗口长度（秒） |
 
-### `POST /stream`
+完整配置项详见 [`wiki/Configuration.md`](wiki/Configuration.md)。
 
-Runs the same investigation as `/analyze`, but streams progress as Server-Sent Events. Pass an
-`issue_url` to start a new session, or a `session_id` to re-run an existing one:
-
-```json
-{
-  "issue_url": "https://github.com/owner/repo/issues/123"
-}
-```
-
-The stream begins with a `session` event carrying the session id, followed by investigation progress
-events and a final `report` event; `cancelled` or `error` events are emitted when the run stops early.
-
-### `POST /chat`
-
-Blocking (non-streaming) chat endpoint. The Web UI uses `POST /chat/stream` instead; keep using
-this one only when a simple request/response integration is enough.
-
-Start a new session:
-```json
-{
-  "issue_url": "https://github.com/owner/repo/issues/123",
-  "message": "分析一下这个 bug"
-}
-```
-
-Continue an existing session:
-```json
-{
-  "session_id": "a1b2c3d4e5f6",
-  "message": "问题出现在哪个函数？"
-}
-```
-
-### `POST /chat/stream`
-
-Streams the chat reply token-by-token as Server-Sent Events (recommended for interactive UIs;
-this is what the bundled Web UI uses). Requires an existing `session_id`:
-
-```json
-{
-  "session_id": "a1b2c3d4e5f6",
-  "message": "问题出现在哪个函数？"
-}
-```
-
-SSE events: `delta` (content chunk), `tool_call` / `tool_result` (tool activity),
-`done` (final reply + tools used), `error`.
-
-### `GET /health`
-
-Returns `{"status": "ok", "app": "issue-agent", "build_id": "..."}`.
-
-### `GET /i18n`
-
-Returns the frontend string dictionary for a language, used by the web UI to switch language
-without a reload. Accepts a `lang` query parameter (`zh` or `en`):
-
-```text
-GET /i18n?lang=en
-```
-
-### Session history
-
-- `GET /sessions` lists active or archived Issue sessions and supports `q` search.
-- `GET /session/{session_id}` restores messages, report, durable events, phase, metrics, and version.
-- `GET /session/{session_id}/report` returns just the stored `AnalysisReport` once the investigation has produced one (404 before that).
-- `PATCH /session/{session_id}` renames, archives, or restores a session.
-- `POST /session/{session_id}/cancel` requests cancellation of a running investigation.
-- `GET /session/{session_id}/proposal` returns a safe PR proposal preview without file contents.
-- `DELETE /session/{session_id}` permanently deletes a session.
-- `GET /session/{session_id}/export` downloads the full session (messages, report, events, metrics, pending PR) as a JSON file.
-- `POST /session/import` restores an exported session JSON into a new session with a fresh session id.
-
-### Batch analysis
-
-`POST /batch` submits multiple issue URLs to an in-process async task queue; workers run
-investigations in the background and results are polled:
-
-```json
-{
-  "issue_urls": [
-    "https://github.com/owner/repo/issues/123",
-    "https://github.com/owner/repo/issues/456"
-  ]
-}
-```
-
-Returns a `batch_id` with per-task status. Poll progress with `GET /batch/{batch_id}`; a batch
-finishes as `completed` when every task succeeds, or `partial` when some tasks failed or were
-cancelled. Queue capacity is bounded by `BATCH_MAX_QUEUE_SIZE` and concurrency by
-`BATCH_MAX_CONCURRENT`.
-
-### `POST /session/{session_id}/apply-fix` (write mode)
-
-Creates the pull request for a session's stored proposal. Disabled unless `WRITE_MODE=true`.
+## 项目结构
 
 ```
-POST /session/a1b2c3d4e5f6/apply-fix
-{
-  "confirm": true
-}
+app/
+  main.py              FastAPI 入口：路由、SSE 流、限流 / 认证中间件
+  agent.py             IssueAgent：多阶段调查（获取 → 预读 → 探索 → 验证 → 报告 → 评审）
+  tools.py             工具定义与执行器（只读工具 + 可选的 create_pull_request 提案）
+  github.py            GitHub REST 客户端（重试、连接池、缓存、路径 / 树分析）
+  provider.py          OpenAI 兼容 provider 的请求选项与流式解析
+  report_generator.py  结构化报告生成（多级重试 + 思考降级）
+  reviewer.py          独立评审 Agent
+  evidence.py          确定性证据校验
+  retry.py             报告 / 评审共用的重试与思考降级策略
+  sessions.py / db.py  会话管理与 SQLite 持久化（连接池 + 乐观锁）
+  task_queue.py        进程内异步批量任务队列
+  services.py          会话状态、PR 应用 / 回滚等服务逻辑
+  cli.py               Rich 终端 CLI
+  static/              前端 JS / CSS（无构建步骤）
+  templates/           Web 页面模板
+tests/                 pytest 单元 / 集成测试
+e2e/                   Playwright 端到端测试
+wiki/                  项目文档
 ```
 
-Requests without `confirm=true` are rejected. The stored proposal is revalidated against the
-repository's default branch before any write; on failure the temporary branch is rolled back.
-Returns the created `pr_url` and `branch`. See the [Safety model](#safety-model) for the full
-write-path guarantees.
+## API 摘要
 
-The legacy `POST /apply-fix?session_id=...` route remains available for compatibility but is hidden
-from the OpenAPI schema; new integrations should use the session-scoped endpoint above.
+| 端点 | 说明 |
+|---|---|
+| `POST /analyze` | 非流式分析，返回 `AnalysisReport` |
+| `POST /stream` | SSE 流式调查：`session` → 进度事件 → `report` / `cancelled` / `error` |
+| `POST /chat` | 阻塞式聊天 |
+| `POST /chat/stream` | SSE 逐 token 流式聊天（Web UI 使用） |
+| `GET /health` | 健康检查 |
+| `GET /i18n?lang=zh\|en` | 前端语言包 |
+| `GET /sessions` | 会话列表，支持 `q` 搜索 |
+| `GET /session/{id}` | 会话详情（消息、报告、事件、指标、版本） |
+| `PATCH /session/{id}` | 重命名 / 归档 / 恢复 |
+| `DELETE /session/{id}` | 永久删除 |
+| `POST /session/{id}/cancel` | 请求取消进行中的调查 |
+| `GET /session/{id}/report` | 返回已生成的报告 |
+| `GET /session/{id}/proposal` | 安全的 PR 提案预览（不含文件内容） |
+| `GET /session/{id}/export` | 导出完整会话 JSON |
+| `POST /session/import` | 导入会话 JSON 到新会话 |
+| `POST /batch` / `GET /batch/{batch_id}` | 批量提交与进度轮询 |
+| `POST /session/{session_id}/apply-fix` | 写模式：创建 PR（需 `WRITE_MODE=true` 与 `confirm=true`） |
 
-## Testing
+## 测试
 
 ```bash
 ruff check .
@@ -331,19 +215,14 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The Playwright suite starts an isolated local server and verifies desktop and mobile layouts,
-localized accessibility labels, report navigation, source links, XSS escaping, input clearing, and
-network-failure recovery. CI installs Chromium and runs the same suite on every push and pull request.
+Playwright 套件在独立本地服务上验证桌面 / 移动端布局、无障碍标签、报告导航、源码链接、XSS 转义、输入清空与网络故障恢复；CI 在每次 push / PR 上运行同一套件（Python 3.11–3.13 + Docker 构建 + 浏览器回归）。
 
-## Current limitations
+## 已知限制
 
-- GitHub code search has stricter authentication, indexing, and rate-limit behavior than repository-tree access;
-  the agent retains deterministic filename selection as a fallback.
-- SQLite uses optimistic versions to reject cross-worker overwrite, but high-volume distributed deployments should
-  still use a dedicated transactional database and background job system.
-- Cancellation is cooperative and takes effect at the next streamed model or tool event; an in-flight provider
-  request may finish before cancellation is observed.
+- GitHub 代码搜索的鉴权、索引与限流行为比仓库树访问更严格；agent 保留确定性文件名选择作为回退
+- SQLite 乐观锁可防止跨 worker 覆盖，但高吞吐分布式部署仍建议使用专用事务数据库与后台任务系统
+- 取消是协作式的，在下一个模型 / 工具事件边界生效；在途的 provider 请求可能先完成
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+[MIT](LICENSE)
