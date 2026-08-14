@@ -31,6 +31,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+          # GitHub Actions 自带的 setuptools 79.0.1 含 CVE（PYSEC-2026-3447，修复版 83.0.0），
+          # pip-audit 会审计环境中的全部包；升级到修复版本避免 CI 误报。
+          pip install --upgrade "setuptools>=83.0.0"
 
       - name: Lint with ruff
         run: ruff check app/ tests/
