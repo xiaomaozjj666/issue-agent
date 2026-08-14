@@ -42,9 +42,10 @@ jobs:
         run: pytest -v --cov=app --cov-report=term-missing
 
       - name: Security audit (pip-audit)
-        # 依赖漏洞扫描：检测 PyPI 已知 CVE，失败阻断合并
-        run: pip-audit --strict
-        continue-on-error: true
+        # 依赖漏洞扫描：检测 PyPI 已知 CVE，有漏洞即失败阻断合并。
+        # --skip-editable：本地可编辑安装包（github-issue-agent）不在 PyPI 上
+        # 无法审计；配合非 strict 模式，跳过项仅作提示，不再恒 exit 1。
+        run: pip-audit --skip-editable
 
   docker:
     runs-on: ubuntu-latest

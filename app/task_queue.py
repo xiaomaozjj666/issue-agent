@@ -20,7 +20,7 @@ from openai import AsyncOpenAI
 from app.agent import IssueAgent
 from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
-from app.github import GitHubClient
+from app.github import GitHubClient, parse_issue_url
 from app.models import AnalysisReport
 
 logger = logging.getLogger(__name__)
@@ -140,10 +140,14 @@ class TaskQueue:
         """Submit a batch of issue URLs for investigation.
 
         Raises:
-            ValueError: if the queue is full or issue_urls is empty.
+            ValueError: if the queue is full, issue_urls is empty, or any URL is invalid.
         """
         if not issue_urls:
             raise ValueError("At least one issue URL is required")
+        # 提交时同步校验 URL：非法 URL 立即失败（HTTP 422），
+        # 而不是等 worker 异步执行时才暴露为 failed。
+        for url in issue_urls:
+            parse_issue_url(url)
         if self._pending.qsize() + len(issue_urls) > self._max_queue_size:
             raise ValueError(
                 f"Queue capacity exceeded: {self._pending.qsize()} pending + "
@@ -228,5 +232,5 @@ class TaskQueue:
 
 
 def _new_id() -> str:
-    """Generate a short random ID (12 hex chars)."""
-    return secrets.token_hex(6)
+    """Generate a short random ID (16 hex chars = 64 bit entropy)."""
+    return secrets.token_hex(8)

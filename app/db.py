@@ -71,7 +71,12 @@ CREATE TABLE IF NOT EXISTS pending_pr (
 
 
 async def get_db(path: str) -> aiosqlite.Connection:
-    """Open (or create) the SQLite database and ensure schema + migrations are applied."""
+    """Open (or create) the SQLite database and ensure schema + migrations are applied.
+
+    Warning: ``":memory:"`` creates a *fresh, private* database per connection —
+    two connections never share data.  Use ``SessionManager`` with ``":memory:"``
+    (which selects ``MemoryStore``) instead of pooling raw ``":memory:"`` connections.
+    """
     if path == ":memory:":
         conn = await aiosqlite.connect(":memory:")
     else:
@@ -181,6 +186,10 @@ class ConnectionPool:
     """
 
     def __init__(self, path: str, *, size: int = 5) -> None:
+        if path == ":memory:":
+            # 每个连接都是独立内存库，连接池内互不可见，必然是误用。
+            # 开发/测试请使用 SessionManager(db_path=":memory:")（MemoryStore）。
+            raise ValueError("ConnectionPool does not support ':memory:' — use SessionManager with MemoryStore")
         self._path = path
         self._size = size
         self._pool: asyncio.LifoQueue[aiosqlite.Connection] = asyncio.LifoQueue()

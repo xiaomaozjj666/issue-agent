@@ -472,7 +472,7 @@
   async function exportSession(session) {
     if (!session || !session.session_id) return;
     try {
-      const resp = await fetch(`/session/${encodeURIComponent(session.session_id)}/export`);
+      const resp = await fetch(`/session/${encodeURIComponent(session.session_id)}/export`, { headers: IA.authHeaders() });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
@@ -504,7 +504,7 @@
       }
       const resp = await fetch("/session/import", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: IA.authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(data),
       });
       if (!resp.ok) {
@@ -1507,7 +1507,7 @@
     try {
       const resp = await fetch("/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: IA.authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(Object.assign({ issue_url: url }, window.IA_SETTINGS || {})),
       });
       if (!resp.ok) {
@@ -3060,7 +3060,7 @@
     try {
       const resp = await fetch("/chat/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        headers: IA.authHeaders({ "Content-Type": "application/json", "Accept": "text/event-stream" }),
         body: JSON.stringify(Object.assign({ session_id: sessionId, message: msg }, window.IA_SETTINGS || {}, window.__iaRegenerate ? { regenerate: true } : {})),
         signal: chatAbortController.signal,
       });
