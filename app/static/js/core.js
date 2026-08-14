@@ -298,6 +298,8 @@
     settings_api_key: "API key",
     settings_api_key_placeholder: "Required only when the server sets API_KEY",
     settings_api_key_note: "Saved locally in this browser; sent with every API request as X-API-Key.",
+    analyzing_btn: "Analyzing…",
+    api_key_required: "API key required: the server is authenticated. Add your key in the settings panel (⚙️).",
   };
 
   function loadI18n() {
@@ -403,6 +405,17 @@
     options.headers = authHeaders(options.headers);
     const response = await fetch(url, options);
     if (!response.ok) {
+      // 401 = 服务器要求 API_KEY 认证但请求未携带（或密钥无效）。
+      // 派发全局事件，让 UI 层给出友好引导（设置面板填写密钥）。
+      // 注意：必须在 document 上派发（app.js 在 document 上监听）；
+      // CustomEvent 默认不冒泡，window.dispatchEvent 不会传到 document 监听器。
+      if (response.status === 401 && typeof document.dispatchEvent === "function") {
+        try {
+          document.dispatchEvent(new CustomEvent("ia-unauthorized"));
+        } catch (e) {
+          /* ignore */
+        }
+      }
       let detail = "";
       try {
         detail = (await response.json()).detail || "";

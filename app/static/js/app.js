@@ -161,6 +161,7 @@
         IA.sessionId = null;
         report = null;
         activeSession = null;
+        setDocumentTitle(null);
         resetWorkspace(true);
         await loadSessions();
       }
@@ -573,6 +574,7 @@
     stopAnalysisTimer();
     currentPhaseText = "";
     analyzeInProgress = false;
+    setAnalyzeBusy(false);
     // 统一清理 chat 状态：analyze() 取消旧 stream 时也需要中断进行中的 chat，
     // 否则 chat 响应会写入新分析视图
     if (chatAbortController) {
@@ -615,6 +617,10 @@
       IA.sessionId = sessionId;
       report = session.report;
       activeSession = session;
+      // 标签页标题跟随当前会话（issue 标题 / 仓库 #编号 兜底）
+      setDocumentTitle(
+        session.title || (session.owner && session.repo ? session.owner + "/" + session.repo + (session.issue_number ? " #" + session.issue_number : "") : null)
+      );
       resetWorkspace(false);
       document.getElementById("issueUrl").value = "";
       document.querySelector(".conversation-label").textContent =
@@ -1450,6 +1456,44 @@
     }
   }
 
+  // 分析按钮忙碌态：分析中禁用并显示"分析中…"，结束时还原。
+  // 防重入由 analyzeInProgress 保证，这里提供可见的视觉反馈。
+  function setAnalyzeBusy(busy) {
+    const btn = document.getElementById("analyze-btn");
+    if (!btn) return;
+    btn.disabled = busy;
+    const label = btn.querySelector("span");
+    if (label) label.textContent = busy ? t("analyzing_btn") : t("new_analysis");
+  }
+
+  // 浏览器标签页标题随当前会话更新；回到首页/新分析时还原。
+  function setDocumentTitle(title) {
+    document.title = title ? String(title).slice(0, 60) + " · GitHub Issue Agent" : "GitHub Issue Agent";
+  }
+
+  // 401（服务器要求 API_KEY 但请求未携带/密钥无效）全局提示：仅提示一次，
+  // 引导用户在设置面板填写密钥。
+  let unauthorizedNoticed = false;
+  function bindUnauthorizedHint() {
+    document.addEventListener("ia-unauthorized", function () {
+      if (unauthorizedNoticed) return;
+      unauthorizedNoticed = true;
+      const container = document.getElementById("messages");
+      const note = document.createElement("div");
+      note.className = "msg system unauthorized-hint";
+      note.textContent = t("api_key_required");
+      if (container) container.appendChild(note);
+      const settingsBtn = document.getElementById("settings-btn");
+      if (settingsBtn) {
+        settingsBtn.classList.add("settings-attention");
+        setTimeout(function () { settingsBtn.classList.remove("settings-attention"); }, 5000);
+      }
+    });
+  }
+  // 顶层立即绑定：defer 下 loadSessions() 可能在 DOMContentLoaded 前执行，
+  // 若在 DOMContentLoaded 里才绑定监听，首个 401 事件会丢失。
+  bindUnauthorizedHint();
+
   async function analyze() {
     // 防重入：快速双击或回车多次时只允许一个流，避免状态错乱和旧 reader 泄漏
     if (analyzeInProgress) return;
@@ -1493,6 +1537,8 @@
     }
 
     analyzeInProgress = true;
+    setAnalyzeBusy(true);
+    setDocumentTitle(null);
     if (sessionId) navigationStack.push(sessionId);
     sessionId = null;
     IA.sessionId = null;
@@ -1566,6 +1612,7 @@
       stopAnalysisTimer();
       currentStream = null;
       analyzeInProgress = false;
+      setAnalyzeBusy(false);
     }
   }
 
