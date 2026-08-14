@@ -652,3 +652,27 @@ test("sends the stored API key with every API request when present", async ({ pa
   await expect(page.getByLabel("会话列表")).toBeVisible();
   expect(seenKeys[seenKeys.length - 1]).toBeNull();
 });
+
+test("updates the document title to the active session and restores it on back", async ({ page }) => {
+  await mockCompletedSessions(page);
+  await page.goto("/");
+  await expect(page).toHaveTitle("GitHub Issue Agent");
+  await historyCard(page, 1).click();
+  await expect(page).toHaveTitle(/路径解析失败 · GitHub Issue Agent/);
+  // 返回首页后标题还原
+  await page.locator("#back-button").click();
+  await expect(page).toHaveTitle("GitHub Issue Agent");
+});
+
+test("shows a friendly hint when the API requires a key", async ({ page }) => {
+  // 服务器要求 API_KEY 但请求未携带：应显示引导提示而非原始错误
+  await page.route("**/sessions?**", (route) =>
+    route.fulfill({ status: 401, json: { detail: "Missing X-API-Key header" } })
+  );
+  await page.goto("/");
+  await expect(page.getByText(/需要 API 密钥/)).toBeVisible();
+  // 设置按钮出现脉冲高亮
+  await expect(page.locator("#settings-btn.settings-attention")).toBeVisible();
+  await page.waitForTimeout(5200);
+  await expect(page.locator("#settings-btn.settings-attention")).toHaveCount(0);
+});
