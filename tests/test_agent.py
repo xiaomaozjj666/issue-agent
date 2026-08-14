@@ -631,6 +631,53 @@ async def test_chat_raises_on_uninitialized_session(make_agent) -> None:
         await agent.chat(session, "hello")
 
 
+async def test_chat_rolls_back_messages_on_model_failure(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
+    """chat 中途 LLM 调用失败：本次尝试追加的消息全部回滚，不遗留 dangling user 消息。
+
+    回归背景：旧实现失败路径只回滚空响应分支，网络/模型异常会留下 user 消息
+    且无 assistant 回复，污染下次对话的上下文。
+    """
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    tc = fake_tool_call("read_file", {"path": "src/parser.py"})
+    # 只有一次响应：第一轮工具调用后，第二轮 LLM 调用必然抛 RuntimeError
+    responses = [fake_response(tool_calls=[tc])]
+    agent = make_agent(client=fake_client(responses))
+    session = Session(session_id="rollback1", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/parser.py"]
+    before = list(session.messages)
+    with pytest.raises(RuntimeError, match="No more mock responses"):
+        await agent.chat(session, "看一下 parser 代码")
+    assert session.messages == before, "失败的 chat 尝试不应在历史中留下任何消息"
+
+
+async def test_chat_stream_rolls_back_messages_on_model_failure(
+    make_agent, fake_client, monkeypatch, make_issue
+) -> None:
+    """chat_stream 中途失败：错误事件送达，且本次尝试的消息被回滚。"""
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    from tests.conftest import _FakeStreamChunk
+
+    tc = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(name="read_file", arguments='{"path": "src/parser.py"}'),
+    )
+    # 第一轮 tool_call，第二轮模型调用抛错（无更多 mock 响应）
+    agent = make_agent(client=fake_client([[_FakeStreamChunk(tool_calls=[tc])]]))
+    session = Session(session_id="rollback2", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/parser.py"]
+    before = list(session.messages)
+    events = []
+    async for event in agent.chat_stream(session, "看一下 parser 代码"):
+        events.append(event)
+    assert events[-1]["type"] == "error"
+    assert session.messages == before, "失败的 chat_stream 尝试不应在历史中留下任何消息"
+
+
 async def test_chat_stream_yields_delta_and_done(make_agent, fake_client, monkeypatch, make_issue) -> None:
     """chat_stream 应逐 chunk 透传 delta，最终发出 done 事件携带完整 reply。"""
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)

@@ -67,7 +67,9 @@ class MemoryStore:
         self._max = max_sessions
 
     async def create(self, issue_url: str) -> Session:
-        sid = uuid.uuid4().hex[:12]
+        # 16 hex chars = 64 bit 熵：未配置 API_KEY 时会话 ID 是唯一的访问凭证，
+        # 48 bit（12 hex）在可枚举性上偏弱
+        sid = uuid.uuid4().hex[:16]
         session = Session(session_id=sid, issue_url=issue_url)
         self._sessions[sid] = session
         self._events[sid] = []
@@ -186,7 +188,8 @@ class SqliteStore:
             await pool.release(conn)
 
     async def create(self, issue_url: str) -> Session:
-        sid = uuid.uuid4().hex[:12]
+        # 16 hex chars = 64 bit 熵，与 MemoryStore 保持一致
+        sid = uuid.uuid4().hex[:16]
         now = _now()
         async with self._conn() as db:
             await db.execute(
@@ -363,7 +366,12 @@ class SqliteStore:
         clauses.append("archived_at IS NOT NULL" if archived else "archived_at IS NULL")
         if query.strip():
             pattern = f"%{query.strip()}%"
-            clauses.append("(issue_url LIKE ? OR display_title LIKE ? OR issue_json LIKE ?)")
+            # 只搜 issue_url / display_title / issue 标题（json_extract 只取标题字段），
+            # 避免对整个 issue_json（含 body/comments 大文本）做 LIKE 全表扫描。
+            # 与 MemoryStore._session_search_text 的语义保持一致；DB 由 retention purge 兜底有界。
+            clauses.append(
+                "(issue_url LIKE ? OR display_title LIKE ? OR json_extract(issue_json, '$.title') LIKE ?)"
+            )
             params.extend([pattern, pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.extend([limit, offset])
@@ -391,6 +399,11 @@ class SqliteStore:
         实时调查过程中工具调用频繁，每次走完整 save() 会触发乐观锁版本递增
         并可能与 stream 端点的 save 竞争。此方法只更新 metrics_json + updated_at，
         供前端实时展示调查轨迹指标。
+
+        与 save() 的配合：save() 前会先读回 DB metrics 并合并（内存缺的键由 DB
+        补充、内存已有的键以内存为准），因此 update_metrics 的写入不会在随后的
+        save() 中丢失；极端并发下可能存在毫秒级窗口的内存覆盖，单进程部署下
+        同一 session 对象累积指标，实际影响可忽略。
         """
         async with self._conn() as db:
             await db.execute(

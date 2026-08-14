@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 from app.config import Settings
 from app.events import AgentEvent
-from app.github import GitHubClient, GitHubError
+from app.github import GitHubClient, GitHubError, GitHubPRCreatedError
 from app.models import AnalysisReport, ApplyFixRequest, CreatePRResponse, SessionSummary
 from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import validate_pr_proposal
@@ -260,7 +260,9 @@ async def apply_fix(
             await session_mgr.delete_pr_proposal(session_id)
             return CreatePRResponse(pr_url=pr["pr_url"], branch=branch)
     except GitHubError as error:
-        if branch_created:
+        # 关键边界：若 PR 已创建成功（仅响应校验失败），绝不能删除分支——
+        # 删除 head 分支会让 GitHub 自动关闭刚创建的 PR。
+        if branch_created and not isinstance(error, GitHubPRCreatedError):
             try:
                 async with GitHubClient(settings.github_token, write_enabled=True) as rollback_github:
                     await rollback_github.delete_branch(

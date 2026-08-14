@@ -89,7 +89,10 @@
             '<select id="set-effort"><option value="high">high</option><option value="max">max</option></select></label>' +
           '<label class="drawer-field"><span>' + esc(t("settings_review")) + '</span>' +
             '<select id="set-review"><option value="1">' + esc(t("settings_on")) + '</option><option value="0">' + esc(t("settings_off")) + '</option></select></label>' +
+          '<label class="drawer-field"><span>' + esc(t("settings_api_key")) + '</span>' +
+            '<input id="set-api-key" type="password" maxlength="256" autocomplete="off" placeholder="' + esc(t("settings_api_key_placeholder")) + '"></label>' +
           '<p class="drawer-note">' + esc(t("settings_note")) + '</p>' +
+          '<p class="drawer-note">' + esc(t("settings_api_key_note")) + '</p>' +
         '</div>' +
       '</div>';
     document.body.appendChild(panel);
@@ -102,6 +105,17 @@
     el("set-thinking").value = settings.thinking || "enabled";
     el("set-effort").value = settings.reasoning_effort || "high";
     el("set-review").value = settings.review === false ? "0" : "1";
+    // API key 独立于其他设置存储（不进 IA_SETTINGS 请求覆盖）
+    try {
+      el("set-api-key").value = localStorage.getItem("iaApiKey") || "";
+    } catch (e) { /* ignore */ }
+    el("set-api-key").addEventListener("change", function (e) {
+      try {
+        const v = e.target.value.trim();
+        if (v) localStorage.setItem("iaApiKey", v);
+        else localStorage.removeItem("iaApiKey");
+      } catch (err) { /* ignore */ }
+    });
     // 变更处理
     el("set-language").addEventListener("change", function (e) {
       settings.language = e.target.value;
@@ -305,7 +319,7 @@
   }
   async function downloadSession(id) {
     try {
-      const resp = await fetch("/session/" + encodeURIComponent(id) + "/export");
+      const resp = await fetch("/session/" + encodeURIComponent(id) + "/export", { headers: IA.authHeaders() });
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);

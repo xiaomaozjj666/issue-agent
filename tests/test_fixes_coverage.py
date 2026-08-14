@@ -50,11 +50,11 @@ async def test_save_metrics_memory_takes_precedence_over_db(tmp_path) -> None:
 
 
 async def test_save_metrics_db_supplements_missing_keys(tmp_path) -> None:
-    """save() writes metrics from memory directly — DB values no longer supplement memory.
+    """save() 合并 DB 中内存尚未跟踪的键（如 update_metrics 的写入），内存值优先。
 
-    Session.metrics is always the authoritative source; update_metrics syncs it to DB
-    synchronously.  The pre-SELECT + merge was removed to avoid a read-before-every-write
-    pattern that added latency on every save() call during streaming.
+    update_metrics 绕过 save() 直接写 DB，因此 save() 前会先读回 DB metrics：
+    内存缺的键由 DB 补充（merged = {**db_metrics, **session.metrics}），
+    内存已有的键以内存为准，保证 update_metrics 写入的键在后续 save() 后不丢失。
     """
     manager = SessionManager(db_path=str(tmp_path / "metrics2.db"))
     session = await manager.create("https://github.com/a/b/issues/1")

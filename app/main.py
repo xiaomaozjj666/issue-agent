@@ -10,12 +10,12 @@ import json
 import logging
 import time
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
-from typing import Annotated
+from typing import Annotated, Any, TypeVar, cast
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
@@ -278,6 +278,50 @@ SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
 CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
 
 
+class _HeartbeatSentinel:
+    """Marker yielded by ``_iter_events_with_heartbeat`` when a generator step is slow."""
+
+    __slots__ = ()
+
+
+_HEARTBEAT = _HeartbeatSentinel()
+
+_T = TypeVar("_T")
+
+
+async def _iter_events_with_heartbeat(
+    event_iter: AsyncIterator[_T], *, timeout: float = 15.0
+) -> AsyncIterator[_T | _HeartbeatSentinel]:
+    """Await events from *event_iter*, yielding ``_HEARTBEAT`` while a single step is slow.
+
+    Unlike ``asyncio.wait_for(event_iter.__anext__(), timeout=...)`` — which *cancels* the
+    pending step on every timeout — the step runs in a shielded task so a slow GitHub call,
+    a long tool batch (up to ``tool_timeout``) or a thinking-mode first token (30-120 s)
+    keeps running while the caller emits SSE keepalives.  Cancelling the caller (client
+    disconnect) cancels the pending step, preserving the previous cancellation semantics.
+    """
+    while True:
+        # __anext__ 的类型是 Awaitable[_T]，create_task 需要 Coroutine —— cast 收紧
+        step = asyncio.create_task(cast(Coroutine[Any, Any, _T], event_iter.__anext__()))
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(asyncio.shield(step), timeout=timeout)
+                    break
+                except TimeoutError:
+                    yield _HEARTBEAT
+                    continue
+            yield event
+        except StopAsyncIteration:
+            break
+        finally:
+            # 请求取消/异常路径：确保未完成的一步被取消，不泄漏后台任务。
+            if not step.done():
+                step.cancel()
+                with suppress(asyncio.CancelledError):
+                    await step
+
+
 def build_issue_agent(settings: Settings, breaker: CircuitBreaker) -> IssueAgent:
     """Build a request coordinator backed by process-scoped provider clients."""
     shared_github = getattr(app.state, "github_client", None)
@@ -434,16 +478,13 @@ async def stream_analysis(
 
             event_stream = agent.investigate_stream(session.issue_url, session=session)
             try:
-                event_iter = event_stream.__aiter__()
-                while True:
-                    try:
-                        event = await asyncio.wait_for(event_iter.__anext__(), timeout=15.0)
-                    except TimeoutError:
-                        # SSE 心跳：防止 nginx 等反向代理因空闲超时断开连接
+                async for item in _iter_events_with_heartbeat(event_stream, timeout=15.0):
+                    if isinstance(item, _HeartbeatSentinel):
+                        # SSE 心跳：防止 nginx 等反向代理因空闲超时断开连接。
+                        # 注意：绝不能取消正在执行的生成器步骤（见 _iter_events_with_heartbeat）。
                         yield ": keepalive\n\n"
                         continue
-                    except StopAsyncIteration:
-                        break
+                    event = item
                     if await session_mgr.is_cancel_requested(session.session_id):
                         await event_stream.aclose()
                         cancelled = cancelled_event()
@@ -542,13 +583,17 @@ async def chat(request: ChatRequest, session_mgr: SessionMgr, breaker: CircuitBr
             raise HTTPException(status_code=422, detail="issue_url is required to start a new session")
 
         session = await session_mgr.create(str(request.issue_url))
-        session.status = "running"
-        session.phase = "investigating"
-        await session_mgr.save(session)
+        # 新会话状态切换与 /stream 保持一致：状态写入持锁，
+        # 调查执行（investigate 内部不持锁）期间允许 PATCH/DELETE/cancel 并发操作。
+        async with session.lock:
+            session.status = "running"
+            session.phase = "investigating"
+            await session_mgr.save(session)
         report = await agent.investigate(str(request.issue_url), session=session)
-        session.status = "completed"
-        session.phase = "completed"
-        await session_mgr.save(session)
+        async with session.lock:
+            session.status = "completed"
+            session.phase = "completed"
+            await session_mgr.save(session)
         return ChatResponse(
             session_id=session.session_id,
             reply=format_report_text(report),
@@ -614,14 +659,11 @@ async def chat_stream(request: ChatRequest, session_mgr: SessionMgr, breaker: Ci
         chat_error_received = False
         try:
             chat_iter = agent.chat_stream(session, request.message).__aiter__()
-            while True:
-                try:
-                    event = await asyncio.wait_for(chat_iter.__anext__(), timeout=15.0)
-                except TimeoutError:
+            async for item in _iter_events_with_heartbeat(chat_iter, timeout=15.0):
+                if isinstance(item, _HeartbeatSentinel):
                     yield ": keepalive\n\n"
                     continue
-                except StopAsyncIteration:
-                    break
+                event = item
                 # 跟踪 error 事件：agent.chat_stream 吞掉异常并 yield error，
                 # 不走 except 分支，需要据此决定最终状态
                 if isinstance(event, dict) and event.get("type") == "error":

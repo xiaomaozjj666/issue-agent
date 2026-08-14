@@ -627,3 +627,28 @@ test("@mobile keeps history and report flows inside the viewport", async ({ page
   expect(width.reportBodyScroll).toBe(width.reportBodyClient);
   expect(width.evidenceCard).toBeLessThanOrEqual(width.viewport);
 });
+
+test("sends the stored API key with every API request when present", async ({ page }) => {
+  // API_KEY 认证：设置面板保存的密钥应作为 X-API-Key 头随请求发送。
+  const seenKeys = [];
+  await page.route("**/sessions?**", (route) => {
+    seenKeys.push(route.request().headers()["x-api-key"] || null);
+    return route.fulfill({ json: [] });
+  });
+  // 只在首次加载时写入密钥；reload 后不再重设（sessionStorage 在同标签页跨导航保留）
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem("ia-api-key-seeded")) {
+      localStorage.setItem("iaApiKey", "test-key-123");
+      sessionStorage.setItem("ia-api-key-seeded", "1");
+    }
+  });
+  await page.goto("/");
+  await expect(page.getByLabel("会话列表")).toBeVisible();
+  expect(seenKeys).toContain("test-key-123");
+
+  // 清除密钥后不再发送该头
+  await page.evaluate(() => localStorage.removeItem("iaApiKey"));
+  await page.reload();
+  await expect(page.getByLabel("会话列表")).toBeVisible();
+  expect(seenKeys[seenKeys.length - 1]).toBeNull();
+});
