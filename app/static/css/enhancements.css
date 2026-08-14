@@ -221,3 +221,14 @@ table.sr-only {
 .reproduction-label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; opacity: .6; margin-bottom: 4px; }
 .reproduction-observed p, .reproduction-expected p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--fg); }
 @media (max-width: 560px) { .reproduction-compare { grid-template-columns: 1fr; } }
+
+/* ── 401 认证提示：设置按钮脉冲高亮，引导用户填写 API 密钥 ── */
+.settings-attention {
+  animation: settingsAttentionPulse 1s ease-in-out 4;
+  border-radius: 8px;
+}
+@keyframes settingsAttentionPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, .55); }
+}
+.unauthorized-hint { border: 1px solid var(--yellow-subtle, #f59e0b66); background: var(--yellow-subtle, #f59e0b22); }

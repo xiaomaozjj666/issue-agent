@@ -9,8 +9,11 @@
 <meta name="issue-agent-build" content="{{ build_id }}">
 <title>GitHub Issue Agent</title>
 <script id="i18n-payload" type="application/json">{{ frontend_strings | tojson }}</script>
-<script src="/static/vendor/marked.min.js?v={{ build_id }}" onerror="window.__markedFailed=true"></script>
-<script src="/static/vendor/purify.min.js?v={{ build_id }}" onerror="window.__domPurifyFailed=true"></script>
+<!-- vendor 库与业务脚本全部 defer：下载并行、不阻塞 HTML/CSS 解析，
+     执行顺序仍按文档顺序保持（core → ... → enhancements），
+     marked/purify 在 app.js 运行前就绪（渲染 markdown 时使用）。 -->
+<script src="/static/vendor/marked.min.js?v={{ build_id }}" defer onerror="window.__markedFailed=true"></script>
+<script src="/static/vendor/purify.min.js?v={{ build_id }}" defer onerror="window.__domPurifyFailed=true"></script>
 </head>
 <body>
 <div id="sidebar">
@@ -90,11 +93,11 @@
     </div>
   </form>
 </dialog>
-<script src="/static/js/core.js?v={{ build_id }}"></script>
-<script src="/static/js/session-runtime.js?v={{ build_id }}"></script>
-<script src="/static/js/charts.js?v={{ build_id }}"></script>
-<script src="/static/js/motion.js?v={{ build_id }}"></script>
-<script src="/static/js/app.js?v={{ build_id }}"></script>
-<script src="/static/js/enhancements.js?v={{ build_id }}"></script>
+<script src="/static/js/core.js?v={{ build_id }}" defer></script>
+<script src="/static/js/session-runtime.js?v={{ build_id }}" defer></script>
+<script src="/static/js/charts.js?v={{ build_id }}" defer></script>
+<script src="/static/js/motion.js?v={{ build_id }}" defer></script>
+<script src="/static/js/app.js?v={{ build_id }}" defer></script>
+<script src="/static/js/enhancements.js?v={{ build_id }}" defer></script>
 </body>
 </html>
