@@ -602,3 +602,165 @@ def test_select_candidate_paths_empty_issue_text() -> None:
     selected = select_candidate_paths(paths, issue, 3)
     assert len(selected) == 2
     assert all(p.endswith(".py") for p in selected)
+
+
+# ── 低覆盖分支补充：历史 / 搜索空结果 / 写操作错误路径 ──
+
+_ISSUE = IssueData(
+    owner="acme",
+    repo="widget",
+    number=1,
+    title="Bug",
+    body="",
+    labels=[],
+    comments=[],
+    default_branch="main",
+)
+
+
+def _client_with(handler, *, write=False) -> GitHubClient:
+    github = GitHubClient(write_enabled=write)
+    github._client = httpx.AsyncClient(
+        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
+    )
+    return github
+
+
+async def test_get_file_history_parses_commits() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "sha": "abc123def4567890",
+                    "commit": {
+                        "author": {"name": "Alice", "date": "2026-01-01T00:00:00Z"},
+                        "message": "Fix parser\n\nDetails",
+                    },
+                }
+            ],
+        )
+
+    github = _client_with(handler)
+    async with github:
+        commits = await github.get_file_history(_ISSUE, "src/parser.py", max_commits=5)
+    assert commits == [{"sha": "abc123d", "author": "Alice", "date": "2026-01-01", "message": "Fix parser"}]
+
+
+async def test_get_file_history_empty_payload() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"not": "a list"})
+
+    github = _client_with(handler)
+    async with github:
+        commits = await github.get_file_history(_ISSUE, "src/parser.py")
+    assert commits == []
+
+
+async def test_search_code_returns_empty_for_no_matches() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": []})
+
+    github = _client_with(handler)
+    async with github:
+        results = await github.search_code(_ISSUE, "no-such-symbol", limit=10)
+    assert results == []
+
+
+async def test_search_code_rejects_scope_override() -> None:
+    github = _client_with(lambda request: httpx.Response(200, json={}))
+    async with github:
+        with pytest.raises(ValueError, match="cannot override"):
+            await github.search_code(_ISSUE, "query repo:other/thing")
+
+
+async def test_create_branch_failure_raises_github_error() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"message": "Reference already exists"})
+
+    github = _client_with(handler, write=True)
+    async with github:
+        with pytest.raises(GitHubError, match="Failed to create branch"):
+            await github.create_branch("acme", "widget", "fix/issue-1", "a" * 40)
+
+
+async def test_delete_branch_accepts_204_and_404() -> None:
+    codes: list[int] = [204, 404]
+    statuses: list[int] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        statuses.append(codes.pop(0))
+        return httpx.Response(statuses[-1])
+
+    github = _client_with(handler, write=True)
+    async with github:
+        await github.delete_branch("acme", "widget", "fix/issue-1")
+        await github.delete_branch("acme", "widget", "fix/issue-1")
+    assert statuses == [204, 404]
+
+
+async def test_delete_branch_other_status_raises() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "boom"})
+
+    github = _client_with(handler, write=True)
+    async with github:
+        with pytest.raises(GitHubError, match="roll back"):
+            await github.delete_branch("acme", "widget", "fix/issue-1")
+
+
+async def test_create_or_update_file_failure_raises() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"sha": "oldsha"})  # 读取现有文件 sha 成功
+        return httpx.Response(404, json={"message": "boom"})  # PUT 失败
+
+    github = _client_with(handler, write=True)
+    async with github:
+        with pytest.raises(GitHubError, match="Failed to write file"):
+            await github.create_or_update_file("acme", "widget", "src/a.py", "x = 1", "fix/issue-1", "msg")
+
+
+async def test_create_pull_request_failure_raises() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"message": "head branch invalid"})
+
+    github = _client_with(handler, write=True)
+    async with github:
+        with pytest.raises(GitHubError, match="Failed to create PR"):
+            await github.create_pull_request("acme", "widget", "fix/issue-1", "main", "t", "b")
+
+
+async def test_create_pull_request_invalid_url_raises_pr_created_error() -> None:
+    from app.github import GitHubPRCreatedError
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"html_url": "javascript:alert(1)", "number": 1})
+
+    github = _client_with(handler, write=True)
+    async with github:
+        with pytest.raises(GitHubPRCreatedError, match="created the pull request"):
+            await github.create_pull_request("acme", "widget", "fix/issue-1", "main", "t", "b")
+
+
+async def test_write_methods_rejected_without_write_mode() -> None:
+    github = _client_with(lambda request: httpx.Response(200, json={}), write=False)
+    async with github:
+        with pytest.raises(GitHubError, match="Write mode is disabled"):
+            await github.create_branch("acme", "widget", "b", "a" * 40)
+        with pytest.raises(GitHubError, match="Write mode is disabled"):
+            await github.delete_branch("acme", "widget", "b")
+        with pytest.raises(GitHubError, match="Write mode is disabled"):
+            await github.create_or_update_file("acme", "widget", "src/a.py", "x", "b", "m")
+        with pytest.raises(GitHubError, match="Write mode is disabled"):
+            await github.create_pull_request("acme", "widget", "b", "main", "t", "b")
+
+
+async def test_get_branch_sha_rejects_invalid_sha() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"commit": {"sha": "not-a-40-char-sha"}})
+
+    github = _client_with(handler)
+    async with github:
+        with pytest.raises(GitHubError, match="invalid SHA"):
+            await github.get_branch_sha("acme", "widget", "main")
