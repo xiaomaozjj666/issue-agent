@@ -5,6 +5,7 @@ import pytest
 
 from app.github import (
     GitHubClient,
+    GitHubError,
     GitHubFileSkipped,
     GitHubRateLimitError,
     parse_issue_url,
@@ -106,6 +107,36 @@ async def test_rate_limit_response_raises_dedicated_error() -> None:
     async with github:
         with pytest.raises(GitHubRateLimitError):
             await github.get_issue("acme", "widget", 1)
+
+
+async def test_429_always_raises_rate_limit_error() -> None:
+    """429 即使不带限流头也一定是限流。"""
+    github = GitHubClient()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"message": "too many requests"})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubRateLimitError):
+            await github.get_issue("acme", "widget", 1)
+
+
+async def test_403_without_rate_limit_headers_is_not_rate_limit_error() -> None:
+    """403 无限流头（权限不足/资源不可访问）应抛通用 GitHubError，而非误导性的限流错误。"""
+    github = GitHubClient()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubError) as exc_info:
+            await github.get_issue("acme", "widget", 1)
+        assert not isinstance(exc_info.value, GitHubRateLimitError)
+        assert "403" in str(exc_info.value)
 
 
 def _issue_endpoint_handler(success_response: dict | None = None, failure: str | None = None, fail_count: int = 0):

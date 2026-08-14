@@ -15,7 +15,8 @@ async def manager():
 async def test_create_returns_session_with_id_and_url(manager) -> None:
     session = await manager.create("https://github.com/acme/widget/issues/1")
     assert session.session_id
-    assert len(session.session_id) == 12
+    # 16 hex chars = 64 bit 熵：未配置 API_KEY 时会话 ID 是唯一的访问凭证
+    assert len(session.session_id) == 16
     assert session.issue_url == "https://github.com/acme/widget/issues/1"
     assert session.issue is None
     assert session.tree == []

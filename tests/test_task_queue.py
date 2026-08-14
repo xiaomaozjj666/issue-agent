@@ -23,9 +23,9 @@ class TestBatch:
 
     def test_batch_progress_mixed(self):
         tasks = [
-            BatchTask(task_id="1", issue_url="url1", status="completed"),
-            BatchTask(task_id="2", issue_url="url2", status="running"),
-            BatchTask(task_id="3", issue_url="url3", status="pending"),
+            BatchTask(task_id="1", issue_url="https://github.com/foo/bar/issues/1", status="completed"),
+            BatchTask(task_id="2", issue_url="https://github.com/foo/bar/issues/2", status="running"),
+            BatchTask(task_id="3", issue_url="https://github.com/foo/bar/issues/3", status="pending"),
             BatchTask(task_id="4", issue_url="url4", status="failed"),
         ]
         batch = Batch(batch_id="batch1", tasks=tasks)
@@ -59,7 +59,7 @@ class TestTaskQueue:
         return q
 
     def test_submit_creates_batch(self, queue):
-        batch = queue.submit(["url1", "url2"])
+        batch = queue.submit(["https://github.com/foo/bar/issues/1", "https://github.com/foo/bar/issues/2"])
         assert len(batch.tasks) == 2
         assert batch.status == "pending"
         assert all(t.status == "pending" for t in batch.tasks)
@@ -68,8 +68,18 @@ class TestTaskQueue:
         with pytest.raises(ValueError, match="At least one issue URL"):
             queue.submit([])
 
+    def test_submit_rejects_invalid_url_immediately(self, queue):
+        """非法 URL 应在提交时同步拒绝（HTTP 422），而不是等 worker 异步失败。"""
+        with pytest.raises(ValueError, match="issue_url must"):
+            queue.submit(["not-a-url"])
+        with pytest.raises(ValueError, match="issue_url must"):
+            queue.submit(["https://github.com/acme/widget/pull/42"])
+        # 合法 URL 正常入队
+        batch = queue.submit(["https://github.com/acme/widget/issues/1"])
+        assert len(batch.tasks) == 1
+
     def test_get_batch(self, queue):
-        batch = queue.submit(["url1"])
+        batch = queue.submit(["https://github.com/foo/bar/issues/1"])
         retrieved = queue.get_batch(batch.batch_id)
         assert retrieved is not None
         assert retrieved.batch_id == batch.batch_id
@@ -82,7 +92,7 @@ class TestTaskQueue:
         queue._pending.put_nowait(("b1", "t1"))
         queue._pending.put_nowait(("b1", "t2"))
         with pytest.raises(ValueError, match="Queue capacity exceeded"):
-            queue.submit(["url1"])
+            queue.submit(["https://github.com/foo/bar/issues/1"])
 
     def test_start_stop_lifecycle(self, settings, breaker):
         queue = TaskQueue(settings, breaker)
@@ -98,7 +108,7 @@ class TestTaskQueue:
 
     def test_stop_cancels_pending(self, settings, breaker):
         queue = TaskQueue(settings, breaker, max_concurrent=1, max_queue_size=10)
-        batch = queue.submit(["url1", "url2"])
+        batch = queue.submit(["https://github.com/foo/bar/issues/1", "https://github.com/foo/bar/issues/2"])
         assert queue._pending.qsize() == 2
 
         async def run():
@@ -114,24 +124,24 @@ class TestTaskQueue:
 
     def test_queue_size(self, queue):
         assert queue.queue_size == 0
-        queue.submit(["url1", "url2"])
+        queue.submit(["https://github.com/foo/bar/issues/1", "https://github.com/foo/bar/issues/2"])
         assert queue.queue_size == 2
 
     def test_batch_count(self, queue):
         assert queue.batch_count == 0
-        queue.submit(["url1"])
+        queue.submit(["https://github.com/foo/bar/issues/1"])
         assert queue.batch_count == 1
-        queue.submit(["url2"])
+        queue.submit(["https://github.com/foo/bar/issues/2"])
         assert queue.batch_count == 2
 
     def test_submit_prunes_oldest_terminal_batch_history(self, settings, breaker):
         queue = TaskQueue(settings, breaker, max_queue_size=10, max_history=2)
-        oldest = queue.submit(["url1"])
+        oldest = queue.submit(["https://github.com/foo/bar/issues/1"])
         oldest.status = "completed"
-        middle = queue.submit(["url2"])
+        middle = queue.submit(["https://github.com/foo/bar/issues/2"])
         middle.status = "partial"
 
-        newest = queue.submit(["url3"])
+        newest = queue.submit(["https://github.com/foo/bar/issues/3"])
 
         assert queue.get_batch(oldest.batch_id) is None
         assert queue.get_batch(middle.batch_id) is middle
@@ -165,7 +175,7 @@ class TestTaskQueue:
 
         monkeypatch.setattr("app.task_queue.IssueAgent", FakeAgent)
         queue = TaskQueue(settings, breaker, max_concurrent=2, max_queue_size=10)
-        batch = queue.submit(["url1", "url2", "url3"])
+        batch = queue.submit(["https://github.com/foo/bar/issues/1", "https://github.com/foo/bar/issues/2", "https://github.com/foo/bar/issues/3"])
 
         await queue.start()
         try:
@@ -196,7 +206,7 @@ class TestTaskQueue:
 
         monkeypatch.setattr("app.task_queue.IssueAgent", BlockingAgent)
         queue = TaskQueue(settings, breaker, max_concurrent=1, max_queue_size=10)
-        batch = queue.submit(["url1"])
+        batch = queue.submit(["https://github.com/foo/bar/issues/1"])
 
         await queue.start()
         await asyncio.wait_for(started.wait(), timeout=1)

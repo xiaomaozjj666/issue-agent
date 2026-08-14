@@ -295,6 +295,9 @@
     hero_start_button: "Start analysis",
     chart_load_failed: "Chart library failed to load. Check your network or refresh.",
     cancel_failed_retry: "Cancel polling failed repeatedly. Check your network or refresh to see real status.",
+    settings_api_key: "API key",
+    settings_api_key_placeholder: "Required only when the server sets API_KEY",
+    settings_api_key_note: "Saved locally in this browser; sent with every API request as X-API-Key.",
   };
 
   function loadI18n() {
@@ -378,7 +381,26 @@
     return translated === key ? String(value || "") : translated;
   }
 
+  // API_KEY 认证支持：服务端配置 API_KEY 后，所有 API 请求必须携带 X-API-Key。
+  // 密钥仅保存在本浏览器 localStorage（iaApiKey），经设置面板维护。
+  function apiKey() {
+    try {
+      return localStorage.getItem("iaApiKey") || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function authHeaders(extra) {
+    const key = apiKey();
+    const headers = Object.assign({}, extra || {});
+    if (key) headers["X-API-Key"] = key;
+    return headers;
+  }
+
   async function apiJson(url, options) {
+    options = options || {};
+    options.headers = authHeaders(options.headers);
     const response = await fetch(url, options);
     if (!response.ok) {
       let detail = "";
@@ -642,6 +664,8 @@
 
   const ns = {
     apiJson,
+    apiKey,
+    authHeaders,
     updateI18n,
     escapeHtml,
     escapeAttr,

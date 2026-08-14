@@ -5,6 +5,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("SESSION_DB_PATH", ":memory:")
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -463,3 +464,144 @@ def test_settings_is_frozen_and_rejects_mutation() -> None:
         raise AssertionError("Should have raised ValidationError")
     except Exception as error:
         assert "frozen" in str(error).lower() or "immutable" in str(error).lower() or "instance" in str(error).lower()
+
+
+def _proposal() -> dict:
+    return {
+        "branch": "fix/issue-1",
+        "title": "Fix the bug",
+        "body": "Explain the fix",
+        "changes": [{"path": "src/a.py", "content": "x = 1", "message": "fix: apply"}],
+    }
+
+
+class _ConfirmRequest:
+    def __init__(self) -> None:
+        self.confirm = True
+
+
+async def _apply_fix_fixture(tmp_path, manager=None):
+    """构造一个带校验通过提案的 completed 会话，返回 (manager, settings, session_id)。"""
+    from app.config import Settings as AppSettings
+
+    if manager is None:
+        manager = SessionManager(db_path=str(tmp_path / "apply.db"))
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.issue = IssueData(
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="Bug",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
+    )
+    session.status = "completed"
+    session.phase = "completed"
+    await manager.save(session)
+    await manager.save_pr_proposal(session.session_id, _proposal())
+    settings = AppSettings(openai_api_key="test-key", write_mode=True)
+    return manager, settings, session.session_id
+
+
+async def test_apply_fix_does_not_delete_branch_when_pr_was_created(monkeypatch, tmp_path) -> None:
+    """PR 已创建但响应校验失败（GitHubPRCreatedError）：不得回滚删除分支。"""
+    from fastapi import HTTPException
+
+    from app.github import GitHubPRCreatedError
+    from app.services import apply_fix
+
+    deleted_branches: list[str] = []
+    pr_attempted = False
+
+    class FakeGitHub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get_branch_sha(self, owner, repo, base):
+            return "a" * 40
+
+        async def create_branch(self, owner, repo, branch, sha):
+            pass
+
+        async def create_or_update_file(self, *args, **kwargs):
+            return {}
+
+        async def create_pull_request(self, *args, **kwargs):
+            nonlocal pr_attempted
+            pr_attempted = True
+            raise GitHubPRCreatedError("GitHub created the pull request but returned an invalid URL")
+
+        async def delete_branch(self, owner, repo, branch):
+            deleted_branches.append(branch)
+
+    monkeypatch.setattr("app.services.GitHubClient", FakeGitHub)
+    manager, settings, session_id = await _apply_fix_fixture(tmp_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await apply_fix(
+            session_id=session_id,
+            request=_ConfirmRequest(),
+            settings=settings,
+            session_mgr=manager,
+        )
+    assert exc_info.value.status_code == 502
+    assert pr_attempted, "PR 创建应已被调用"
+    assert deleted_branches == [], "PR 已创建时绝不能删除分支（会关闭刚创建的 PR）"
+    await manager.close()
+
+
+async def test_apply_fix_rolls_back_branch_on_generic_failure(monkeypatch, tmp_path) -> None:
+    """普通 GitHubError（PR 未创建）：回滚删除已建分支。"""
+    from fastapi import HTTPException
+
+    from app.github import GitHubError
+    from app.services import apply_fix
+
+    deleted_branches: list[str] = []
+
+    class FakeGitHub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get_branch_sha(self, owner, repo, base):
+            return "a" * 40
+
+        async def create_branch(self, owner, repo, branch, sha):
+            pass
+
+        async def create_or_update_file(self, *args, **kwargs):
+            return {}
+
+        async def create_pull_request(self, *args, **kwargs):
+            raise GitHubError("boom")
+
+        async def delete_branch(self, owner, repo, branch):
+            deleted_branches.append(branch)
+
+    monkeypatch.setattr("app.services.GitHubClient", FakeGitHub)
+    manager, settings, session_id = await _apply_fix_fixture(tmp_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await apply_fix(
+            session_id=session_id,
+            request=_ConfirmRequest(),
+            settings=settings,
+            session_mgr=manager,
+        )
+    assert exc_info.value.status_code == 502
+    assert deleted_branches == ["fix/issue-1"], "PR 未创建时分支应被回滚删除"
+    await manager.close()

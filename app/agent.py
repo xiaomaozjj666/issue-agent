@@ -242,9 +242,9 @@ class IssueAgent:
                         (monotonic() - tool_started) * 1000
                     )
                 if session is not None and duplicate_count:
-                    session.metrics["duplicate_tool_calls"] = int(
-                        session.metrics.get("duplicate_tool_calls", 0)
-                    ) + duplicate_count
+                    session.metrics["duplicate_tool_calls"] = (
+                        int(session.metrics.get("duplicate_tool_calls", 0)) + duplicate_count
+                    )
 
                 for (tc, name, _args), result in zip(parsed_calls, results, strict=True):
                     if session is not None:
@@ -323,9 +323,7 @@ class IssueAgent:
                 session.report = report
                 session.metrics["files_read"] = len(executor.files_read)
                 session.metrics["github_cache_hits"] = int(getattr(github, "cache_hits", 0)) - github_hits_before
-                session.metrics["github_cache_misses"] = (
-                    int(getattr(github, "cache_misses", 0)) - github_misses_before
-                )
+                session.metrics["github_cache_misses"] = int(getattr(github, "cache_misses", 0)) - github_misses_before
 
             yield report_event(report.model_dump())
 
@@ -365,6 +363,9 @@ class IssueAgent:
     # ── chat ─────────────────────────────────────────────────────────
 
     async def chat(self, session: Session, message: str) -> ChatResponse:
+        # 有意全程持锁：同一会话的并发 chat 串行化（有测试锁定该行为），
+        # 并保证消息追加/裁剪的原子性。与 /stream 的"不全程持锁"策略不同——
+        # chat 是短交互（单次 LLM 往返），持锁阻塞面有限。
         async with session.lock:
             return await self._chat(session, message)
 
@@ -458,9 +459,9 @@ class IssueAgent:
             timeout=self.settings.tool_timeout,
         )
         if duplicate_count:
-            session.metrics["duplicate_tool_calls"] = int(
-                session.metrics.get("duplicate_tool_calls", 0)
-            ) + duplicate_count
+            session.metrics["duplicate_tool_calls"] = (
+                int(session.metrics.get("duplicate_tool_calls", 0)) + duplicate_count
+            )
         for (tc_id, _name, _args), result in zip(tool_specs, results, strict=True):
             session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
             session.metrics["files_read"] = len(executor.files_read)
@@ -473,149 +474,162 @@ class IssueAgent:
 
     async def _chat_stream(self, session: Session, message: str) -> AsyncGenerator[dict, None]:
         tools = get_tool_definitions(self.settings)
-        github, executor, messages = await self._chat_prepare(session, message)
-        async with github:
-          try:
-            for _ in range(self.settings.max_agent_iterations):
-                record_model_request(session.metrics, "chat")
-                collected_content_parts: list[str] = []
-                # 工具调用 chunk 按 index 累积：{index: {"id": ..., "name": ..., "arguments": "..."}}
-                tool_call_buffers: dict[int, dict[str, str]] = {}
-
-                stream = await self._call_llm_stream(
-                    messages,
-                    tools=tools,
-                    max_tokens=self.settings.max_chat_tokens,
-                )
-                usage_response = None
-
-                def capture_usage(chunk) -> None:
-                    nonlocal usage_response
-                    if getattr(chunk, "usage", None) is not None:
-                        usage_response = chunk
-
-                async for delta in iter_deltas(stream, on_chunk=capture_usage):
-                    # 只透传最终回复内容，不展示 reasoning_content（思考过程）
-                    if delta.content:
-                        collected_content_parts.append(delta.content)
-                        yield {"type": "delta", "content": delta.content}
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            idx = tc.index if tc.index is not None else 0
-                            entry = tool_call_buffers.setdefault(idx, {"id": "", "name": "", "arguments": ""})
-                            if tc.id:
-                                entry["id"] = tc.id
-                            fn = getattr(tc, "function", None)
-                            if fn is not None and fn.name:
-                                entry["name"] = fn.name
-                            if fn is not None and fn.arguments:
-                                entry["arguments"] += fn.arguments
-                if usage_response is not None:
-                    record_model_usage(session.metrics, usage_response, "chat")
-
-                collected_content = "".join(collected_content_parts)
-                # LLM 返回空 stream（零 chunk 或全部空 content）且无 tool 调用：
-                # 回滚已追加的 user 消息（避免 dangling user 无 assistant 回复污染下次上下文），
-                # 保留 file_cache 等已读取数据，直接报错让用户重试
-                if not collected_content and not tool_call_buffers:
-                    if session.messages and session.messages[-1].get("role") == "user":
-                        session.messages.pop()
-                    yield {
-                        "type": "error",
-                        "message": "Model returned an empty response. Please try rephrasing your question.",
-                    }
-                    self._chat_finalize(executor, session)
-                    return
-                serialized: dict = {"role": "assistant", "content": collected_content}
-                ordered_tool_calls = [tool_call_buffers[i] for i in sorted(tool_call_buffers)]
-                if ordered_tool_calls:
-                    # 某些代理/网关返回空 tool_call id，生成合成 id 以保留工具调用意图
-                    for idx, entry in enumerate(ordered_tool_calls):
-                        if not entry["id"]:
-                            entry["id"] = f"call_{idx}"
-                    serialized["tool_calls"] = [
-                        {
-                            "id": entry["id"],
-                            "type": "function",
-                            "function": {"name": entry["name"], "arguments": entry["arguments"]},
-                        }
-                        for entry in ordered_tool_calls
-                    ]
-                messages.append(serialized)
-                session.messages.append(serialized)
-
-                valid_tool_calls = serialized.get("tool_calls", [])
-                if not valid_tool_calls:
-                    # 没有工具调用：回复完成
-                    self._chat_finalize(executor, session)
-                    yield {
-                        "type": "done",
-                        "reply": collected_content,
-                        "tools_used": executor.tools_used,
-                    }
-                    return
-
-                # 有工具调用：先发出调用事件，再批量执行独立只读工具。
-                tool_specs: list[tuple[str, str, dict]] = []  # (call_id, name, args)
-                for entry in ordered_tool_calls:
-                    name = entry["name"]
-                    try:
-                        args = json.loads(entry["arguments"]) if entry["arguments"] else {}
-                    except json.JSONDecodeError:
-                        args = {}
-                    yield {"type": "tool_call", "name": name, "args": args}
-                    tool_specs.append((entry["id"], name, args))
-
-                results, _duplicate = await self._chat_execute_tools(
-                    executor, session, tool_specs, messages
-                )
-                for (_tc_id, name, _args), result in zip(tool_specs, results, strict=True):
-                    yield {"type": "tool_result", "name": name, "preview": result[:1200]}
-
-            # 达到迭代上限：追加一条 assistant 消息收尾，
-            # 避免上下文以未完成的 tool_call 结尾导致下次 API 报错
-            depth_reply = t("depth_limit")
-            session.messages.append({"role": "assistant", "content": depth_reply})
-            self._chat_finalize(executor, session)
-            yield {
-                "type": "done",
-                "reply": depth_reply,
-                "tools_used": executor.tools_used,
-            }
-          except Exception:
-            # 异常路径也必须 finalize：回写 file_cache/files_read，保留 chat 期间已读文件
-            self._chat_finalize(executor, session)
+        # 本次 chat 尝试的起始消息位置：失败/取消时回滚到该位置，
+        # 避免 dangling user 消息或半截工具回合污染下次对话的上下文。
+        turn_start = len(session.messages)
+        try:
+            github, executor, messages = await self._chat_prepare(session, message)
+        except BaseException:
+            del session.messages[turn_start:]
             raise
+        async with github:
+            try:
+                for _ in range(self.settings.max_agent_iterations):
+                    record_model_request(session.metrics, "chat")
+                    collected_content_parts: list[str] = []
+                    # 工具调用 chunk 按 index 累积：{index: {"id": ..., "name": ..., "arguments": "..."}}
+                    tool_call_buffers: dict[int, dict[str, str]] = {}
+
+                    stream = await self._call_llm_stream(
+                        messages,
+                        tools=tools,
+                        max_tokens=self.settings.max_chat_tokens,
+                    )
+                    usage_response = None
+
+                    def capture_usage(chunk) -> None:
+                        nonlocal usage_response
+                        if getattr(chunk, "usage", None) is not None:
+                            usage_response = chunk
+
+                    async for delta in iter_deltas(stream, on_chunk=capture_usage):
+                        # 只透传最终回复内容，不展示 reasoning_content（思考过程）
+                        if delta.content:
+                            collected_content_parts.append(delta.content)
+                            yield {"type": "delta", "content": delta.content}
+                        if delta.tool_calls:
+                            for tc in delta.tool_calls:
+                                idx = tc.index if tc.index is not None else 0
+                                entry = tool_call_buffers.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                                if tc.id:
+                                    entry["id"] = tc.id
+                                fn = getattr(tc, "function", None)
+                                if fn is not None and fn.name:
+                                    entry["name"] = fn.name
+                                if fn is not None and fn.arguments:
+                                    entry["arguments"] += fn.arguments
+                    if usage_response is not None:
+                        record_model_usage(session.metrics, usage_response, "chat")
+
+                    collected_content = "".join(collected_content_parts)
+                    # LLM 返回空 stream（零 chunk 或全部空 content）且无 tool 调用：
+                    # 回滚已追加的 user 消息（避免 dangling user 无 assistant 回复污染下次上下文），
+                    # 保留 file_cache 等已读取数据，直接报错让用户重试
+                    if not collected_content and not tool_call_buffers:
+                        if session.messages and session.messages[-1].get("role") == "user":
+                            session.messages.pop()
+                        yield {
+                            "type": "error",
+                            "message": "Model returned an empty response. Please try rephrasing your question.",
+                        }
+                        self._chat_finalize(executor, session)
+                        return
+                    serialized: dict = {"role": "assistant", "content": collected_content}
+                    ordered_tool_calls = [tool_call_buffers[i] for i in sorted(tool_call_buffers)]
+                    if ordered_tool_calls:
+                        # 某些代理/网关返回空 tool_call id，生成合成 id 以保留工具调用意图
+                        for idx, entry in enumerate(ordered_tool_calls):
+                            if not entry["id"]:
+                                entry["id"] = f"call_{idx}"
+                        serialized["tool_calls"] = [
+                            {
+                                "id": entry["id"],
+                                "type": "function",
+                                "function": {"name": entry["name"], "arguments": entry["arguments"]},
+                            }
+                            for entry in ordered_tool_calls
+                        ]
+                    messages.append(serialized)
+                    session.messages.append(serialized)
+
+                    valid_tool_calls = serialized.get("tool_calls", [])
+                    if not valid_tool_calls:
+                        # 没有工具调用：回复完成
+                        self._chat_finalize(executor, session)
+                        yield {
+                            "type": "done",
+                            "reply": collected_content,
+                            "tools_used": executor.tools_used,
+                        }
+                        return
+
+                    # 有工具调用：先发出调用事件，再批量执行独立只读工具。
+                    tool_specs: list[tuple[str, str, dict]] = []  # (call_id, name, args)
+                    for entry in ordered_tool_calls:
+                        name = entry["name"]
+                        try:
+                            args = json.loads(entry["arguments"]) if entry["arguments"] else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                        yield {"type": "tool_call", "name": name, "args": args}
+                        tool_specs.append((entry["id"], name, args))
+
+                    results, _duplicate = await self._chat_execute_tools(executor, session, tool_specs, messages)
+                    for (_tc_id, name, _args), result in zip(tool_specs, results, strict=True):
+                        yield {"type": "tool_result", "name": name, "preview": result[:1200]}
+
+                # 达到迭代上限：追加一条 assistant 消息收尾，
+                # 避免上下文以未完成的 tool_call 结尾导致下次 API 报错
+                depth_reply = t("depth_limit")
+                session.messages.append({"role": "assistant", "content": depth_reply})
+                self._chat_finalize(executor, session)
+                yield {
+                    "type": "done",
+                    "reply": depth_reply,
+                    "tools_used": executor.tools_used,
+                }
+            except BaseException:
+                # 异常/取消路径也必须 finalize：回写 file_cache/files_read，保留 chat 期间已读文件
+                self._chat_finalize(executor, session)
+                # 回滚本次尝试追加的全部消息（user + assistant + tool 回合）
+                del session.messages[turn_start:]
+                raise
 
     async def _chat(self, session: Session, message: str) -> ChatResponse:
         tools = get_tool_definitions(self.settings)
-        github, executor, messages = await self._chat_prepare(session, message)
-        async with github:
-          try:
-            for _ in range(self.settings.max_agent_iterations):
-                record_model_request(session.metrics, "chat")
-                response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
-                record_model_usage(session.metrics, response, "chat")
-                if not response.choices:
-                    raise ModelResponseError("The model returned no choices")
-                msg = response.choices[0].message
-                serialized = _serialize_message(msg)
-                messages.append(serialized)
-                session.messages.append(serialized)
-
-                if not msg.tool_calls:
-                    self._chat_finalize(executor, session)
-                    return ChatResponse(
-                        session_id=session.session_id,
-                        reply=msg.content or "",
-                        tools_used=executor.tools_used,
-                    )
-
-                tool_specs = [(tc.id, *parse_tool_call(tc)) for tc in msg.tool_calls]
-                await self._chat_execute_tools(executor, session, tool_specs, messages)
-          except Exception:
-            self._chat_finalize(executor, session)
+        turn_start = len(session.messages)
+        try:
+            github, executor, messages = await self._chat_prepare(session, message)
+        except BaseException:
+            del session.messages[turn_start:]
             raise
+        async with github:
+            try:
+                for _ in range(self.settings.max_agent_iterations):
+                    record_model_request(session.metrics, "chat")
+                    response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
+                    record_model_usage(session.metrics, response, "chat")
+                    if not response.choices:
+                        raise ModelResponseError("The model returned no choices")
+                    msg = response.choices[0].message
+                    serialized = _serialize_message(msg)
+                    messages.append(serialized)
+                    session.messages.append(serialized)
+
+                    if not msg.tool_calls:
+                        self._chat_finalize(executor, session)
+                        return ChatResponse(
+                            session_id=session.session_id,
+                            reply=msg.content or "",
+                            tools_used=executor.tools_used,
+                        )
+
+                    tool_specs = [(tc.id, *parse_tool_call(tc)) for tc in msg.tool_calls]
+                    await self._chat_execute_tools(executor, session, tool_specs, messages)
+            except BaseException:
+                self._chat_finalize(executor, session)
+                del session.messages[turn_start:]
+                raise
 
         depth_reply = t("depth_limit")
         session.messages.append({"role": "assistant", "content": depth_reply})

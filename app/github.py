@@ -174,6 +174,14 @@ class GitHubFileSkipped(GitHubError):
     pass
 
 
+class GitHubPRCreatedError(GitHubError):
+    """The PR was created on GitHub, but the response could not be validated.
+
+    Callers must NOT roll back the branch in this case: deleting the branch would
+    close the PR that was just created.
+    """
+
+
 def parse_issue_url(url: str) -> tuple[str, str, int]:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.netloc.lower() not in {"github.com", "www.github.com"}:
@@ -350,11 +358,20 @@ class GitHubClient:
                 raise GitHubError(f"GitHub request failed after {self._max_retries + 1} attempts: {exc}") from exc
 
             if response.status_code in RATE_LIMIT_STATUSES:
+                # GitHub 的 429 一定是限流；403 则可能是限流，也可能是权限不足
+                # （token 无访问权、私有仓库等）。只有带限流头时才按限流处理，
+                # 否则让权限错误落到下方通用的 4xx 分支，避免误导性报错。
                 retry_after = response.headers.get("Retry-After") or response.headers.get("X-RateLimit-Reset")
-                detail = f"GitHub API rate limit hit (status {response.status_code})"
-                if retry_after:
-                    detail += f"; retry hint: {retry_after}"
-                raise GitHubRateLimitError(detail)
+                rate_limited = (
+                    response.status_code == 429
+                    or response.headers.get("X-RateLimit-Remaining") == "0"
+                    or retry_after is not None
+                )
+                if rate_limited:
+                    detail = f"GitHub API rate limit hit (status {response.status_code})"
+                    if retry_after:
+                        detail += f"; retry hint: {retry_after}"
+                    raise GitHubRateLimitError(detail)
 
             if response.status_code >= 500 and attempt < self._max_retries:
                 delay = 0.5 * (2**attempt)
@@ -760,7 +777,9 @@ class GitHubClient:
         data = response.json()
         pr_url = data.get("html_url", "")
         if not isinstance(pr_url, str) or not pr_url.startswith("https://github.com/"):
-            raise GitHubError("GitHub returned an invalid pull request URL")
+            # PR 已创建成功，但响应无法校验——抛专用异常，让调用方知道
+            # 分支不能被回滚（删除分支会关闭刚创建的 PR）。
+            raise GitHubPRCreatedError("GitHub created the pull request but returned an invalid URL")
         return {"pr_url": pr_url, "number": data.get("number", 0)}
 
 
