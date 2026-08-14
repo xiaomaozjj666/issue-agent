@@ -228,8 +228,10 @@ class ConnectionPool:
     async def release(self, conn: aiosqlite.Connection) -> None:
         """归还连接到池中。连接已关闭则直接丢弃并减少计数，避免复用坏连接。"""
         self._in_use.discard(conn)
-        # aiosqlite 关闭后内部 _conn 变为 None，不可复用
-        if getattr(conn, "_conn", None) is None:
+        # aiosqlite 关闭后内部 _connection 变为 None，不可复用。
+        # 注意不能用 getattr(conn, "_conn", None)：_conn 是 property，
+        # 连接已关闭时访问会抛 ValueError("no active connection")。
+        if getattr(conn, "_connection", None) is None:
             async with self._creation_lock:
                 if self._created > 0:
                     self._created -= 1

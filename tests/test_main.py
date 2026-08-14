@@ -605,3 +605,233 @@ async def test_apply_fix_rolls_back_branch_on_generic_failure(monkeypatch, tmp_p
     assert exc_info.value.status_code == 502
     assert deleted_branches == ["fix/issue-1"], "PR 未创建时分支应被回滚删除"
     await manager.close()
+
+
+# ── 低覆盖分支补充：设置覆盖 / 限流 / 归档会话 / 导入边界 / 批量路由 ──
+
+
+def test_resolve_override_settings_forks_without_mutating_global() -> None:
+    from app.main import resolve_override_settings
+
+    class FakeReq:
+        language = "en"
+        model = "custom-model"
+        thinking = "disabled"
+        reasoning_effort = "max"
+        review = False
+
+    base = get_settings()
+    forked = resolve_override_settings(FakeReq())
+    assert forked is not base
+    assert forked.language == "en"
+    assert forked.openai_model == "custom-model"
+    assert forked.openai_thinking == "disabled"
+    assert forked.openai_reasoning_effort == "max"
+    assert forked.independent_review is False
+    # 全局单例未被修改
+    assert base.language == get_settings().language
+
+
+def test_resolve_override_settings_no_overrides_returns_singleton() -> None:
+    from app.main import resolve_override_settings
+
+    class FakeReq:
+        language = None
+        model = None
+        thinking = None
+        reasoning_effort = None
+        review = None
+
+    assert resolve_override_settings(FakeReq()) is get_settings()
+
+
+def test_rate_limit_exceeds_threshold_raises_429(monkeypatch) -> None:
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.config import Settings
+    from app.main import _check_rate_limit, _rate_window_buckets
+
+    _rate_window_buckets.clear()
+    low_limit = Settings(openai_api_key="test-key", rate_limit_requests=2, rate_limit_window_seconds=60)
+    monkeypatch.setattr("app.main.get_settings", lambda: low_limit)
+
+    async def run() -> None:
+        await _check_rate_limit("rl-key-1")
+        await _check_rate_limit("rl-key-1")
+        with pytest.raises(HTTPException) as exc_info:
+            await _check_rate_limit("rl-key-1")
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.headers["Retry-After"]
+
+    asyncio.run(run())
+    _rate_window_buckets.clear()
+
+
+def test_rate_limit_cleans_stale_keys() -> None:
+    """超过阈值时，窗口外的旧 key 被清理，字典不会无限膨胀。
+
+    注意：不能通过 patch time.monotonic 模拟时间快进——asyncio 事件循环的
+    loop.time() 也调用 time.monotonic()，会污染循环时钟。改为直接构造过期状态。
+    """
+    import asyncio
+    from collections import deque
+
+    from app.main import _check_rate_limit, _rate_window_buckets
+
+    _rate_window_buckets.clear()
+    # 101 个"远古时间戳"的 key：任何当前窗口都会判定为 stale
+    for index in range(101):
+        _rate_window_buckets[f"old-{index}"] = deque([1.0])
+
+    async def run() -> None:
+        await _check_rate_limit("fresh-key")  # 触发 len>100 的清理检查
+        assert len(_rate_window_buckets) == 1
+        assert "fresh-key" in _rate_window_buckets
+
+    asyncio.run(run())
+    _rate_window_buckets.clear()
+
+
+def test_rate_limit_middleware_returns_429_json(monkeypatch) -> None:
+    """限流超限时返回 JSON 429（而非 500），带 Retry-After 头。"""
+    from app.config import Settings
+    from app.main import get_session_manager as gsm
+    from app.main import get_settings as original_get_settings
+
+    low_limit = Settings(
+        openai_api_key="test-key",
+        rate_limit_requests=2,
+        rate_limit_window_seconds=60,
+    )
+    monkeypatch.setattr("app.main.get_settings", lambda: low_limit)
+    app.dependency_overrides[gsm] = lambda: SessionManager()  # /sessions 依赖（不碰 lock）
+    client = TestClient(app)
+    try:
+        first = client.get("/sessions")
+        second = client.get("/sessions")
+        third = client.get("/sessions")
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 429
+        assert third.json()["detail"].startswith("Rate limit exceeded")
+        assert "retry-after" in {k.lower() for k in third.headers}
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+        monkeypatch.setattr("app.main.get_settings", original_get_settings)
+
+
+async def test_chat_archived_session_returns_409() -> None:
+    """归档会话继续 chat 返回 409。"""
+    import httpx as httpx_client
+
+    from app.main import get_session_manager as gsm
+
+    async with main_module.lifespan(app):
+        manager = app.state.session_manager
+        app.dependency_overrides[gsm] = lambda: manager
+        try:
+            session = await manager.create("https://github.com/acme/widget/issues/1")
+            session.archived_at = "2026-01-01T00:00:00+00:00"
+            await manager.save(session)
+            transport = httpx_client.ASGITransport(app=app)
+            async with httpx_client.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/chat", json={"session_id": session.session_id, "message": "hi"}
+                )
+            assert response.status_code == 409
+            assert "Restore" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+
+
+def _with_session_manager():
+    """为依赖 get_session_manager 的端点提供 manager（TestClient 无 lifespan）。"""
+    from app.main import get_session_manager as gsm
+
+    app.dependency_overrides[gsm] = lambda: SessionManager()
+    return gsm
+
+
+def test_import_rejects_oversized_payload() -> None:
+    gsm = _with_session_manager()
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/session/import",
+            headers={"Content-Length": str(10 * 1024 * 1024)},
+            content=b"{}",
+        )
+        assert response.status_code == 413
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+
+
+def test_import_rejects_invalid_json() -> None:
+    gsm = _with_session_manager()
+    client = TestClient(app)
+    try:
+        response = client.post("/session/import", content=b"not json{{{")
+        assert response.status_code == 400
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+
+
+def test_import_rejects_wrong_format() -> None:
+    gsm = _with_session_manager()
+    client = TestClient(app)
+    try:
+        response = client.post("/session/import", json={"format": "other"})
+        assert response.status_code == 400
+        assert "Not a valid issue-agent session export" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+
+
+def test_import_rejects_missing_issue_url() -> None:
+    gsm = _with_session_manager()
+    client = TestClient(app)
+    try:
+        response = client.post("/session/import", json={"format": "issue-agent-session", "session": {}})
+        assert response.status_code == 400
+        assert "issue_url" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+
+
+def test_batch_submit_invalid_url_returns_422() -> None:
+    from app.task_queue import TaskQueue
+
+    queue = TaskQueue(get_settings(), None, max_concurrent=1, max_queue_size=10)
+    app.state.task_queue = queue
+    client = TestClient(app)
+    response = client.post("/batch", json={"issue_urls": ["not-a-url"]})
+    assert response.status_code == 422
+    assert "issue_url must" in response.json()["detail"]
+
+
+def test_batch_status_unknown_returns_404() -> None:
+    from app.task_queue import TaskQueue
+
+    queue = TaskQueue(get_settings(), None, max_concurrent=1, max_queue_size=10)
+    app.state.task_queue = queue
+    client = TestClient(app)
+    response = client.get("/batch/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_analyze_invalid_url_returns_422(monkeypatch) -> None:
+    """analyze 对 URL 解析失败返回 422。"""
+    from app.agent import IssueAgent as AgentClass
+
+    original = AgentClass.investigate
+
+    async def raise_value_error(self, issue_url, *, session=None):
+        raise ValueError("issue_url must be an https://github.com URL")
+
+    monkeypatch.setattr(AgentClass, "investigate", raise_value_error)
+    client = TestClient(app)
+    response = client.post("/analyze", json={"issue_url": "https://github.com/a/b/issues/1"})
+    assert response.status_code == 422
+    monkeypatch.setattr(AgentClass, "investigate", original)
