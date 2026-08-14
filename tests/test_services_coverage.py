@@ -128,15 +128,20 @@ async def test_mark_session_failed_swallows_conflict(tmp_path, monkeypatch) -> N
 
 
 async def test_finish_cancelled_session_sets_state_and_persists_event(tmp_path) -> None:
+    from time import monotonic
+
     manager = SessionManager(db_path=str(tmp_path / "cancel.db"))
     session = await manager.create("https://github.com/a/b/issues/1")
     event = AgentEvent(type="cancelled", message="cancelled")
-    await finish_cancelled_session(manager, session.session_id, event, started_at=1_000.0)
+    # started_at 用相对当前时刻的值：CI runner 的 monotonic()（uptime）可能 < 1000s，
+    # 固定 1000.0 会得到负数时长
+    started_at = monotonic() - 5.0
+    await finish_cancelled_session(manager, session.session_id, event, started_at=started_at)
     restored = await manager.get(session.session_id)
     assert restored is not None
     assert restored.status == "cancelled"
     assert restored.phase == "cancelled"
-    assert restored.metrics["duration_ms"] >= 0  # monotonic 差值 >= 0 即可
+    assert restored.metrics["duration_ms"] >= 4_000  # ≈5s，宽松下界
     events = await manager.list_events(session.session_id)
     assert events[-1]["type"] == "cancelled"
     await manager.close()
