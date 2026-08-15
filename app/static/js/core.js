@@ -297,7 +297,7 @@
     cancel_failed_retry: "Cancel polling failed repeatedly. Check your network or refresh to see real status.",
     settings_api_key: "API key",
     settings_api_key_placeholder: "Required only when the server sets API_KEY",
-    settings_api_key_note: "Saved locally in this browser; sent with every API request as X-API-Key.",
+    settings_api_key_note: "Stored in this browser only; sent with every API request as X-API-Key.",
     analyzing_btn: "Analyzing…",
     api_key_required: "API key required: the server is authenticated. Add your key in the settings panel (⚙️).",
   };

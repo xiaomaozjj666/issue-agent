@@ -589,10 +589,12 @@ class IssueAgent:
                     "tools_used": executor.tools_used,
                 }
             except BaseException:
-                # 异常/取消路径也必须 finalize：回写 file_cache/files_read，保留 chat 期间已读文件
-                self._chat_finalize(executor, session)
-                # 回滚本次尝试追加的全部消息（user + assistant + tool 回合）
+                # 异常/取消路径：先回滚本次尝试追加的全部消息（user + assistant + tool 回合），
+                # 再 finalize。顺序不能反：_chat_finalize 内部会 trim 掉超预算的旧消息，
+                # 使 turn_start 索引偏移，导致回滚不完整（残留 user 消息）。
                 del session.messages[turn_start:]
+                # finalize：回写 file_cache/files_read，保留 chat 期间已读文件
+                self._chat_finalize(executor, session)
                 raise
 
     async def _chat(self, session: Session, message: str) -> ChatResponse:
@@ -627,8 +629,9 @@ class IssueAgent:
                     tool_specs = [(tc.id, *parse_tool_call(tc)) for tc in msg.tool_calls]
                     await self._chat_execute_tools(executor, session, tool_specs, messages)
             except BaseException:
-                self._chat_finalize(executor, session)
+                # 先回滚再 finalize：finalize 的 trim 会使 turn_start 索引偏移（见 _chat_stream）
                 del session.messages[turn_start:]
+                self._chat_finalize(executor, session)
                 raise
 
         depth_reply = t("depth_limit")

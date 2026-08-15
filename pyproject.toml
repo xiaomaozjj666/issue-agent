@@ -82,7 +82,9 @@ follow_imports = "skip"
 source = ["app"]
 
 [tool.coverage.report]
-fail_under = 75
+# 门槛与当前实际覆盖率（~86.6%）保持合理差距，防止回归；
+# 若新增模块拉低覆盖率，CI 会自动失败并提示补齐测试。
+fail_under = 85
 show_missing = true
 skip_covered = true
 precision = 1

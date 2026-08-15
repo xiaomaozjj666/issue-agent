@@ -678,6 +678,63 @@ async def test_chat_stream_rolls_back_messages_on_model_failure(
     assert session.messages == before, "失败的 chat_stream 尝试不应在历史中留下任何消息"
 
 
+async def test_chat_rollback_survives_message_trim(
+    make_agent, fake_client, fake_response, fake_tool_call, monkeypatch, make_issue
+) -> None:
+    """历史消息触发裁剪后，失败回滚仍必须完整（不得残留本次 user 消息）。
+
+    回归背景：_chat_finalize 内部会 trim 超预算的旧消息，使 turn_start 索引偏移；
+    若先 finalize 再回滚，会漏删部分消息（含 user）。回滚必须先于 finalize。
+    """
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    tc = fake_tool_call("read_file", {"path": "src/parser.py"})
+    responses = [fake_response(tool_calls=[tc])]  # 第一轮工具调用，第二轮必然抛错
+    # 预算压到最低（5000），确保 30 条旧消息必然触发 trim
+    agent = make_agent(client=fake_client(responses), settings_kwargs={"max_total_context_chars": 5000})
+    session = Session(session_id="rollback-trim", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/parser.py"]
+    session.messages = [{"role": "user", "content": "old " + "x" * 300} for _ in range(30)]
+    before_len = len(session.messages)
+    with pytest.raises(RuntimeError, match="No more mock responses"):
+        await agent.chat(session, "看一下 parser 代码")
+    assert len(session.messages) <= before_len
+    assert all(
+        m.get("content") != "看一下 parser 代码" for m in session.messages
+    ), "trim 场景下不得残留本次 user 消息"
+
+
+async def test_chat_stream_rollback_survives_message_trim(
+    make_agent, fake_client, monkeypatch, make_issue
+) -> None:
+    """chat_stream 版本：trim 触发后失败回滚仍完整。"""
+    monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
+    from tests.conftest import _FakeStreamChunk
+
+    tc = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(name="read_file", arguments='{"path": "src/parser.py"}'),
+    )
+    agent = make_agent(
+        client=fake_client([[_FakeStreamChunk(tool_calls=[tc])]]),
+        settings_kwargs={"max_total_context_chars": 5000},
+    )
+    session = Session(session_id="rollback-stream-trim", issue_url="https://github.com/a/b/issues/1")
+    session.issue = make_issue()
+    session.tree = ["src/parser.py"]
+    session.messages = [{"role": "user", "content": "old " + "x" * 300} for _ in range(30)]
+    before_len = len(session.messages)
+    events = []
+    async for event in agent.chat_stream(session, "看一下 parser 代码"):
+        events.append(event)
+    assert events[-1]["type"] == "error"
+    assert len(session.messages) <= before_len
+    assert all(
+        m.get("content") != "看一下 parser 代码" for m in session.messages
+    ), "trim 场景下不得残留本次 user 消息"
+
+
 async def test_chat_stream_yields_delta_and_done(make_agent, fake_client, monkeypatch, make_issue) -> None:
     """chat_stream 应逐 chunk 透传 delta，最终发出 done 事件携带完整 reply。"""
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)

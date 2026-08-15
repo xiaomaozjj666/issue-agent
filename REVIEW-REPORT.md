@@ -11,9 +11,9 @@
 |---|---|---|
 | Lint | `ruff check app/ tests/` | ✅ All checks passed |
 | 类型检查 | `mypy app/` | ✅ 26 files, no issues |
-| 单元/集成测试 | `pytest -v --cov=app` | ✅ **250/250 通过**，覆盖率 **80.34%**（门槛 75%） |
-| 浏览器 E2E | `npx playwright test` | ✅ **8/8 通过**（桌面 7 + 移动 1，Chromium） |
-| 依赖漏洞 | `pip-audit --strict` | ⚠️ 未发现已知 CVE；因本地可编辑安装包 `github-issue-agent` 不在 PyPI 上而 exit 1（CI 已 `continue-on-error`） |
+| 单元/集成测试 | `pytest -v --cov=app` | ✅ **327/327 通过**，覆盖率 **86.64%**（门槛 85%） |
+| 浏览器 E2E | `npx playwright test` | ✅ **11/11 通过**（桌面 10 + 移动 1，Chromium） |
+| 依赖漏洞 | `pip-audit --skip-editable` | ✅ 无已知 CVE（本地可编辑安装包跳过，真实 CVE 仍会失败阻断） |
 
 注：本地跑在 Python 3.14；CI 矩阵覆盖 3.11/3.12/3.13，单测在三个版本上通过。
 
@@ -139,7 +139,7 @@ while True:
 - **前端 XSS 防线到位**：报告/消息 Markdown 走 `marked + DOMPurify`（标签/属性白名单 + `afterSanitizeAttributes` 钩子强制 `rel="noopener noreferrer nofollow"`），库加载失败降级纯文本；工具卡片、时间线、历史卡片全部 `escapeHtml`；session-runtime.js 无裸注入。
 - **并发正确性**：会话乐观锁（version）+ 冲突 409、取消/中断路径的 `CancelledError` 传播链处理、`recover_stale` 兜底、流式端点不全程持锁、连接池借用跟踪。
 - **工程纪律**：`.env` 未入库、ruff/mypy 全绿、CI 矩阵完整、e2e 使用 mock 路由隔离后端、Docker 非 root + HEALTHCHECK、报告回填脚本带备份+校验且幂等、日志 JSON 格式支持。
-- **测试质量高**：250 个单测覆盖熔断器状态机、重试降级、证据过滤、并发冲突、缓存边界、回滚等关键路径；覆盖率 80.3% 且有 fail_under 门槛。
+- **测试质量高**：327 个单测覆盖熔断器状态机、重试降级、证据过滤、并发冲突、缓存边界、回滚（含 trim 索引偏移回归）、CLI 全流程等关键路径；覆盖率 86.6% 且有 fail_under=85 门槛。
 
 ---
 
@@ -181,9 +181,14 @@ while True:
 
 **修复后全量验证（第二轮）**：
 - ruff ✅ / mypy ✅（26 文件）
-- pytest ✅ **262/262 通过**，覆盖率 81.25%
+- pytest ✅ **327/327 通过**，覆盖率 86.64%（门槛 85%）
 - pip-audit ✅ `No known vulnerabilities found`（exit 0）
-- e2e：9 个用例结果见上
+- e2e ✅ 11/11（后经 CI browser job 持续验证）
+
+**第三轮复查（2026-08-15）**：
+- 发现并修复 `agent.py` chat 回滚的 **trim 索引偏移 bug**：`_chat_finalize` 内部裁剪超预算旧消息会使 `turn_start` 索引偏移，先 finalize 后回滚会残留本次 user 消息（已实测复现）。修复为先回滚再 finalize；新增 2 个回归测试（chat / chat_stream 的 trim 场景）。
+- `pyproject.toml` 覆盖率门槛 75 → **85**（与当前 86.6% 匹配，防回归）。
+- core.js 降级文案与 i18n en 统一。
 
 **保留未改（有意为之，均有注释说明）**：
-- 无——第一、二轮修复已覆盖审查报告全部发现与观察项（含"保留未改"的两项：LIKE 搜索已优化、pip-audit 已可判定）。
+- 无——第一、二、三轮修复已覆盖审查报告全部发现与观察项（含"保留未改"的两项：LIKE 搜索已优化、pip-audit 已可判定）。
