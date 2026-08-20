@@ -380,7 +380,8 @@ test("renders responsive decision charts without overlaps or console errors", as
       riskCriticalHover: modalRisk.getOption().series[0].data[11].emphasis.itemStyle.color,
     };
   })).toEqual({
-    evidenceRoot: "#58a6ff",
+    // 证据链根节点使用强调深蓝（strengthStrong），不再是普通 primary 蓝
+    evidenceRoot: "#2f81f7",
     riskMarker: "#f0883e",
     riskLow: "#1f4d32",
     riskCritical: "#642b37",

@@ -45,6 +45,10 @@
     riskMarkerHigh: "#f0883e",
     riskGridBorder: "#161b22",
     riskMarkerBorder: "#f0f6fc",
+    // 证据强度色阶（dark）：同一色系的明暗表达强弱，语义统一
+    strengthStrong: "#2f81f7",
+    strengthModerate: "rgba(88, 166, 255, 0.38)",
+    strengthWeak: "rgba(88, 166, 255, 0.12)",
   };
 
   const PALETTE_LIGHT = {
@@ -72,6 +76,10 @@
     riskMarkerHigh: "#bc6b00",
     riskGridBorder: "#ffffff",
     riskMarkerBorder: "#ffffff",
+    // 证据强度色阶（light）
+    strengthStrong: "#0969da",
+    strengthModerate: "rgba(9, 105, 218, 0.35)",
+    strengthWeak: "rgba(9, 105, 218, 0.1)",
   };
 
   function getPalette() {
@@ -104,6 +112,26 @@
       hideDelay: 100,
       textStyle: Object.assign({}, tooltip && tooltip.textStyle, { fontSize: 12 }),
     });
+  }
+
+  // 共享 tooltip 外观（Grafana/Linear 风格）：细边框 + 圆角 + 柔和阴影，
+  // 而不是默认的浮层感。各图表在 formatter 之外复用此配置。
+  function chartTooltip(palette, extra) {
+    return mobileTooltip(Object.assign({
+      confine: true,
+      appendToBody: true,
+      enterable: false,
+      className: "ia-chart-tooltip",
+      backgroundColor: palette.tooltipBg,
+      borderColor: palette.line,
+      borderWidth: 1,
+      borderRadius: 8,
+      padding: [10, 12],
+      shadowBlur: 12,
+      shadowColor: "rgba(0, 0, 0, 0.18)",
+      textStyle: { color: palette.text, fontSize: 12, lineHeight: 18 },
+      position: smartTooltipPosition,
+    }, extra || {}));
   }
 
   // 智能定位：tooltip 跟随鼠标但靠近边界时自动翻转，避免遮挡数据点。
@@ -333,22 +361,13 @@
     const totalRemoved = stats.reduce(function (s, f) { return s + f.removed; }, 0);
 
     fitChartHeight(container, rows.length);
-    const barW = rows.length <= 3 ? 26 : 16;
+    const barW = rows.length <= 3 ? 26 : 18;
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
     chart.setOption({
       animationDuration: 200,
       animationEasing: "cubicOut",
-      tooltip: mobileTooltip({
-        confine: true,
-        appendToBody: true,
-        enterable: false,
-        className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg,
-        borderWidth: 0,
-        padding: [10, 14],
-        textStyle: { color: palette.text, fontSize: 12 },
-        position: smartTooltipPosition,
+      tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const row = rows[params.dataIndex];
           if (!row) return "";
@@ -367,7 +386,7 @@
         itemWidth: 10,
         itemHeight: 10,
         icon: "roundRect",
-        textStyle: { color: palette.textDim, fontSize: 10 },
+        textStyle: { color: palette.textDim, fontSize: 11 },
         data: [t("diffstat_added"), t("diffstat_removed")],
       },
       grid: { left: 8, right: 64, top: 32, bottom: 28, containLabel: true },
@@ -381,19 +400,19 @@
       xAxis: {
         type: "value",
         minInterval: 1,
-        axisLabel: { color: palette.textDim, fontSize: 10 },
-        splitLine: { lineStyle: { color: palette.line, opacity: 0.4 } },
+        axisLabel: { color: palette.textDim, fontSize: 11 },
+        splitLine: { lineStyle: { color: palette.line, opacity: 0.22 } },
       },
       yAxis: {
         type: "category",
         data: labels,
         axisLabel: {
           color: palette.textDim,
-          fontSize: 10,
+          fontSize: 11,
           width: isMobile() ? 90 : 150,
           overflow: "truncate",
         },
-        axisLine: { lineStyle: { color: palette.line } },
+        axisLine: { lineStyle: { color: palette.line, opacity: 0.5 } },
         axisTick: { show: false },
       },
       series: [
@@ -502,7 +521,7 @@
     const labels = makeLabels(rows.map(function (r) { return r.path; }));
 
     fitChartHeight(container, rows.length);
-    const barW = rows.length <= 3 ? 26 : 16;
+    const barW = rows.length <= 3 ? 26 : 18;
     const readCount = rows.filter(function (r) { return r.read; }).length;
     const patchedCount = rows.filter(function (r) { return r.patched; }).length;
     const statParts = [];
@@ -515,16 +534,7 @@
     chart.setOption({
       animationDuration: 200,
       animationEasing: "cubicOut",
-      tooltip: mobileTooltip({
-        confine: true,
-        appendToBody: true,
-        enterable: false,
-        className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg,
-        borderWidth: 0,
-        padding: [10, 14],
-        textStyle: { color: palette.text, fontSize: 12 },
-        position: smartTooltipPosition,
+      tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const row = rows[params.dataIndex];
           if (!row) return "";
@@ -556,19 +566,19 @@
       xAxis: {
         type: "value",
         minInterval: 1,
-        axisLabel: { color: palette.textDim, fontSize: 10 },
-        splitLine: { lineStyle: { color: palette.line, opacity: 0.4 } },
+        axisLabel: { color: palette.textDim, fontSize: 11 },
+        splitLine: { lineStyle: { color: palette.line, opacity: 0.22 } },
       },
       yAxis: {
         type: "category",
         data: labels,
         axisLabel: {
           color: palette.textDim,
-          fontSize: 10,
+          fontSize: 11,
           width: isMobile() ? 90 : 150,
           overflow: "truncate",
         },
-        axisLine: { lineStyle: { color: palette.line } },
+        axisLine: { lineStyle: { color: palette.line, opacity: 0.5 } },
         axisTick: { show: false },
       },
       series: [{
@@ -626,7 +636,14 @@
   }
 
   function strengthColor(strength, palette) {
-    return ({ weak: palette.muted, moderate: palette.primary, strong: palette.success })[strength] || palette.muted;
+    // 单色系明暗：strong=实心深蓝、moderate=半透明、weak=浅底（配合空心描边）
+    return ({ strong: palette.strengthStrong, moderate: palette.strengthModerate, weak: palette.strengthWeak })[strength] || palette.strengthModerate;
+  }
+
+  // weak 强度使用空心描边节点，视觉上明确"较弱"而非高亮
+  function strengthFillStyle(strength, palette) {
+    if (strength === "weak") return { color: "transparent", borderColor: palette.strengthStrong, borderWidth: 1.5 };
+    return { color: strengthColor(strength, palette), borderColor: palette.tooltipBg, borderWidth: 2 };
   }
   // ── 区块4：波及范围 ──────────────────────────────────────
   // 受影响模块/文件 treemap：以 impact.blast_radius 为主，补丁改动文件为补充；
@@ -711,11 +728,7 @@
       chart.setOption({
         animationDuration: 200,
         animationEasing: "cubicOut",
-        tooltip: mobileTooltip({
-          confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
-          backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
-          textStyle: { color: palette.text, fontSize: 12 },
-          position: smartTooltipPosition,
+        tooltip: chartTooltip(palette, {
           formatter: function (info) {
             const d = info.data || {};
             return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
@@ -729,7 +742,7 @@
         grid: { left: 12, right: 92, top: 52, bottom: 28, containLabel: true },
         xAxis: {
           type: "value",
-          splitLine: { lineStyle: { color: palette.line, opacity: 0.4, type: "dashed" } },
+          splitLine: { lineStyle: { color: palette.line, opacity: 0.2, type: "dashed" } },
           axisLabel: { color: palette.textDim, fontSize: 11 },
         },
         yAxis: {
@@ -742,7 +755,15 @@
         toolbox: toolbox(palette, container),
         series: [{
           type: "bar",
-          data: rows.map(function (r) { return { value: r.value, name: r.name, changed: r.changed, itemStyle: { color: palette.primary, borderRadius: [0, 3, 3, 0] } }; }),
+          data: rows.map(function (r) {
+            return {
+              value: r.value,
+              name: r.name,
+              changed: r.changed,
+              // 按严重度着色（非全蓝）：条形颜色直接表达"影响有多大"
+              itemStyle: { color: severityColor(sev, palette), borderRadius: [0, 3, 3, 0] },
+            };
+          }),
           barMaxWidth: 28,
           label: {
             show: true,
@@ -761,16 +782,17 @@
     } else {
       const treeData = modules.map(function (mod) {
         const changed = moduleChanges[mod] || 1;
-        return { name: mod, value: changed, itemStyle: { color: palette.primary } };
+        return {
+          name: mod,
+          value: changed,
+          // 按严重度着色：色块即表达"影响面严重程度"
+          itemStyle: { color: severityColor(sev, palette) },
+        };
       });
       chart.setOption({
         animationDuration: 200,
         animationEasing: "cubicOut",
-        tooltip: mobileTooltip({
-          confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
-          backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
-          textStyle: { color: palette.text, fontSize: 12 },
-          position: smartTooltipPosition,
+        tooltip: chartTooltip(palette, {
           formatter: function (info) {
             const d = info.data || {};
             const changed = d.value > 1 ? d.value : 0;
@@ -789,7 +811,7 @@
           nodeClick: false,
           breadcrumb: { show: false },
           label: { color: "#ffffff", fontSize: 12, fontWeight: 600, formatter: function (p) { return p.name; } },
-          itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 1, borderRadius: 2 },
+          itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 2, borderRadius: 4 },
           data: treeData,
         }],
       });
@@ -843,14 +865,14 @@
           itemStyle: {
             color: palette["risk" + key],
             borderColor: palette.riskGridBorder,
-            borderWidth: 3,
-            borderRadius: 7,
+            borderWidth: 1,
+            borderRadius: 2,
           },
           emphasis: {
             itemStyle: {
               color: palette["risk" + key + "Hover"],
               borderColor: palette.riskGridBorder,
-              borderWidth: 3,
+              borderWidth: 1,
               shadowBlur: 3,
               shadowColor: "rgba(0,0,0,0.14)",
             },
@@ -868,10 +890,8 @@
     chart.setOption({
       animationDuration: 200,
       animationEasing: "cubicOut",
-      tooltip: mobileTooltip({
-        confine: true, appendToBody: false, enterable: false, className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [8, 10],
-        textStyle: { color: palette.text, fontSize: 12 },
+      tooltip: chartTooltip(palette, {
+        appendToBody: false,
         transitionDuration: 0,
         position: matrixTooltipPosition,
         formatter: function (params) {
@@ -897,7 +917,7 @@
         name: t("report_likelihood"),
         nameLocation: "middle",
         nameGap: 28,
-        nameTextStyle: { color: palette.textDim, fontSize: 11 },
+        nameTextStyle: { color: palette.textDim, fontSize: 12, fontWeight: 600 },
         data: likeLevels.map(function (l) { return enumLabel("likelihood", l); }),
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { show: false },
@@ -909,7 +929,7 @@
         name: t("report_severity"),
         nameLocation: "middle",
         nameGap: 34,
-        nameTextStyle: { color: palette.textDim, fontSize: 11 },
+        nameTextStyle: { color: palette.textDim, fontSize: 12, fontWeight: 600 },
         data: sevLevels.map(function (s) { return enumLabel("severity", s); }),
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { show: false },
@@ -932,8 +952,9 @@
             color: markerColor,
             borderColor: palette.riskMarkerBorder || palette.bg || "#fff",
             borderWidth: 2.5,
-            shadowBlur: 4,
-            shadowColor: "rgba(0,0,0,0.2)",
+            // 柔和外发光替代硬描边：醒目但不过度突兀
+            shadowBlur: 10,
+            shadowColor: "rgba(0,0,0,0.28)",
           },
           label: {
             show: true,
@@ -980,6 +1001,7 @@
     const children = evidence.map(function (e, i) {
       const pathParts = String(e.path).split("/");
       const fileName = pathParts[pathParts.length - 1] || e.path;
+      const strength = e.strength || "moderate";
       return {
         name: fileName,
         idx: i,
@@ -987,10 +1009,10 @@
         shortPath: pathParts.slice(-2).join("/") || fileName,
         fileName: fileName,
         lines: e.lines || "",
-        strength: e.strength || "moderate",
+        strength: strength,
         kind: e.kind || "code",
         reason: e.reason || "",
-        itemStyle: { color: strengthColor(e.strength || "moderate", palette) },
+        itemStyle: strengthFillStyle(strength, palette),
       };
     });
 
@@ -1040,23 +1062,24 @@
         roam: container.classList.contains("chart-modal-canvas"),
         data: [{
           name: rootLabel,
-          itemStyle: { color: palette.primary, borderColor: palette.primary },
+          // 根节点：实心强调色 + 白字标签卡片，与叶子形成主次
+          itemStyle: { color: palette.strengthStrong, borderColor: palette.strengthStrong, borderWidth: 2 },
           label: {
             position: rootPosition,
             verticalAlign: layout.vertical ? "bottom" : "middle",
             align: layout.vertical ? "center" : "right",
             distance: 10,
-            color: palette.text,
+            color: palette.tooltipBg,
             fontWeight: 700,
             fontSize: 11,
             lineHeight: 17,
             width: layout.rootLabelW,
             overflow: "break",
-            backgroundColor: palette.tooltipBg,
-            borderColor: palette.line,
-            borderWidth: 1,
-            borderRadius: 4,
-            padding: [6, 8],
+            backgroundColor: palette.strengthStrong,
+            borderColor: palette.strengthStrong,
+            borderWidth: 0,
+            borderRadius: 6,
+            padding: [7, 10],
           },
           children: children,
         }],
@@ -1066,13 +1089,13 @@
         top: layout.top,
         bottom: layout.bottom,
         symbol: "circle",
-        symbolSize: 13,
+        symbolSize: 12,
         edgeShape: "curve",
         edgeForkPosition: "50%",
         expandAndCollapse: false,
         initialTreeDepth: -1,
-        lineStyle: { color: palette.line, width: 1.5, curveness: layout.vertical ? 0.42 : 0.5 },
-        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1.5 },
+        lineStyle: { color: palette.line, opacity: 0.6, width: 1.25, curveness: layout.vertical ? 0.42 : 0.5 },
+        itemStyle: { borderColor: palette.tooltipBg, borderWidth: 2 },
         label: {
           color: palette.text,
           fontSize: 11,
@@ -1115,11 +1138,7 @@
     chart.setOption({
       animationDuration: 200,
       animationEasing: "cubicOut",
-      tooltip: mobileTooltip({
-        confine: true, appendToBody: true, enterable: false, className: "ia-chart-tooltip",
-        backgroundColor: palette.tooltipBg, borderWidth: 0, padding: [10, 14],
-        textStyle: { color: palette.text, fontSize: 12 },
-        position: smartTooltipPosition,
+      tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const d = params.data || {};
           if (params.dataIndex === 0 || !d.fullPath) {
