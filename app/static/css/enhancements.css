@@ -312,3 +312,28 @@ textarea:focus::placeholder {
 .code-lang-label {
   font-variant-numeric: tabular-nums;
 }
+
+/* ── 波及范围徽章流（无补丁数据时的降级视图） ── */
+.blast-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px 4px;
+}
+.blast-chip {
+  display: inline-block;
+  padding: 5px 12px;
+  border: 1px solid;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  background: transparent;
+}
+.blast-chips-note {
+  margin-top: 6px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+}

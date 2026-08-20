@@ -577,6 +577,13 @@
           fontSize: 11,
           width: isMobile() ? 90 : 150,
           overflow: "truncate",
+          // 未读文件加红色警示前缀：审计状态一眼可查
+          formatter: function (value, index) {
+            const row = rows[index];
+            if (row && !row.read) return "{warn|⚠ " + value + "}";
+            return value;
+          },
+          rich: { warn: { color: palette.danger, fontWeight: 600 } },
         },
         axisLine: { lineStyle: { color: palette.line, opacity: 0.5 } },
         axisTick: { show: false },
@@ -590,17 +597,21 @@
           };
         }),
         barMaxWidth: barW,
-        // 条形右侧标注：条数 + 补丁覆盖状态
+        // 条形右侧标注：条数 + 补丁覆盖状态；未读时红色"未读"徽章
         label: {
           show: true,
           position: "right",
           fontSize: 10,
           fontWeight: 600,
           color: palette.textDim,
+          rich: { warn: { color: palette.danger, fontWeight: 600 } },
           formatter: function (params) {
             const row = rows[params.dataIndex];
             if (!row) return "";
-            return String(row.count) + (row.patched ? " \u00b7 " + t("verify_patched") : "");
+            const parts = [String(row.count)];
+            if (row.patched) parts.push(t("verify_patched"));
+            if (!row.read) parts.push("{warn|" + t("verify_not_read") + "}");
+            return parts.join(" \u00b7 ");
           },
         },
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
@@ -713,6 +724,21 @@
     const sev = impact.severity || "medium";
     const sevColor = severityColor(sev, palette);
     const modules = Object.keys(moduleSet);
+    // 无补丁改动数据时（模块只是名单，没有数值维度），降级为徽章流：
+    // 等长的装饰条形没有信息量，紧凑标签 + 严重度着色更诚实。
+    const totalChanged = modules.reduce(function (s, m) { return s + (moduleChanges[m] || 0); }, 0);
+    if (totalChanged === 0) {
+      const chips = modules.map(function (mod) {
+        return '<span class="blast-chip" style="border-color:' + sevColor + ';color:' + sevColor + ';">' +
+          IA.escapeHtml(mod) + "</span>";
+      }).join("");
+      container.innerHTML =
+        '<div class="blast-chips" role="list">' + chips + "</div>" +
+        '<div class="blast-chips-note">' + IA.escapeHtml(t("chart_blast_radius_note")) + "</div>";
+      container.style.height = "";
+      container.style.minHeight = "";
+      return null;
+    }
     const useBar = modules.length <= 3;
 
     // 与并排的风险矩阵保持一致高度，避免少量模块时卡片下方留下大块空白。
@@ -1012,9 +1038,54 @@
         strength: strength,
         kind: e.kind || "code",
         reason: e.reason || "",
+        claim: e.claim || "",
         itemStyle: strengthFillStyle(strength, palette),
       };
     });
+
+    // 证据按 claim 分组：根因 / 影响 / 修复 三个结论组。
+    // claim 由 LLM 生成或回填（历史报告是整段根因文本），做宽松归一化；
+    // 全部证据同组时保持平铺，避免冗余的中间层。
+    function claimGroup(claim) {
+      const c = String(claim || "").toLowerCase();
+      if (c.indexOf("impact") !== -1 || c.indexOf("影响") !== -1 || c.indexOf("波及") !== -1) return "impact";
+      if (c.indexOf("fix") !== -1 || c.indexOf("修复") !== -1 || c.indexOf("proposed") !== -1) return "fix";
+      return "root";
+    }
+
+    function groupEvidenceByClaim() {
+      const groups = { root: [], impact: [], fix: [] };
+      children.forEach(function (leaf) {
+        groups[claimGroup(leaf.claim)].push(leaf);
+      });
+      const present = ["root", "impact", "fix"].filter(function (g) { return groups[g].length > 0; });
+      if (present.length <= 1) return { grouped: false, data: children };
+      return {
+        grouped: true,
+        data: present.map(function (g) {
+          return {
+            name: g === "impact" ? t("report_impact") : g === "fix" ? t("report_proposed_changes") : t("report_root_cause"),
+            group: g,
+            // 组节点：小方块 + 浅色胶囊标签，与根节点（白字深卡）和叶子（强度色点）区分
+            symbol: "rect",
+            symbolSize: [7, 7],
+            itemStyle: { color: "transparent", borderColor: palette.line, borderWidth: 1 },
+            label: {
+              color: palette.textDim,
+              fontWeight: 600,
+              fontSize: 10,
+              backgroundColor: palette.tooltipBg,
+              borderColor: palette.line,
+              borderWidth: 1,
+              borderRadius: 4,
+              padding: [3, 7],
+            },
+            children: groups[g],
+          };
+        }),
+      };
+    }
+    const groupedEvidence = groupEvidenceByClaim();
 
     function evidenceLayout(width) {
       const safeWidth = Math.max(320, width || 320);
@@ -1026,12 +1097,13 @@
         return {
           vertical: true,
           width: safeWidth,
-          height: evidence.length > 4 ? 380 : 350,
+          // 分组后树多一层，高度相应增加
+          height: evidence.length > 4 ? 380 : (groupedEvidence.grouped ? 400 : 350),
           rootLabelW: Math.max(180, Math.min(520, safeWidth - 128)),
           evidenceLabelW: Math.max(64, Math.min(168, Math.floor((safeWidth - 48) / columns) - 40)),
           rootMaxLength: 104,
-          top: 140,
-          bottom: 108,
+          top: groupedEvidence.grouped ? 170 : 140,
+          bottom: groupedEvidence.grouped ? 128 : 108,
           left: 32,
           right: 32,
         };
@@ -1039,7 +1111,7 @@
       return {
         vertical: false,
         width: safeWidth,
-        height: Math.max(260, Math.min(440, 164 + evidence.length * 32)),
+        height: Math.max(260, Math.min(460, 164 + (evidence.length + (groupedEvidence.grouped ? 2 : 0)) * 32)),
         rootLabelW: Math.max(150, Math.min(250, Math.round(safeWidth * 0.26))),
         evidenceLabelW: Math.max(124, Math.min(220, Math.round(safeWidth * 0.22))),
         rootMaxLength: 140,
@@ -1081,7 +1153,7 @@
             borderRadius: 6,
             padding: [7, 10],
           },
-          children: children,
+          children: groupedEvidence.data,
         }],
         orient: layout.vertical ? "TB" : "LR",
         left: layout.vertical ? layout.left : layout.rootLabelW + 32,
@@ -1107,15 +1179,15 @@
             align: layout.vertical ? "center" : "left",
             distance: 9,
             color: palette.text,
-            fontSize: 10,
-            lineHeight: 15,
+            fontSize: 11,
+            lineHeight: 16,
             width: layout.evidenceLabelW,
             overflow: "truncate",
             backgroundColor: palette.tooltipBg,
             borderColor: palette.line,
             borderWidth: 1,
             borderRadius: 4,
-            padding: [4, 6],
+            padding: [5, 8],
             formatter: function (params) {
               const d = params.data || {};
               const path = layout.vertical ? d.fileName : d.shortPath;
@@ -1141,6 +1213,11 @@
       tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const d = params.data || {};
+          if (d.group) {
+            // 结论组节点：说明该组证据支撑的结论
+            return '<div style="font-weight:600;max-width:300px;">' + IA.escapeHtml(d.name) + '</div>' +
+              '<div style="font-size:11px;color:' + palette.textDim + ';margin-top:2px;">' + IA.escapeHtml(t("evidence_claim_group_hint")) + '</div>';
+          }
           if (params.dataIndex === 0 || !d.fullPath) {
             return '<div style="font-weight:600;max-width:300px;white-space:normal;">' + IA.escapeHtml(rootCause) + "</div>";
           }
