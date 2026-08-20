@@ -300,6 +300,8 @@
     settings_api_key_note: "Stored in this browser only; sent with every API request as X-API-Key.",
     analyzing_btn: "Analyzing…",
     api_key_required: "API key required: the server is authenticated. Add your key in the settings panel (⚙️).",
+    evidence_claim_group_hint: "Evidence in this group supports the conclusion above",
+    chart_blast_radius_note: "Affected modules (colored by severity; no patch diff available)",
   };
 
   function loadI18n() {
