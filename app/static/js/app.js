@@ -1019,7 +1019,7 @@
           `<button type="button" class="hero-example" data-hero-url="${IA.escapeAttr(ex.url)}">` +
           `<span class="hero-example-repo">${IA.escapeHtml(ex.repo)}</span>` +
           `<span class="hero-example-desc">${IA.escapeHtml(ex.desc)}</span>` +
-          `<span class="hero-example-cta">${IA.escapeHtml(t("hero_start_button"))} →</span>` +
+          `<span class="hero-example-cta">${IA.escapeHtml(t("hero_start_button"))}</span>` +
           `</button>`
         );
       })
