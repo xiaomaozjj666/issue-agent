@@ -93,20 +93,23 @@ test("renders responsive decision charts without overlaps or console errors", as
   await page.goto("/");
   expect(optionalVendorRequests, "首页不应提前加载图表或代码高亮库").toEqual([]);
   await expect(page.getByRole("heading", { level: 1 })).toHaveAccessibleName("Issue 溯源・自动生成修复补丁");
+  // 去 AI 味（2026-08）：hero 不再挂载聚光/视差/磁吸等 JS 装饰动效——
+  // 悬停时无 spotlight 状态、无 --spot-o 变量、CTA 无 inline transform
+  //（保留 CSS 的克制 hover 上浮反馈）。
   const heroStep = page.locator(".hero-step").first();
   await heroStep.hover();
-  await expect(heroStep).not.toHaveCSS("transform", "none");
-  await expect(heroStep).toHaveAttribute("data-spotlight-active", "true");
-  const heroSpotlight = await heroStep.evaluate((card) => getComputedStyle(card).getPropertyValue("--spot-o").trim());
-  expect(Number(heroSpotlight)).toBeGreaterThanOrEqual(0.18);
+  expect(await heroStep.getAttribute("data-spotlight-active")).toBeNull();
+  // --spot-o 的 CSS 默认值为 0（聚光关闭态）；开启时 JS 会设为 >0
+  const stepSpot = await heroStep.evaluate((card) => getComputedStyle(card).getPropertyValue("--spot-o").trim());
+  expect(Number(stepSpot || 0)).toBe(0);
   const heroExample = page.locator(".hero-example").first();
   await heroExample.hover();
-  await expect(heroExample).toHaveAttribute("data-spotlight-active", "true");
-  await expect(heroExample).not.toHaveCSS("transform", "none");
+  expect(await heroExample.getAttribute("data-spotlight-active")).toBeNull();
+  const exampleSpot = await heroExample.evaluate((card) => getComputedStyle(card).getPropertyValue("--spot-o").trim());
+  expect(Number(exampleSpot || 0)).toBe(0);
   const heroCta = page.getByRole("button", { name: "开始排查", exact: true });
-  const heroCtaBox = await heroCta.boundingBox();
-  await heroCta.hover({ position: { x: heroCtaBox.width - 4, y: heroCtaBox.height / 2 } });
-  await expect.poll(() => heroCta.evaluate((button) => button.style.transform)).not.toBe("");
+  await heroCta.hover();
+  expect(await heroCta.evaluate((button) => button.style.transform)).toBe("");
   await historyCard(page, 1).click();
   await page.getByRole("button", { name: "查看完整报告" }).click();
   await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
@@ -223,7 +226,8 @@ test("renders responsive decision charts without overlaps or console errors", as
   const riskItem = page.locator(".risk-item").first();
   await riskItem.hover();
   await expect(riskItem).not.toHaveCSS("box-shadow", "none");
-  await expect(riskItem).toHaveAttribute("data-spotlight-active", "true");
+  // 去 AI 味：报告项不再挂载聚光
+  expect(await riskItem.getAttribute("data-spotlight-active")).toBeNull();
   const riskLocate = riskItem.getByRole("button", { name: "在风险矩阵中定位" });
   await expect(riskLocate).toBeVisible();
   await expect(riskItem.getByRole("button", { name: "复制风险提示" })).toBeVisible();
@@ -236,7 +240,8 @@ test("renders responsive decision charts without overlaps or console errors", as
   }));
   expect(riskActionFeedback.tooltip).toContain("在风险矩阵中定位");
   expect(riskActionFeedback.tooltipOpacity).toBe("1");
-  expect(riskActionFeedback.magnet).not.toBe("");
+  // 去 AI 味：磁吸已关闭，按钮无 inline transform
+  expect(riskActionFeedback.magnet).toBe("");
   await riskItem.locator(".report-item-primary").click();
   await expect(page.locator("#report-risk-matrix-section")).toHaveClass(/section-highlight/);
   const changeItem = page.locator(".change-item").first();
@@ -257,15 +262,16 @@ test("renders responsive decision charts without overlaps or console errors", as
   await page.locator("#report-risk-matrix-section").hover();
   const hoverTransform = await page.locator("#report-risk-matrix-section").evaluate((card) => getComputedStyle(card).transform);
   expect(hoverTransform).toBe("none");
+  // 去 AI 味：图表卡片不再挂载聚光（无 data-spotlight-active、--spot-o 为默认 0）
   const spotlight = await page.locator("#report-risk-matrix-section").evaluate((card) => ({
     active: card.dataset.spotlightActive,
     opacity: getComputedStyle(card).getPropertyValue("--spot-o").trim(),
     borderLayer: getComputedStyle(card, "::after").backgroundImage,
     borderLayerZIndex: getComputedStyle(card, "::after").zIndex,
   }));
-  expect(spotlight.active).toBe("true");
-  expect(Number(spotlight.opacity)).toBeGreaterThan(0.2);
-  expect(Number(spotlight.opacity)).toBeLessThan(0.35);
+  expect(spotlight.active).toBeUndefined();
+  expect(Number(spotlight.opacity || 0)).toBe(0);
+  // ::after 的 radial-gradient 是 CSS 静态边框层（透明度 0，JS 聚光不激活时不可见）
   expect(spotlight.borderLayer).toContain("radial-gradient");
   expect(spotlight.borderLayerZIndex).not.toBe("-1");
 

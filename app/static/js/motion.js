@@ -72,30 +72,9 @@
   // 扫描容器内的数字指标卡片，自动触发滚动
   // 仅对纯数字 value 的卡片启用，文本类指标（置信度/审查状态）保持原样
   function applyCounters(container) {
-    if (!container || prefersReducedMotion()) return;
-    const cards = container.querySelectorAll(".report-metric-card .report-metric-value");
-    cards.forEach(function (el) {
-      const raw = (el.textContent || "").trim();
-      const num = parseInt(raw, 10);
-      if (!isNaN(num) && num > 0 && String(num) === raw) {
-        el.dataset.counterTarget = String(num);
-        el.textContent = "0";
-        // 用 IntersectionObserver 在卡片可见时才触发，避免视口外浪费帧
-        if ("IntersectionObserver" in window) {
-          const io = new IntersectionObserver(function (entries) {
-            entries.forEach(function (entry) {
-              if (entry.isIntersecting) {
-                animateCounter(el, num, 700);
-                io.disconnect();
-              }
-            });
-          }, { threshold: 0.5 });
-          io.observe(el);
-        } else {
-          animateCounter(el, num, 700);
-        }
-      }
-    });
+    // 去 AI 味（2026-08）：数字滚动属装饰性动效，直接静态展示更专业。
+    // 保留函数签名以兼容调用方与导出。
+    return;
   }
 
   // ── 2. AnimatedList：列表逐项入场 ──────────────────────
@@ -152,33 +131,8 @@
   // 只对前 12 项动画，避免长列表卡顿；动画结束后清理 inline transition，
   // 不影响 hover 过渡。尊重 prefers-reduced-motion：直接显示。
   function applySessionListMotion(rows) {
-    if (!rows || !rows.length || prefersReducedMotion()) return;
-    const maxAnimated = 8;
-    const stagger = 24;
-    const baseDur = 200;
-    Array.prototype.slice.call(rows).forEach(function (row, idx) {
-      if (idx >= maxAnimated) return;
-      row.style.opacity = "0";
-      row.style.transform = "translateY(6px)";
-      row.style.transition =
-        "opacity " + baseDur + "ms cubic-bezier(0.16,1,0.3,1), " +
-        "transform " + baseDur + "ms cubic-bezier(0.16,1,0.3,1)";
-      row.style.transitionDelay = (idx * stagger) + "ms";
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          row.style.opacity = "1";
-          row.style.transform = "translateY(0)";
-        });
-      });
-      // 动画结束后清理 inline 样式，避免覆盖全局 hover 过渡规则
-      const cleanupDelay = baseDur + idx * stagger + 60;
-      setTimeout(function () {
-        row.style.transition = "";
-        row.style.transitionDelay = "";
-        row.style.transform = "";
-        row.style.opacity = "";
-      }, cleanupDelay);
-    });
+    // 去 AI 味（2026-08）：会话列表逐项入场属装饰性动效，直接显示更利落。
+    return;
   }
 
   // ── 3. TiltCard：悬停 3D 倾斜（克制版） ─────────────────
@@ -381,43 +335,14 @@
   // 不直接操作 DOM 样式，避免与现有 box-shadow / border-color 过渡规则冲突
   // 触屏端禁用（无 hover 态）；尊重 prefers-reduced-motion
   function attachSpotlight(el, opts) {
-    if (!el || prefersReducedMotion()) return;
-    if (window.matchMedia("(hover: none)").matches) return; // 触屏禁用
-    var defaultIntensity = el.classList.contains("report-chart") ? 0.26 : 0.12;
-    const intensity = opts && typeof opts.intensity === "number" ? opts.intensity : defaultIntensity;
-    const size = (opts && opts.size) || 380;
-
-    function onMove(e) {
-      const rect = el.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      el.style.setProperty("--spot-x", x + "px");
-      el.style.setProperty("--spot-y", y + "px");
-      el.style.setProperty("--spot-o", String(intensity));
-      el.style.setProperty("--spot-size", size + "px");
-      el.dataset.spotlightActive = "true";
-    }
-    function onLeave() {
-      el.style.setProperty("--spot-o", "0");
-      delete el.dataset.spotlightActive;
-    }
-    el.addEventListener("mousemove", onMove);
-    el.addEventListener("mouseleave", onLeave);
-    return function detach() {
-      el.removeEventListener("mousemove", onMove);
-      el.removeEventListener("mouseleave", onLeave);
-    };
+    // 去 AI 味（2026-08）：鼠标径向聚光属装饰性动效，关闭。
+    return;
   }
 
   // 图表使用清晰的边缘聚光；可操作报告项只用低强度高光提示点击区域。
   function applySpotlights(root) {
-    if (!root || prefersReducedMotion()) return;
-    root.querySelectorAll(".report-chart").forEach(function (el) {
-      attachSpotlight(el);
-    });
-    root.querySelectorAll(".change-item, .risk-item").forEach(function (el) {
-      attachSpotlight(el, { intensity: 0.14, size: 260 });
-    });
+    // 去 AI 味：随 attachSpotlight 一并关闭。
+    return;
   }
 
   // ── 9. Magnet：磁吸按钮 ───────────────────────────────
@@ -760,40 +685,22 @@
   }
 
   // ── 报告动效一键应用 ───────────────────────────────────
-  // 在 renderReport 完成后调用，统一挂载所有报告相关动效
+  // 在 renderReport 完成后调用。
   function applyReportMotion(container) {
     if (!container) return;
-    // AnimatedList + SpotlightCard + Magnet：克制地提示层级、点击区域和快捷操作。
-    applyScrollReveal(container, container.querySelectorAll(".change-item, .risk-item"));
-    applyReportListAnimation(container);
-    applySpotlights(container);
-    container.querySelectorAll(".report-item-action").forEach(function (button) {
-      attachMagnet(button, { strength: 0.08, radius: 56 });
-    });
-    // 平滑展开挂载到 TOC 和 patch details
+    // 去 AI 味（2026-08）：移除 ScrollReveal/Stagger/聚光/磁吸/视差等装饰动效；
+    // 保留 TOC 与补丁 details 的功能性展开过渡。
     container.querySelectorAll(".report-toc, details#report-patch").forEach(function (d) {
       attachSmoothExpand(d);
     });
   }
 
   // ── Hero 区动效一键应用 ────────────────────────────────
-  // 在 renderHero 完成后调用：全屏点阵背景 + 标题逐字入场 + 卡片聚光灯 + CTA 磁吸
+  // 在 renderHero 完成后调用。
   function applyHeroMotion(heroEl) {
-    if (!heroEl) return;
-    // 背景保持低对比，前景交互用于提示“这里可探索/可操作”。
-    attachParticleNet(heroEl);
-    const titleEl = heroEl.querySelector(".hero-title");
-    if (titleEl) applySplitText(titleEl);
-    const subtitleEl = heroEl.querySelector(".hero-subtitle");
-    if (subtitleEl) applyBlurText(subtitleEl, 220);
-    heroEl.querySelectorAll(".hero-step").forEach(function (card) {
-      attachSpotlight(card, { intensity: 0.2, size: 300 });
-    });
-    heroEl.querySelectorAll(".hero-example").forEach(function (card) {
-      attachSpotlight(card, { intensity: 0.16, size: 320 });
-    });
-    const cta = heroEl.querySelector(".hero-cta-button");
-    if (cta) attachMagnet(cta, { strength: 0.12, radius: 90 });
+    // 去 AI 味（2026-08）：全屏点阵背景、标题逐字入场、卡片聚光灯、CTA 磁吸
+    // 均为 ReactBits 装饰模板的特征，全部关闭，hero 保持静态、专业。
+    return;
   }
 
   // ── 全局动效初始化（页面加载后调用一次） ─────────────────
