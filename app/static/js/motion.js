@@ -70,11 +70,33 @@
   }
 
   // 扫描容器内的数字指标卡片，自动触发滚动
-  // 仅对纯数字 value 的卡片启用，文本类指标（置信度/审查状态）保持原样
+  // 仅对纯数字 value 的卡片启用，文本类指标（置信度/审查状态）保持原样。
+  // 保留此动效：指标数字滚动是 Dashboard 常见的"数据感"微交互（非 AI 模板装饰），
+  // 用 IntersectionObserver 在卡片可见时才触发，避免视口外浪费帧。
   function applyCounters(container) {
-    // 去 AI 味（2026-08）：数字滚动属装饰性动效，直接静态展示更专业。
-    // 保留函数签名以兼容调用方与导出。
-    return;
+    if (!container || prefersReducedMotion()) return;
+    const cards = container.querySelectorAll(".report-metric-card .report-metric-value");
+    cards.forEach(function (el) {
+      const raw = (el.textContent || "").trim();
+      const num = parseInt(raw, 10);
+      if (!isNaN(num) && num > 0 && String(num) === raw) {
+        el.dataset.counterTarget = String(num);
+        el.textContent = "0";
+        if ("IntersectionObserver" in window) {
+          const io = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                animateCounter(el, num, 700);
+                io.disconnect();
+              }
+            });
+          }, { threshold: 0.5 });
+          io.observe(el);
+        } else {
+          animateCounter(el, num, 700);
+        }
+      }
+    });
   }
 
   // ── 2. AnimatedList：列表逐项入场 ──────────────────────
