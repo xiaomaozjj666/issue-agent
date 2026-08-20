@@ -321,7 +321,7 @@ a:hover {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 34px;
+  min-height: 38px; /* 与输入框（40px 含边框）底部对齐，视觉基准线一致 */
   border: 1px solid var(--green-emphasis);
   border-radius: var(--radius);
   padding: 6px 18px;
@@ -331,7 +331,8 @@ a:hover {
   font-weight: 600;
   line-height: 20px;
   white-space: nowrap;
-  box-shadow: var(--btn-shadow), var(--btn-inset-shadow), 0 0 0 1px rgba(16, 185, 129, 0.12);
+  /* 去外层投影：避免与输入框基准线错位；保留内高光与 1px 描边 */
+  box-shadow: var(--btn-inset-shadow), 0 0 0 1px rgba(16, 185, 129, 0.12);
   cursor: pointer;
   user-select: none;
 }
@@ -2080,7 +2081,7 @@ a:hover {
   }
 }
 
-/* 左侧装饰条：渐变流光，强调"核心结论"的视觉权重 */
+/* 左侧装饰条：渐变流光，强调"核心结论"的视觉权重（半透明融入深色，不生硬） */
 .report-conclusion::before {
   content: "";
   position: absolute;
