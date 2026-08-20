@@ -232,3 +232,83 @@ table.sr-only {
   50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, .55); }
 }
 .unauthorized-hint { border: 1px solid var(--yellow-subtle, #f59e0b66); background: var(--yellow-subtle, #f59e0b22); }
+
+/* ── 细节质感打磨（2026-08）：不引入新动效，纯视觉细腻度 ── */
+
+/* 字体渲染：macOS 抗锯齿 + 连字优化，正文更细腻 */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 选区：品牌色系，避免系统默认蓝的突兀 */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--fg-strong);
+}
+
+/* 数字排版：指标/时长/计数用等宽数字，避免跳动且更有"数据感" */
+.report-metric-value,
+.timeline-metric,
+.progress-text,
+.metric-pill,
+.session-row .relative-time,
+.report-conclusion .metric-duration,
+#report .report-metric-card span {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 指标卡：数字变色带 200ms 平滑过渡（与 hover 反馈一致） */
+.report-metric-card .report-metric-value {
+  transition: color var(--dur-base) var(--ease-standard);
+}
+
+/* 消息气泡：底部 1px 内高光（dark 下"压边"质感，light 下 1px 白线）。
+   assistant 已有 shadow-sm，用组合阴影叠加，不丢失外层投影。 */
+[data-theme="dark"] .msg.assistant:not(.report-preview):not(.investigation-timeline):not(.reasoning-card):not(.hero) {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+[data-theme="dark"] .msg.tool,
+[data-theme="dark"] .msg.user {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+[data-theme="light"] .msg.assistant:not(.report-preview):not(.investigation-timeline):not(.reasoning-card):not(.hero) {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+[data-theme="light"] .msg.tool,
+[data-theme="light"] .msg.user {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* 输入框 placeholder：统一 muted 色，focus 时淡出（弱化干扰） */
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
+}
+input:focus::placeholder,
+textarea:focus::placeholder {
+  opacity: 0.45;
+}
+
+/* 会话行：hover 时时间戳微亮，与整体 hover 反馈同步 */
+.session-row:not(.active):hover .relative-time {
+  color: var(--fg);
+}
+
+/* 报告章节卡片：1px 内描边 + 顶部高光（dark 下细腻的"压边"浮雕感） */
+[data-theme="dark"] .report-section,
+[data-theme="dark"] .evidence-item,
+[data-theme="dark"] .change-item,
+[data-theme="dark"] .risk-item,
+[data-theme="dark"] .report-metric-card {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* 代码块：行号与代码等宽数字对齐，滚动时固定圆角 */
+.code-lang-label {
+  font-variant-numeric: tabular-nums;
+}
