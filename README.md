@@ -1,6 +1,35 @@
 # GitHub Issue Agent
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/FastAPI-API-009688" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/DeepSeek-LLM-4D6BFE" alt="DeepSeek" />
+  <img src="https://img.shields.io/badge/Docker-ready-2496ED" alt="Docker" />
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
+</p>
+
 一个默认只读的 GitHub Issue 分析智能体：抓取 Issue、自主探索仓库源码、调用 OpenAI 兼容模型，输出带行级证据的结构化根因分析与修复建议报告。适合需要自动化定位 Issue 根因、生成修复补丁的开发者、开源维护者与团队。
+
+## 调查流水线
+
+```mermaid
+flowchart LR
+    A[粘贴 Issue 链接] --> B[获取 Issue 元数据]
+    B --> C[仓库预读<br/>目录树 · 候选文件]
+    C --> D{有界工具循环<br/>≤15 轮 · 并行只读工具}
+    D --> D1[代码搜索]
+    D --> D2[按行号读源码]
+    D --> D3[Git 历史 / 分支]
+    D --> D4[文件快照]
+    D1 --> E[证据校验<br/>确定性交叉核验]
+    D2 --> E
+    D3 --> E
+    D4 --> E
+    E --> F[独立评审 Agent<br/>挑战根因 · 备选假设]
+    F --> G[结构化报告<br/>因果链 · 行级证据 · 置信度 · diff 补丁]
+    G --> H[交互式聊天 / 批量分析 / 一键 PR]
+```
 
 ## 界面预览
 
@@ -72,7 +101,7 @@
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python -m pip install -e ".[dev]"
+.\venv\Scripts\python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
