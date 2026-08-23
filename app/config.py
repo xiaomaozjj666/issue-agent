@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     api_key: str | None = None
     write_mode: bool = False
     session_db_path: str = "data/sessions.db"
-    session_stale_after_seconds: int = Field(default=1800, ge=60, le=86_400)
+    session_stale_after_seconds: int = Field(default=300, ge=60, le=86_400)
     session_retention_days: int = Field(
         default=30, ge=1, le=365, description="Auto-purge completed sessions older than this"
     )

@@ -5,6 +5,8 @@
 的成功与冲突路径、apply_fix 的 404/403/409 守卫。
 """
 
+import asyncio
+
 import pytest
 from fastapi import HTTPException
 
@@ -204,6 +206,55 @@ async def test_mark_stream_interrupted_swallows_conflict(tmp_path, monkeypatch) 
 
     monkeypatch.setattr(manager, "save", conflict_save)
     await mark_stream_interrupted(manager, session.session_id, started_at=0.0)
+    await manager.close()
+
+
+async def test_mark_stream_interrupted_reschedules_when_save_is_cancelled(tmp_path, monkeypatch) -> None:
+    """断连时 await save 可能被取消；应把终态写入调度为后台任务，保证一定落地。
+
+    模拟：主流程 save 抛 CancelledError（取消上下文中常见），
+    捕获 create_task 拿到重调度任务并手动 await，验证终态最终落库。
+    """
+    manager = SessionManager(db_path=str(tmp_path / "interrupt4.db"))
+    session = await manager.create("https://github.com/a/b/issues/1")
+    session.status = "running"
+    await manager.save(session)
+
+    scheduled: list[asyncio.Task] = []
+
+    real_create = asyncio.create_task
+
+    def capture_create(coro, **_kw):
+        task = real_create(coro)
+        scheduled.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", capture_create)
+
+    call_count = {"n": 0}
+
+    async def flaky_save(_session: Session) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise asyncio.CancelledError("simulated disconnect cancel")
+        # 重调度任务内的第二次 save 成功
+        original = SessionManager.save
+        await original(manager, _session)
+
+    monkeypatch.setattr(manager, "save", flaky_save)
+
+    # 在取消态中调用：主流程 save 抛 CancelledError 触发重调度分支
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.shield(mark_stream_interrupted(manager, session.session_id, started_at=0.0))
+
+    # 重调度任务必须存在并已成功落终态
+    assert scheduled, "expected a detached background task to be scheduled"
+    await asyncio.gather(*scheduled)
+
+    restored = await manager.get(session.session_id)
+    assert restored is not None
+    assert restored.status == "failed"
+    assert restored.phase == "interrupted"
     await manager.close()
 
 
