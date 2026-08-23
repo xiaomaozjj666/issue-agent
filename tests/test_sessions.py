@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 
 import pytest
@@ -152,6 +153,40 @@ async def test_cancel_request_and_stale_recovery(manager) -> None:
     assert await manager.recover_stale("2021-01-01T00:00:00+00:00") == 1
     assert running.status == "failed"
     assert running.phase == "interrupted"
+
+
+async def test_touch_refreshes_updated_at_without_bumping_version(manager) -> None:
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.status = "running"
+    session.updated_at = "2020-01-01T00:00:00+00:00"
+    await manager.save(session)
+    old_version = session.version
+
+    await manager.touch(session.session_id)
+
+    reloaded = await manager.get(session.session_id)
+    assert reloaded.updated_at > "2020-01-01T00:00:00+00:00"
+    assert reloaded.version == old_version  # touch 不应触发乐观锁版本递增
+
+
+async def test_clear_events_resets_report_metrics_and_errors(manager) -> None:
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.status = "running"
+    session.report = {"summary": "stale"}
+    session.metrics = {"files_read": 3}
+    session.error_message = "boom"
+    await manager.save(session)
+    await manager.append_event(session.session_id, {"type": "tool_call", "data": {}, "message": "x"})
+
+    await manager.clear_events(session.session_id)
+
+    reloaded = await manager.get(session.session_id)
+    assert reloaded.report is None
+    assert reloaded.metrics == {}
+    assert reloaded.error_message is None
+    assert reloaded.status == "running"  # clear_events 不动 status
+    events = await manager.list_events(session.session_id)
+    assert events == []
 
 
 async def test_session_history_filters_searches_and_deletes(manager) -> None:

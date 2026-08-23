@@ -23,8 +23,12 @@ _CORE_JS = _JS_DIR / "core.js"
 
 # 基线值：当前 app.js 的顶层函数数量与总行数。
 # 新增功能应优先考虑是否可拆分到独立模块文件，而非继续向 app.js 堆叠。
-_APP_JS_MAX_FUNCTIONS = 80   # 当前 74，容差 +6
-_APP_JS_MAX_LINES = 4200     # 当前 ~4120，容差 +80
+# 2026-08-24 上调行数预算：续跑功能（startAnalysisStream / resumeAnalysis /
+# addResumePrompt）与 analyze / restoreSession 共享闭包状态（currentStream、
+# sessionId、navigationStack 等），拆分需大规模暴露闭包变量，风险高于收益，
+# 故按测试授权条款上调并说明（净增 3 个函数为续跑相关，函数总数 75 <= 80 仍合规）。
+_APP_JS_MAX_FUNCTIONS = 80   # 当前 75，容差 +5
+_APP_JS_MAX_LINES = 4300     # 当前 4234，容差 +66（续跑功能所致，见上方说明）
 
 
 def _count_top_level_functions(text: str) -> int:

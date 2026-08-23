@@ -10,6 +10,7 @@ persisted at key phase transitions (start, report, done) to reduce SQLite
 write amplification from 30-50 writes per investigation to ~5.
 """
 
+import asyncio
 import logging
 from time import monotonic
 
@@ -162,11 +163,14 @@ async def finish_cancelled_session(
         logger.warning("SessionConflictError while finalizing cancelled session %s", session_id)
 
 
-async def mark_stream_interrupted(manager: SessionManager, session_id: str, started_at: float) -> None:
-    """客户端断开时把 session 标记为 interrupted。
+async def _persist_interrupted_detached(
+    manager: SessionManager, session_id: str, started_at: float
+) -> None:
+    """脱离取消作用域的后台任务：确保 interrupted 终态一定落库。
 
-    关键：内部必须捕获 SessionConflictError，不能让它替换外层的 CancelledError，
-    否则会破坏 asyncio 任务取消传播链，导致任务无法正确清理。
+    ``mark_stream_interrupted`` 在客户端断开（外层任务被取消）的上下文中调用，
+    其内部的 ``await manager.save`` 可能立即再次被取消。把同样的终态写入调度为
+    独立任务后，它不受当前任务的取消影响，从而保证 sessions.db 不会滞留 running。
     """
     try:
         session = await manager.get(session_id)
@@ -181,6 +185,41 @@ async def mark_stream_interrupted(manager: SessionManager, session_id: str, star
             {"type": "interrupted", "data": None, "message": session.error_message},
         )
         await manager.save(session)
+    except SessionConflictError:
+        logger.warning("SessionConflictError while marking stream interrupted for session %s", session_id)
+    except Exception:
+        logger.exception("Failed to persist interrupted state for session %s", session_id)
+
+
+async def mark_stream_interrupted(manager: SessionManager, session_id: str, started_at: float) -> None:
+    """客户端断开时把 session 标记为 interrupted。
+
+    关键：在客户端断开（外层 asyncio 任务被取消）的上下文中，
+    ``await manager.save`` 可能立即再次抛出 CancelledError，导致终态无法落库、
+    sessions.db 滞留 running。因此：
+    1) 正常路径直接 await 落库（保持同步语义，便于测试与正常的断连场景）；
+    2) 一旦在落库途中捕获 CancelledError，把同样的终态写入调度为脱离取消作用域的
+       后台任务（``asyncio.create_task``），确保 interrupted 终态一定落地，
+       同时继续向外传播取消，不破坏 asyncio 任务取消链。
+    """
+    try:
+        session = await manager.get(session_id)
+        if session is None or session.status != "running":
+            return
+        session.status = "failed"
+        session.phase = "interrupted"
+        session.error_message = "Connection closed before the investigation completed"
+        session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
+        await manager.append_event(
+            session_id,
+            {"type": "interrupted", "data": None, "message": session.error_message},
+        )
+        await manager.save(session)
+    except asyncio.CancelledError:
+        # 落库途中被取消：把终态写入后台任务，确保它不随当前任务一起被取消。
+        # 调度后立即重抛 CancelledError，维持外层取消传播链。
+        asyncio.create_task(_persist_interrupted_detached(manager, session_id, started_at))
+        raise
     except SessionConflictError:
         logger.warning("SessionConflictError while marking stream interrupted for session %s", session_id)
 

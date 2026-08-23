@@ -650,6 +650,11 @@
       } else {
         addMsg("system", t("no_report_default"));
       }
+      // 断点续跑入口：failed / cancelled（含 interrupted）会话可一键重新调查。
+      // 后端 /stream 收到 session_id 会清空残留事件并从干净状态续跑。
+      if (session.status === "failed" || session.status === "cancelled" || session.phase === "interrupted") {
+        addResumePrompt(session.session_id);
+      }
       document.getElementById("sidebar").classList.remove("mobile-history-open");
       const toggleBtn = document.getElementById("toggle-history-btn");
       if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
@@ -1550,17 +1555,32 @@
     document.getElementById("progress").textContent = currentPhaseText;
     addMsg("assistant", t("analyzing_prefix") + url);
 
+    await startAnalysisStream({ issue_url: url });
+  }
+
+  // 共享的 SSE 流消费逻辑：新建分析与续跑都走这里，保证行为一致。
+  async function startAnalysisStream(body) {
+    // 取消任何仍存在的旧流，防止 reader 泄漏和后端会话被遗弃为 interrupted
+    if (currentStream) {
+      try {
+        await currentStream.cancel();
+      } catch (e) {
+        /* ignore */
+      }
+      currentStream = null;
+    }
+
     try {
       const resp = await fetch("/stream", {
         method: "POST",
         headers: IA.authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(Object.assign({ issue_url: url }, window.IA_SETTINGS || {})),
+        body: JSON.stringify(Object.assign({}, body, window.IA_SETTINGS || {})),
       });
       if (!resp.ok) {
         let detail = t("error_unable_to_start");
         try {
-          const body = await resp.json();
-          detail = formatErrorDetail(body.detail) || detail;
+          const b = await resp.json();
+          detail = formatErrorDetail(b.detail) || detail;
         } catch (e) {
           /* ignore */
         }
@@ -1614,6 +1634,38 @@
       analyzeInProgress = false;
       setAnalyzeBusy(false);
     }
+  }
+
+  // 续跑：对中断/失败的会话按 session_id 重新调查（后端会清空残留事件）。
+  async function resumeAnalysis(targetSessionId) {
+    if (!targetSessionId || analyzeInProgress) return;
+    analyzeInProgress = true;
+    setAnalyzeBusy(true);
+    setDocumentTitle(null);
+    if (sessionId) navigationStack.push(sessionId);
+    sessionId = targetSessionId;
+    IA.sessionId = targetSessionId;
+    report = null;
+    activeSession = null;
+    resetWorkspace(false);
+    currentPhaseText = t("fetching");
+    startAnalysisTimer();
+    document.getElementById("progress").textContent = currentPhaseText;
+    addMsg("assistant", t("resume_analysis_prefix"));
+    await startAnalysisStream({ session_id: targetSessionId });
+  }
+
+  // 在会话详情区渲染「继续分析」提示卡片（含按钮）。点击通过事件委托触发 resumeAnalysis。
+  function addResumePrompt(targetSessionId) {
+    const card = document.createElement("div");
+    card.className = "resume-prompt";
+    card.innerHTML =
+      `<p class="resume-hint">${IA.escapeHtml(t("resume_analysis_hint"))}</p>` +
+      `<button type="button" class="report-reanalyze" data-action="resume-analysis" ` +
+      `data-session-id="${IA.escapeHtml(targetSessionId)}">` +
+      `${IA.svgIcon("retry")}<span>${IA.escapeHtml(t("resume_analysis"))}</span>` +
+      `</button>`;
+    document.getElementById("messages").appendChild(card);
   }
 
   // 流式 reasoning 卡片：首个 delta 创建 details/summary，后续 delta 追加到 body。
@@ -4063,6 +4115,14 @@
       const btn = event.target.closest("[data-action]");
       if (!btn) return;
       handleReportAction(btn.dataset.action, report);
+    });
+
+    // 事件委托：会话详情区的「继续分析」按钮
+    document.getElementById("messages").addEventListener("click", function (event) {
+      const btn = event.target.closest('[data-action="resume-analysis"]');
+      if (!btn) return;
+      const targetId = btn.dataset.sessionId;
+      if (targetId) resumeAnalysis(targetId);
     });
 
     // #6 双栏 diff 视图切换：unified / split

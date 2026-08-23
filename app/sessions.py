@@ -150,6 +150,19 @@ class MemoryStore:
         if session := self._sessions.get(session_id):
             session.metrics = dict(metrics)
 
+    async def touch(self, session_id: str) -> None:
+        """轻量刷新 updated_at（SSE 心跳），不递增 version、不触碰其他字段。"""
+        if session := self._sessions.get(session_id):
+            session.updated_at = _now()
+
+    async def clear_events(self, session_id: str) -> None:
+        """清空事件/报告/指标，为干净续跑做准备（保留会话基本信息与 issue）。"""
+        self._events[session_id] = []
+        if session := self._sessions.get(session_id):
+            session.report = None
+            session.metrics = {}
+            session.error_message = None
+
     def _evict(self) -> None:
         while len(self._sessions) > self._max:
             oldest = next(iter(self._sessions))
@@ -412,6 +425,30 @@ class SqliteStore:
             )
             await db.commit()
 
+    async def touch(self, session_id: str) -> None:
+        """轻量刷新 updated_at（SSE 心跳），不递增 version，避免与 stream save 竞争。"""
+        async with self._conn() as db:
+            await db.execute(
+                "UPDATE sessions SET updated_at=? WHERE session_id=?",
+                (_now(), session_id),
+            )
+            await db.commit()
+
+    async def clear_events(self, session_id: str) -> None:
+        """清空事件/报告/指标，为干净续跑做准备。
+
+        不触碰 version / status（status 由调用方在续跑开始时设为 running），
+        仅删除残留事件并清空报告/指标/错误信息，使续跑从干净状态开始。
+        """
+        async with self._conn() as db:
+            await db.execute("DELETE FROM session_events WHERE session_id=?", (session_id,))
+            await db.execute(
+                "UPDATE sessions SET report_json=NULL, metrics_json='{}', error_message=NULL, updated_at=? "
+                "WHERE session_id=?",
+                (_now(), session_id),
+            )
+            await db.commit()
+
     async def purge_old(self, retention_days: int) -> builtins.list[str]:
         """Delete terminal-state sessions older than retention_days.
 
@@ -547,6 +584,14 @@ class SessionManager:
         供实时调查流在工具调用时频繁刷新指标使用，避免与主 save() 竞争。
         """
         await self._store.update_metrics(session_id, metrics)
+
+    async def touch(self, session_id: str) -> None:
+        """轻量刷新 updated_at（SSE 心跳），保持活跃会话不被 stale recovery 误伤。"""
+        await self._store.touch(session_id)
+
+    async def clear_events(self, session_id: str) -> None:
+        """清空事件/报告/指标，为干净续跑做准备。"""
+        await self._store.clear_events(session_id)
 
     async def close(self) -> None:
         if isinstance(self._store, SqliteStore):

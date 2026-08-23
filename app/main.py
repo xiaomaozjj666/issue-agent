@@ -141,7 +141,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     purge_task = asyncio.create_task(periodic_purge())
 
     async def periodic_stale_recovery() -> None:
-        interval = max(30, min(300, settings.session_stale_after_seconds // 2))
+        # 恢复间隔收紧到 60s，配合 session_stale_after_seconds=300，
+        # 孤儿 running 会话约 1 分钟内被识别并翻为 interrupted，避免长期显示“正在分析中”。
+        interval = max(30, min(60, settings.session_stale_after_seconds // 5))
         while True:
             await asyncio.sleep(interval)
             try:
@@ -462,6 +464,9 @@ async def stream_analysis(
                 if session is None:
                     yield error_event("Session not found").to_sse()
                     return
+                # 续跑：清空上一轮残留事件/报告/指标，从干净状态重新调查，
+                # 避免时间线重复或残留失败态。status/issue 等基本信息保留。
+                await session_mgr.clear_events(session.session_id)
             else:
                 session = await session_mgr.create(str(request.issue_url))
 
@@ -483,6 +488,12 @@ async def stream_analysis(
                         # SSE 心跳：防止 nginx 等反向代理因空闲超时断开连接。
                         # 注意：绝不能取消正在执行的生成器步骤（见 _iter_events_with_heartbeat）。
                         yield ": keepalive\n\n"
+                        # 轻量刷新活跃度，避免真实运行中的会话被 periodic stale recovery 误判为孤儿。
+                        if session is not None:
+                            try:
+                                await session_mgr.touch(session.session_id)
+                            except Exception:
+                                logger.debug("touch failed for session %s", session.session_id)
                         continue
                     event = item
                     if await session_mgr.is_cancel_requested(session.session_id):

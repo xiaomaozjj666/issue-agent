@@ -1174,6 +1174,28 @@ a:hover {
   font-size: var(--text-xs);
 }
 
+/* 断点续跑提示卡片 */
+.resume-prompt {
+  align-self: center;
+  max-width: min(92%, 780px);
+  margin: var(--space-3) auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--surface-2, #1c2128);
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-lg, 12px);
+  text-align: center;
+}
+.resume-prompt .resume-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 /* 工具调用提示行（流式 chat 中实时显示）：比 system 消息更低调 */
 .msg.system.tool-hint {
   display: inline-flex;
