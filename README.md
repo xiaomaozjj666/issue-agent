@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
-一个默认只读的 GitHub Issue 分析智能体：抓取 Issue、自主探索仓库源码、调用 OpenAI 兼容模型，输出带行级证据的结构化根因分析与修复建议报告。适合需要自动化定位 Issue 根因、生成修复补丁的开发者、开源维护者与团队。
+一个默认只读的 GitHub Issue 分析智能体：抓取 Issue、自主探索仓库源码、调用 OpenAI 兼容模型，输出带行级证据的结构化根因分析与修复建议报告。
 
 ## 调查流水线
 
