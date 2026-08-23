@@ -11,12 +11,23 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.agent import IssueAgent, ModelResponseError
 from app.build import BUILD_ID
+from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
 from app.events import done_event, phase_event, tool_call_event, tool_result_event
-from app.github import GitHubError, GitHubRateLimitError
-from app.main import app, get_session_manager, get_settings
+from app.github import GitHubError, GitHubRateLimitError, GitHubResourceError
+from app.main import app, get_circuit_breaker, get_session_manager, get_settings
 from app.models import AnalysisReport, ApplyFixRequest, ChatResponse, IssueData
 from app.sessions import SessionManager
+
+
+@pytest.fixture(autouse=True)
+def _ensure_circuit_breaker_dependency():
+    """TestClient 不触发 lifespan，app.state.circuit_breaker 不会被初始化。
+    自动覆盖 get_circuit_breaker 依赖，让所有依赖它的端点（/analyze /chat /stream）
+    在测试中稳定可用，不依赖其他测试的 app.state 残留。"""
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
+    yield
+    app.dependency_overrides.pop(get_circuit_breaker, None)
 
 
 def test_health() -> None:
@@ -101,6 +112,7 @@ def test_analyze_maps_invalid_model_response_to_bad_gateway(monkeypatch) -> None
 
     monkeypatch.setattr(IssueAgent, "investigate", fail)
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
     try:
         response = TestClient(app).post(
             "/analyze",
@@ -119,6 +131,7 @@ def test_analyze_maps_rate_limit_to_429(monkeypatch) -> None:
 
     monkeypatch.setattr(IssueAgent, "investigate", fail)
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
     try:
         response = TestClient(app).post(
             "/analyze",
@@ -137,6 +150,7 @@ def test_analyze_maps_github_error_to_bad_gateway(monkeypatch) -> None:
 
     monkeypatch.setattr(IssueAgent, "investigate", fail)
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
     try:
         response = TestClient(app).post(
             "/analyze",
@@ -826,6 +840,7 @@ def test_analyze_invalid_url_returns_422(monkeypatch) -> None:
     from app.agent import IssueAgent as AgentClass
 
     original = AgentClass.investigate
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
 
     async def raise_value_error(self, issue_url, *, session=None):
         raise ValueError("issue_url must be an https://github.com URL")
@@ -835,3 +850,338 @@ def test_analyze_invalid_url_returns_422(monkeypatch) -> None:
     response = client.post("/analyze", json={"issue_url": "https://github.com/a/b/issues/1"})
     assert response.status_code == 422
     monkeypatch.setattr(AgentClass, "investigate", original)
+    app.dependency_overrides.pop(get_circuit_breaker, None)
+
+
+def _post_analyze_with_error(monkeypatch, exc, expected_status):
+    from app.agent import IssueAgent as AgentClass
+
+    original = AgentClass.investigate
+
+    async def raise_exc(self, issue_url, *, session=None):
+        raise exc
+
+    monkeypatch.setattr(AgentClass, "investigate", raise_exc)
+    app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
+    try:
+        response = TestClient(app).post(
+            "/analyze", json={"issue_url": "https://github.com/acme/widget/issues/1"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+        monkeypatch.setattr(AgentClass, "investigate", original)
+    assert response.status_code == expected_status
+    return response
+
+
+def test_analyze_value_error_maps_to_422(monkeypatch) -> None:
+    """analyz ValueError -> 422（与 URL 校验分支区分开，验证通用 ValueError）。"""
+    _post_analyze_with_error(monkeypatch, ValueError("bad input"), 422)
+
+
+def test_analyze_resource_error_maps_to_422(monkeypatch) -> None:
+    """GitHubResourceError（404/410/451）-> 422。"""
+    _post_analyze_with_error(monkeypatch, GitHubResourceError("issue not found"), 422)
+
+
+def test_analyze_api_error_maps_to_502(monkeypatch) -> None:
+    """底层 OpenAI APIError -> 502，且日志记录不泄露堆栈到客户端。"""
+    import openai
+
+    _post_analyze_with_error(monkeypatch, openai.APIError("model down", request=None, body=None), 502)
+
+
+# ── /chat 各类异常分支（614-632）──
+
+
+async def _post_chat_with_error(monkeypatch, exc, expected_status):
+    from app.agent import IssueAgent as AgentClass
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[gsm] = lambda: manager
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
+    original = AgentClass.investigate
+
+    async def raise_exc(self, issue_url, *, session=None):
+        raise exc
+
+    monkeypatch.setattr(AgentClass, "investigate", raise_exc)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post(
+                "/chat", json={"issue_url": "https://github.com/acme/widget/issues/1", "message": "x"}
+            )
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+            app.dependency_overrides.pop(gsm, None)
+            app.dependency_overrides.pop(get_circuit_breaker, None)
+            monkeypatch.setattr(AgentClass, "investigate", original)
+    assert response.status_code == expected_status
+    return response
+
+
+async def test_chat_value_error_maps_to_422(monkeypatch) -> None:
+    await _post_chat_with_error(monkeypatch, ValueError("bad"), 422)
+
+
+async def test_chat_resource_error_maps_to_422(monkeypatch) -> None:
+    await _post_chat_with_error(monkeypatch, GitHubResourceError("not found"), 422)
+
+
+async def test_chat_github_error_maps_to_502(monkeypatch) -> None:
+    await _post_chat_with_error(monkeypatch, GitHubError("boom"), 502)
+
+
+# ── /stream 异常分支（529-557）──
+
+
+async def test_stream_session_conflict_yields_error(monkeypatch) -> None:
+    """并发冲突（SessionConflictError）在 stream 中产出自描述 error 事件。"""
+    from app.agent import IssueAgent as AgentClass
+    from app.main import get_session_manager as gsm
+    from app.sessions import SessionConflictError
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
+
+    async def fake_stream(self, issue_url, *, session=None):
+        yield phase_event("exploring", "Exploring")
+        raise SessionConflictError("changed elsewhere")
+
+    monkeypatch.setattr(AgentClass, "investigate_stream", fake_stream)
+    client = TestClient(app)
+    try:
+        response = client.post("/stream", json={"issue_url": "https://github.com/acme/widget/issues/1"})
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+        app.dependency_overrides.pop(get_circuit_breaker, None)
+    assert '"type": "error"' in response.text
+    assert "changed in another process" in response.text
+    app.dependency_overrides.pop(gsm, None)
+
+
+async def test_stream_generic_exception_marks_session_failed(monkeypatch) -> None:
+    """stream 中未预期异常：会话被标记为 failed，且 yield error 事件。"""
+    from app.agent import IssueAgent as AgentClass
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
+
+    async def fake_stream(self, issue_url, *, session=None):
+        # 首事件前直接抛异常，绕过 _iter_events_with_heartbeat 的 shielded 取消逻辑，
+        # 让异常冒泡到 stream 的 except Exception 分支（标记 failed）。
+        raise RuntimeError("unexpected boom")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(AgentClass, "investigate_stream", fake_stream)
+    client = TestClient(app)
+    try:
+        response = client.post("/stream", json={"issue_url": "https://github.com/acme/widget/issues/1"})
+        session_line = next(line for line in response.text.splitlines() if '"type": "session"' in line)
+        session_id = json.loads(session_line.removeprefix("data: "))["data"]["session_id"]
+        assert '"type": "error"' in response.text
+        # 在清理依赖覆盖前取出会话详情（GET /session 也依赖 get_session_manager）
+        detail = client.get(f"/session/{session_id}").json()
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+        app.dependency_overrides.pop(get_circuit_breaker, None)
+    assert detail["status"] == "failed"
+    assert "unexpected boom" in detail["error_message"]
+    app.dependency_overrides.pop(gsm, None)
+
+
+def test_stream_unknown_session_yields_error_and_404(monkeypatch) -> None:
+    """传不存在的 session_id 续跑：yield error 事件，不新建会话。"""
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
+    try:
+        response = TestClient(app).post("/stream", json={"session_id": "ghost-session"})
+        assert '"type": "error"' in response.text
+        assert "Session not found" in response.text
+    finally:
+        app.dependency_overrides.pop(gsm, None)
+        app.dependency_overrides.pop(get_circuit_breaker, None)
+
+
+# ── 详情/报告/提案端点 404（739, 792, 824-828）──
+
+
+async def test_session_detail_404() -> None:
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.get("/session/ghost")
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+    assert response.status_code == 404
+
+
+async def test_session_report_404() -> None:
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.get("/session/ghost/report")
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+    assert response.status_code == 404
+
+
+async def test_session_proposal_404() -> None:
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.get("/session/ghost/proposal")
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+    assert response.status_code == 404
+
+
+# ── lifespan 启动期异常分支（116-127）──
+
+
+async def test_lifespan_startup_recovery_and_purge_failures_are_tolerated(monkeypatch) -> None:
+    """启动期 stale recovery / purge 抛异常时不应阻断应用启动（验证 116-127 的 except 分支）。"""
+    from app.main import lifespan
+    from app.sessions import SessionManager as Mgr
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(Mgr, "recover_stale", boom)
+    monkeypatch.setattr(Mgr, "purge_old_sessions", boom)
+    async with lifespan(app):
+        # 启动成功（异常被吞），manager 已就绪
+        assert app.state.session_manager is not None
+    assert app.state.session_manager is None
+
+
+# ── /chat/stream 端点（637-716）──
+
+
+async def test_chat_stream_requires_session_id() -> None:
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post("/chat/stream", json={"message": "hi"})
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+    assert response.status_code == 422
+
+
+async def test_chat_stream_unknown_session_returns_404() -> None:
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post("/chat/stream", json={"session_id": "ghost", "message": "hi"})
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+    assert response.status_code == 404
+
+
+async def test_chat_stream_yields_deltas_and_marks_completed(monkeypatch) -> None:
+    """正常流：delta 事件透传、流结束标记 completed。"""
+    from app.agent import IssueAgent as AgentClass
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+
+    async def fake_chat_stream(self, session, message):
+        yield {"type": "delta", "content": "hello "}
+        yield {"type": "delta", "content": "world"}
+        yield {"type": "done", "reply": "hello world", "tools_used": []}
+
+    monkeypatch.setattr(AgentClass, "chat_stream", fake_chat_stream)
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post(
+                "/chat/stream", json={"session_id": session.session_id, "message": "hi"}
+            )
+            text = response.text
+            assert "hello " in text and "world" in text
+            assert '"type": "done"' in text
+            detail = await client.get(f"/session/{session.session_id}")
+            assert detail.json()["status"] == "completed"
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+
+
+async def test_chat_stream_error_event_marks_failed(monkeypatch) -> None:
+    """agent 吞异常并 yield error 事件：终态为 failed。"""
+    from app.agent import IssueAgent as AgentClass
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+
+    async def fake_chat_stream(self, session, message):
+        yield {"type": "delta", "content": "partial"}
+        yield {"type": "error", "message": "model crashed"}
+
+    monkeypatch.setattr(AgentClass, "chat_stream", fake_chat_stream)
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post(
+                "/chat/stream", json={"session_id": session.session_id, "message": "hi"}
+            )
+            assert "model crashed" in response.text
+            detail = await client.get(f"/session/{session.session_id}")
+            assert detail.json()["status"] == "failed"
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+
+
+async def test_chat_stream_archived_session_returns_409() -> None:
+    from app.main import get_session_manager as gsm
+
+    manager = SessionManager()
+    app.dependency_overrides[gsm] = lambda: manager
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.archived_at = "2026-01-01T00:00:00+00:00"
+    await manager.save(session)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post(
+                "/chat/stream", json={"session_id": session.session_id, "message": "hi"}
+            )
+        finally:
+            app.dependency_overrides.pop(gsm, None)
+    assert response.status_code == 409
+
+
+# ── VersionedStaticFiles: templates 缺失回退（1046-1047）──
+
+
+def test_root_returns_404_when_templates_missing(monkeypatch) -> None:
+    """templates 为 None 时 / 返回 404（静态部署/模板未打包场景）。"""
+    import app.main as m
+
+    monkeypatch.setattr(m, "templates", None)
+    response = TestClient(app).get("/")
+    assert response.status_code == 404
