@@ -8,6 +8,9 @@ from app.github import (
     GitHubError,
     GitHubFileSkipped,
     GitHubRateLimitError,
+    GitHubResourceError,
+    _cache_value_size,
+    extract_referenced_paths,
     parse_issue_url,
     select_candidate_paths,
 )
@@ -764,3 +767,231 @@ async def test_get_branch_sha_rejects_invalid_sha() -> None:
     async with github:
         with pytest.raises(GitHubError, match="invalid SHA"):
             await github.get_branch_sha("acme", "widget", "main")
+
+
+async def test_cache_ttl_disabled_misses() -> None:
+    """cache_ttl<=0 时 _cache_get 永远 miss、_cache_set 永远不写。"""
+    github = _client_with(lambda _: httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="}),)
+    github._cache_ttl = 0.0
+    cached = await github._cache_get("k")
+    assert cached is None
+    assert github.cache_misses == 1
+    # size 计算也要覆盖（list/str/其他分支）
+    assert _cache_value_size("abc") == 3
+    assert _cache_value_size(["a", "bb"]) == 3
+    assert _cache_value_size(12345) > 0
+    async with github:
+        await github._cache_set("k", "v")
+    assert not github._cache
+
+
+async def test_cache_expired_entry_is_evicted_on_get() -> None:
+    """过期条目在 _cache_get 中被弹出并记 miss。"""
+    github = _client_with(lambda _: httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="}))
+    github._cache_ttl = 60.0
+    await github._cache_set("k", "v")
+    # 伪造过期：把时间戳改到过去
+    key = next(iter(github._cache))
+    old = github._cache[key]
+    github._cache[key] = (old[0] - 1000, old[1], old[2])
+    cached = await github._cache_get("k")
+    assert cached is None
+    assert github.cache_misses == 1
+    assert "k" not in github._cache
+
+
+async def test_tree_empty_repo_raises() -> None:
+    """409 空仓库被映射为可读 GitHubError。"""
+    issue = IssueData(
+        owner="acme", repo="widget", number=1, title="", body="", labels=[],
+        comments=[], default_branch="main",
+    )
+    github = _client_with(lambda _: httpx.Response(409, json={"message": "Git Repository is empty"}))
+    async with github:
+        with pytest.raises(GitHubError, match="empty"):
+            await github.get_tree(issue)
+
+
+async def test_tree_over_max_entries_raises() -> None:
+    issue = IssueData(
+        owner="acme", repo="widget", number=1, title="", body="", labels=[],
+        comments=[], default_branch="main",
+    )
+    paths = [{"path": f"src/f{i}.py", "type": "blob"} for i in range(5)]
+    github = GitHubClient(max_tree_entries=3)
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tree": paths})
+
+    github._client = httpx.AsyncClient(
+        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
+    )
+    async with github:
+        with pytest.raises(GitHubError, match="more than"):
+            await github.get_tree(issue)
+
+
+async def test_get_file_binary_and_bad_encoding_raise_skipped() -> None:
+    issue = IssueData(
+        owner="acme", repo="widget", number=1, title="", body="", labels=[],
+        comments=[], default_branch="main",
+    )
+    # 二进制（含 NUL）
+    github = _client_with(lambda _: httpx.Response(200, json={"encoding": "base64", "content": "AAEA"}))
+    async with github:
+        with pytest.raises(GitHubFileSkipped, match="Binary"):
+            await github.get_file(issue, "a.bin")
+    # 非 base64 编码
+    github2 = _client_with(lambda _: httpx.Response(200, json={"encoding": "utf-8", "content": "x"}))
+    async with github2:
+        with pytest.raises(GitHubFileSkipped, match="Unsupported"):
+            await github2.get_file(issue, "a.txt")
+    # 损坏 base64
+    github3 = _client_with(lambda _: httpx.Response(200, json={"encoding": "base64", "content": "!!!notb64"}))
+    async with github3:
+        with pytest.raises(GitHubFileSkipped, match="Invalid"):
+            await github3.get_file(issue, "a.txt")
+
+
+async def test_get_file_at_commit_cache_hit_and_validation() -> None:
+    issue = IssueData(
+        owner="acme", repo="widget", number=1, title="", body="", labels=[],
+        comments=[], default_branch="main",
+    )
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="})
+
+    github = _client_with(handler)
+    async with github:
+        a = await github.get_file_at_commit(issue, "src/a.py", "sha1")
+        b = await github.get_file_at_commit(issue, "src/a.py", "sha1")
+    assert a.content == "print(1)" == b.content
+    assert calls["n"] == 1  # 第二次命中缓存
+    # 非 base64 响应
+    github2 = _client_with(lambda _: httpx.Response(200, json={"encoding": "utf-8", "content": "x"}))
+    async with github2:
+        with pytest.raises(GitHubFileSkipped, match="Unsupported"):
+            await github2.get_file_at_commit(issue, "src/a.py", "sha1")
+
+
+async def test_search_code_empty_or_long_query_raise() -> None:
+    issue = IssueData(
+        owner="acme", repo="widget", number=1, title="", body="", labels=[],
+        comments=[], default_branch="main",
+    )
+    github = _client_with(lambda _: httpx.Response(200, json={"items": []}))
+    async with github:
+        with pytest.raises(ValueError, match="between 1 and 120"):
+            await github.search_code(issue, "   ")
+        with pytest.raises(ValueError, match="between 1 and 120"):
+            await github.search_code(issue, "x" * 121)
+
+
+async def test_list_branches_returns_empty_for_non_list() -> None:
+    github = _client_with(lambda _: httpx.Response(200, json={"not": "list"}))
+    async with github:
+        assert await github.list_branches("acme", "widget") == []
+    # 正常分支解析
+    github2 = _client_with(
+        lambda _: httpx.Response(
+            200,
+            json=[
+                {"name": "main", "commit": {"sha": "a" * 40}, "protected": True},
+                {"name": "dev", "commit": {"sha": "b" * 40}},
+            ],
+        )
+    )
+    async with github2:
+        branches = await github2.list_branches("acme", "widget")
+    assert branches == [
+        {"name": "main", "sha": "a" * 7, "protected": True},
+        {"name": "dev", "sha": "b" * 7, "protected": False},
+    ]
+
+
+async def test_get_file_sha_returns_none_on_404_and_propagates_other_errors() -> None:
+    github = _client_with(lambda _: httpx.Response(404, json={"message": "Not Found"}))
+    async with github:
+        assert await github.get_file_sha("acme", "widget", "src/a.py", "main") is None
+    # 非 404 的 GitHubError 传播
+    github2 = _client_with(lambda _: httpx.Response(500, json={"message": "boom"}))
+    async with github2:
+        with pytest.raises(GitHubError, match="boom"):
+            await github2.get_file_sha("acme", "widget", "src/a.py", "main")
+
+
+async def test_create_pull_request_success_returns_url_and_number() -> None:
+    github = _client_with(
+        lambda _: httpx.Response(201, json={"html_url": "https://github.com/acme/widget/pull/7", "number": 7}),
+        write=True,
+    )
+    async with github:
+        result = await github.create_pull_request("acme", "widget", "fix", "main", "t", "b")
+    assert result == {"pr_url": "https://github.com/acme/widget/pull/7", "number": 7}
+
+
+async def test_get_issue_pull_request_url_rejected() -> None:
+    """issue 端点返回带 pull_request 字段的对象应被识别并抛资源错误。"""
+    github = GitHubClient(max_retries=0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/comments" in url:
+            return httpx.Response(200, json=[])
+        if "/branches/" in url:
+            return httpx.Response(200, json={"commit": {"sha": "abc"}})
+        if url.endswith("/repos/acme/widget") or url.endswith("/repos/acme/widget/"):
+            return httpx.Response(200, json={"default_branch": "main"})
+        return httpx.Response(
+            200, json={"title": "t", "body": "", "labels": [], "pull_request": {"url": "x"}}
+        )
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubResourceError, match="pull request"):
+            await github.get_issue("acme", "widget", 1)
+
+
+async def test_get_issue_410_issues_disabled_message() -> None:
+    github = GitHubClient(max_retries=0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/repos/acme/widget") or url.endswith("/repos/acme/widget/"):
+            return httpx.Response(200, json={"default_branch": "main"})
+        if "/comments" in url:
+            return httpx.Response(200, json=[])
+        return httpx.Response(410, json={"message": "Issues are disabled for this repo"})
+
+    await github._client.aclose()
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    async with github:
+        with pytest.raises(GitHubResourceError, match="Issues are disabled"):
+            await github.get_issue("acme", "widget", 1)
+
+
+async def test_create_branch_transport_error_raises_github_error() -> None:
+    """_request 的传输错误被包装为 GitHubError（用于 rollback 分支）。"""
+    import httpx as _httpx
+
+    async def handler(request: _httpx.Request) -> _httpx.Response:
+        raise _httpx.ConnectError("refused")
+
+    github = _client_with(handler, write=True)
+    async with github:
+        with pytest.raises(GitHubError, match="request failed"):
+            await github.create_branch("acme", "widget", "b", "a" * 40)
+
+
+def test_extract_referenced_paths_only_known_files() -> None:
+    tree = ["src/parser.py", "src/lexer.py", "README.md"]
+    assert extract_referenced_paths("see src/parser.py and src/lexer.py", tree) == [
+        "src/parser.py",
+        "src/lexer.py",
+    ]
+    assert extract_referenced_paths("", tree) == []
+    assert extract_referenced_paths("mention src/ghost.py", tree) == []
