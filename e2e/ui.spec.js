@@ -397,11 +397,12 @@ test("renders responsive decision charts without overlaps or console errors", as
   const evidenceZoom = page.locator('.chart-zoom-btn[data-chart-id="report-evidence-map-chart"]');
   await evidenceZoom.click();
   await expect(page.getByRole("dialog")).toHaveAccessibleName("根因证据链");
-  const evidenceModalRoam = await page.evaluate(() => {
+  // 模态图的 ECharts 实例在对话框出现后才异步创建：同文件其他图表读取处均用
+  // expect.poll 等待实例就绪，这里保持同样口径，杜绝偶发"undefined.getOption"。
+  await expect.poll(async () => page.evaluate(() => {
     const target = document.getElementById("chart-modal-canvas");
-    return window.echarts.getInstanceByDom(target).getOption().series[0].roam;
-  });
-  expect(evidenceModalRoam).toBe(true);
+    return window.echarts.getInstanceByDom(target)?.getOption().series[0].roam;
+  })).toBe(true);
   await page.keyboard.press("Escape");
 
   // CDN 资源加载失败不算应用错误（离线环境降级路径另有兼容）
