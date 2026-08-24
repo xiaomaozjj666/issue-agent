@@ -961,6 +961,7 @@ a:hover {
 }
 
 #conversation {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -1151,6 +1152,68 @@ a:hover {
   padding: var(--space-6) clamp(20px, 5vw, 64px) var(--space-8);
   background: var(--bg);
   scrollbar-gutter: stable;
+}
+
+/* 「回到底部」悬浮按钮：分析进行中上翻阅读后出现，带未读新消息徽标 */
+#jump-latest-btn {
+  position: absolute;
+  right: clamp(16px, 4vw, 40px);
+  bottom: 16px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--fg-strong);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.35);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+#jump-latest-btn.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+#jump-latest-btn:hover {
+  background: var(--neutral-subtle);
+}
+
+#jump-latest-btn:focus-visible {
+  outline: 2px solid var(--accent-emphasis);
+  outline-offset: 2px;
+}
+
+.jump-latest-badge {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--accent-emphasis);
+  color: var(--card);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 窄屏只保留图标 + 徽标，避免遮挡消息内容 */
+@media (max-width: 640px) {
+  .jump-latest-label {
+    display: none;
+  }
 }
 
 /* 消息气泡 */

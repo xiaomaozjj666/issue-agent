@@ -958,6 +958,8 @@
     // 否则 canvas 绑定的事件监听不会释放，长期切换会累积内存泄漏
     disposeReportCharts();
     document.getElementById("messages").innerHTML = "";
+    // 会话切换：恢复贴底跟随并清零未读徽标，新会话从底部开始
+    if (IA.ScrollFollow) IA.ScrollFollow.reset();
     document.getElementById("main").classList.remove("report-open");
     document.body.classList.remove("report-visible");
     syncReportToggle(false);
@@ -1085,10 +1087,14 @@
     }
   }
 
-  // H5 修复：用户上滑阅读时不要把视图拉回底部。threshold=80px 容许小幅滚动仍跟随。
+  // H5：滚动跟随委托给 ScrollFollow 模块（pinned 状态机 + 未读徽标 + 回到底部按钮）。
+  // 保留函数名以兼容全部现有调用点；模块缺失时降级为旧的“近底跟随”行为。
   function scrollToBottomIfNear(container, threshold) {
     if (!container) return;
-    // 动态 threshold：视口高度的比例，避免大代码块/长表格时贴底用户被甩出
+    if (IA.ScrollFollow) {
+      IA.ScrollFollow.notify(container);
+      return;
+    }
     const dynamicThreshold = Math.max(threshold || 80, (container.clientHeight || 400) * 0.15);
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distance > dynamicThreshold) return;
@@ -1349,7 +1355,11 @@
       full.textContent = preview || "";
       full.setAttribute("aria-hidden", String(!preview));
     }
-    if (preview) card.classList.add("expanded");
+    if (preview) {
+      card.classList.add("expanded");
+      // 工具结果展开会增高内容：贴底跟随时同步滚动，保证最新进度可见
+      scrollToBottomIfNear(document.getElementById("messages"), 80);
+    }
   }
 
   const ISSUE_URL_PATTERN = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#].*)?$/i;

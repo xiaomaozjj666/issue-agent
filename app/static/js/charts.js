@@ -97,6 +97,31 @@
           && window.matchMedia("(pointer: coarse)").matches);
   }
 
+  // 无障碍：用户偏好减弱动效时禁用所有图表动画（含涟漪等持续动画）
+  function prefersReducedMotion() {
+    return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  // 入场动画（Grafana/Datadog 风格）：条形/节点依次生长而非齐刷刷弹现。
+  // 延迟按数据索引递增（stagger），总时长收敛在 ~1.2s 内不拖沓。
+  function withAnim(option) {
+    if (prefersReducedMotion()) {
+      option.animation = false;
+      return option;
+    }
+    option.animationDuration = 620;
+    option.animationEasing = "cubicOut";
+    option.animationDelay = function (idx) {
+      return Math.min(idx * 70, 520);
+    };
+    return option;
+  }
+
+  // tooltip 行首色点：与系列语义色一致的 8px 圆点，比纯文字行更易扫读
+  function tooltipDot(color) {
+    return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';margin-right:6px;vertical-align:baseline;"></span>';
+  }
+
   function mobileInitOpts() {
     if (!isMobile()) return undefined;
     return { renderer: "canvas", devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2) };
@@ -364,16 +389,14 @@
     const barW = rows.length <= 3 ? 26 : 18;
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
-    chart.setOption({
-      animationDuration: 200,
-      animationEasing: "cubicOut",
+    chart.setOption(withAnim({
       tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const row = rows[params.dataIndex];
           if (!row) return "";
           let html = '<div style="font-weight:600;margin-bottom:4px;max-width:280px;white-space:normal;word-break:break-all;">' + IA.escapeHtml(row.path) + '</div>' +
-            '<div><span style="color:' + palette.success + ';font-weight:600;">+' + row.added + '</span>' +
-            ' <span style="color:' + palette.danger + ';font-weight:600;">\u2212' + row.removed + '</span></div>';
+            '<div>' + tooltipDot(palette.success) + '<span style="color:' + palette.success + ';font-weight:600;">+' + row.added + '</span>' +
+            ' ' + tooltipDot(palette.danger) + '<span style="color:' + palette.danger + ';font-weight:600;">\u2212' + row.removed + '</span></div>';
           if (!row.aggregate && !hasEvidenceFor(row.path)) {
             html += '<div style="color:' + palette.warning + ';font-size:11px;margin-top:4px;max-width:260px;white-space:normal;">' + IA.escapeHtml(t("diffstat_no_evidence_hint")) + '</div>';
           }
@@ -423,7 +446,8 @@
           data: rows.map(function (r) { return r.added; }),
           itemStyle: { color: palette.success, borderRadius: [0, 0, 0, 0] },
           barMaxWidth: barW,
-          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          emphasis: { focus: "self", blurScope: "coordinateSystem", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          blur: { itemStyle: { opacity: 0.18 } },
         },
         {
           name: t("diffstat_removed"),
@@ -445,10 +469,11 @@
               return "+" + row.added + " \u2212" + row.removed;
             },
           },
-          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          emphasis: { focus: "self", blurScope: "coordinateSystem", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          blur: { itemStyle: { opacity: 0.18 }, label: { opacity: 0.25 } },
         },
       ],
-    });
+    }));
 
     // 点击下钻：任意条形 → 跳转到补丁章节查看完整 diff
     chart.on("click", function () {
@@ -531,23 +556,22 @@
 
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
-    chart.setOption({
-      animationDuration: 200,
-      animationEasing: "cubicOut",
+    chart.setOption(withAnim({
       tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const row = rows[params.dataIndex];
           if (!row) return "";
+          const rowColor = row.read ? palette.primary : palette.danger;
           let html = '<div style="font-weight:600;margin-bottom:4px;max-width:280px;white-space:normal;word-break:break-all;">' + IA.escapeHtml(row.path) + '</div>' +
-            '<div style="color:' + palette.textDim + ';font-size:11px;">' + IA.escapeHtml(t("verify_citations")) + ': <b style="color:' + palette.text + ';">' + row.count + '</b>' +
+            '<div style="color:' + palette.textDim + ';font-size:11px;">' + tooltipDot(rowColor) + IA.escapeHtml(t("verify_citations")) + ': <b style="color:' + palette.text + ';">' + row.count + '</b>' +
             (row.lines.length ? ' \u00b7 ' + IA.escapeHtml(row.lines.slice(0, 4).join(", ")) : '') + '</div>';
           if (hasReadData) {
             html += '<div style="color:' + (row.read ? palette.success : palette.danger) + ';font-size:11px;margin-top:2px;font-weight:600;">' +
-              IA.escapeHtml(row.read ? t("verify_read") : t("verify_not_read")) + '</div>';
+              tooltipDot(row.read ? palette.success : palette.danger) + IA.escapeHtml(row.read ? t("verify_read") : t("verify_not_read")) + '</div>';
           }
           if (patchPaths.length) {
             html += '<div style="color:' + (row.patched ? palette.success : palette.textDim) + ';font-size:11px;margin-top:2px;">' +
-              IA.escapeHtml(t("verify_patch_label")) + ': ' + IA.escapeHtml(row.patched ? t("verify_patched") : t("verify_not_patched")) + '</div>';
+              tooltipDot(row.patched ? palette.success : palette.muted) + IA.escapeHtml(t("verify_patch_label")) + ': ' + IA.escapeHtml(row.patched ? t("verify_patched") : t("verify_not_patched")) + '</div>';
           }
           if (!row.read) {
             html += '<div style="color:' + palette.danger + ';font-size:11px;margin-top:4px;max-width:260px;white-space:normal;">' + IA.escapeHtml(t("verify_not_read_hint")) + '</div>';
@@ -614,9 +638,10 @@
             return parts.join(" \u00b7 ");
           },
         },
-        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+        emphasis: { focus: "self", blurScope: "coordinateSystem", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+        blur: { itemStyle: { opacity: 0.18 }, label: { opacity: 0.25 } },
       }],
-    });
+    }));
     // 存在"引用但未读取"的文件时容器层呼吸警示
     if (rows.some(function (r) { return !r.read; })) container.classList.add("pulse-ring");
 
@@ -751,17 +776,15 @@
       const rows = modules.map(function (mod) {
         return { name: mod, value: moduleChanges[mod] || 1, changed: moduleChanges[mod] || 0 };
       }).sort(function (a, b) { return b.value - a.value; });
-      chart.setOption({
-        animationDuration: 200,
-        animationEasing: "cubicOut",
+      chart.setOption(withAnim({
         tooltip: chartTooltip(palette, {
           formatter: function (info) {
             const d = info.data || {};
             return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
               IA.escapeHtml(d.name) + "</div>" +
-              '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("diffstat_total_changes")) +
+              '<div style="font-size:11px;color:' + palette.textDim + ';">' + tooltipDot(sevColor) + IA.escapeHtml(t("diffstat_total_changes")) +
               ': <b>' + d.value + "</b></div>" +
-              '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
+              '<div style="font-size:11px;color:' + palette.textDim + ';">' + tooltipDot(sevColor) + IA.escapeHtml(t("report_severity")) +
               ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
           },
         }),
@@ -802,9 +825,10 @@
                 : enumLabel("severity", sev);
             },
           },
-          emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          emphasis: { focus: "self", blurScope: "coordinateSystem", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
+          blur: { itemStyle: { opacity: 0.18 }, label: { opacity: 0.25 } },
         }],
-      });
+      }));
     } else {
       const treeData = modules.map(function (mod) {
         const changed = moduleChanges[mod] || 1;
@@ -815,18 +839,16 @@
           itemStyle: { color: severityColor(sev, palette) },
         };
       });
-      chart.setOption({
-        animationDuration: 200,
-        animationEasing: "cubicOut",
+      chart.setOption(withAnim({
         tooltip: chartTooltip(palette, {
           formatter: function (info) {
             const d = info.data || {};
             const changed = d.value > 1 ? d.value : 0;
             return '<div style="font-weight:600;max-width:300px;white-space:normal;word-break:break-all;">' +
               IA.escapeHtml(d.name) + "</div>" +
-              (changed ? '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("diffstat_total_changes")) +
+              (changed ? '<div style="font-size:11px;color:' + palette.textDim + ';">' + tooltipDot(sevColor) + IA.escapeHtml(t("diffstat_total_changes")) +
                 ': <b>' + changed + "</b></div>" : "") +
-              '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("report_severity")) +
+              '<div style="font-size:11px;color:' + palette.textDim + ';">' + tooltipDot(sevColor) + IA.escapeHtml(t("report_severity")) +
               ': <b style="color:' + sevColor + ';">' + IA.escapeHtml(enumLabel("severity", sev)) + "</b></div>";
           },
         }),
@@ -840,7 +862,7 @@
           itemStyle: { borderColor: palette.tooltipBg, borderWidth: 1, gapWidth: 2, borderRadius: 4 },
           data: treeData,
         }],
-      });
+      }));
     }
     chart.on("click", function () { IA.jumpToSection("report-impact"); });
     chart.on("mouseover", function () { container.style.cursor = "pointer"; });
@@ -913,9 +935,7 @@
     setChartHeight(container, 300);
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
-    chart.setOption({
-      animationDuration: 200,
-      animationEasing: "cubicOut",
+    chart.setOption(withAnim({
       tooltip: chartTooltip(palette, {
         appendToBody: false,
         transitionDuration: 0,
@@ -925,7 +945,7 @@
           const activeSev = d.severity || sev;
           const activeLike = d.likelihood || like;
           const activeColor = riskMarkerColor(activeSev, palette);
-          const prefix = params.seriesType === "scatter"
+          const prefix = params.seriesType === "scatter" || params.seriesType === "effectScatter"
             ? '<b style="color:' + palette.text + ';">' + IA.escapeHtml(t("risk_matrix_root_cause")) + "</b>" +
               '<span style="color:' + palette.textDim + ';"> · </span>'
             : "";
@@ -969,10 +989,15 @@
           progressive: 0,
           cursor: "pointer",
           z: 1,
+          emphasis: { focus: "self", blurScope: "coordinateSystem" },
+          blur: { itemStyle: { opacity: 0.25 } },
         },
         {
-          type: "scatter",
+          // 涟漪标记（effectScatter）：定位点持续脉冲扩散，"问题在这里"一眼锁定。
+          // 减弱动效偏好下降级为普通散点，视觉语义保留。
+          type: prefersReducedMotion() ? "scatter" : "effectScatter",
           symbolSize: 18,
+          rippleEffect: { period: 3.2, scale: 2.6, brushType: "stroke" },
           data: [{ value: [issueX, issueY], severity: sev, likelihood: like }],
           itemStyle: {
             color: markerColor,
@@ -1000,7 +1025,7 @@
           z: 10,
         },
       ],
-    });
+    }));
     chart.on("click", function () { IA.jumpToSection("report-impact"); });
     chart.on("mouseover", function () { container.style.cursor = "pointer"; });
     chart.on("mouseout", function () { container.style.cursor = ""; });
@@ -1207,9 +1232,7 @@
 
     fadeIn(container);
     const chart = echarts.init(container, null, mobileInitOpts());
-    chart.setOption({
-      animationDuration: 200,
-      animationEasing: "cubicOut",
+    chart.setOption(withAnim({
       tooltip: chartTooltip(palette, {
         formatter: function (params) {
           const d = params.data || {};
@@ -1223,16 +1246,16 @@
           }
           return '<div style="font-weight:600;margin-bottom:4px;max-width:300px;white-space:normal;word-break:break-all;">' +
             IA.escapeHtml(d.fullPath) + (d.lines ? ' <span style="color:' + palette.textDim + ';">' + IA.escapeHtml(d.lines) + "</span>" : "") + "</div>" +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_kind_legend")) +
+            '<div style="font-size:11px;color:' + palette.textDim + ';">' + tooltipDot(kindColor(d.kind, palette)) + IA.escapeHtml(t("evidence_kind_legend")) +
             ': <b style="color:' + kindColor(d.kind, palette) + ';">' + IA.escapeHtml(enumLabel("kind", d.kind)) + "</b></div>" +
-            '<div style="font-size:11px;color:' + palette.textDim + ';">' + IA.escapeHtml(t("evidence_strength_legend")) +
+            '<div style="font-size:11px;color:' + palette.textDim + ';">' + tooltipDot(strengthColor(d.strength, palette)) + IA.escapeHtml(t("evidence_strength_legend")) +
             ': <b style="color:' + strengthColor(d.strength, palette) + ';">' + IA.escapeHtml(enumLabel("strength", d.strength)) + "</b></div>" +
             (d.reason ? '<div style="color:' + palette.textDim + ';font-size:11px;margin-top:4px;max-width:280px;white-space:normal;">' + IA.escapeHtml(d.reason) + "</div>" : "");
         },
       }),
       toolbox: toolbox(palette, container),
       series: [evidenceSeries(layout)],
-    });
+    }));
 
     // 报告侧栏、分屏和全屏会改变容器宽度；必须重算方向与标签，而不只是拉伸 canvas。
     if (typeof ResizeObserver !== "undefined") {
