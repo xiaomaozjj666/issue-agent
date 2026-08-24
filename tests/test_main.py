@@ -683,21 +683,28 @@ def test_rate_limit_exceeds_threshold_raises_429(monkeypatch) -> None:
     _rate_window_buckets.clear()
 
 
-def test_rate_limit_cleans_stale_keys() -> None:
+def test_rate_limit_cleans_stale_keys(monkeypatch) -> None:
     """超过阈值时，窗口外的旧 key 被清理，字典不会无限膨胀。
 
     注意：不能通过 patch time.monotonic 模拟时间快进——asyncio 事件循环的
     loop.time() 也调用 time.monotonic()，会污染循环时钟。改为直接构造过期状态。
+
+    窗口必须 patch 为 1 秒且旧时间戳用 0.0：Linux CI runner 是新启动 VM，
+    time.monotonic()（CLOCK_MONOTONIC，开机计秒）可能小于默认窗口 60s，
+    导致 cutoff 为负、硬编码时间戳不被判为过期（曾在 CI 上 flaky）。
     """
     import asyncio
     from collections import deque
 
+    from app.config import Settings
     from app.main import _check_rate_limit, _rate_window_buckets
 
     _rate_window_buckets.clear()
-    # 101 个"远古时间戳"的 key：任何当前窗口都会判定为 stale
+    tiny_window = Settings(openai_api_key="test-key", rate_limit_window_seconds=1)
+    monkeypatch.setattr("app.main.get_settings", lambda: tiny_window)
+    # 101 个"远古时间戳"（0.0）的 key：开机超过 1 秒即必然判定为 stale
     for index in range(101):
-        _rate_window_buckets[f"old-{index}"] = deque([1.0])
+        _rate_window_buckets[f"old-{index}"] = deque([0.0])
 
     async def run() -> None:
         await _check_rate_limit("fresh-key")  # 触发 len>100 的清理检查
