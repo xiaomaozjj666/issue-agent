@@ -20,6 +20,9 @@ from pathlib import Path
 _JS_DIR = Path(__file__).resolve().parent.parent / "app" / "static" / "js"
 _APP_JS = _JS_DIR / "app.js"
 _CORE_JS = _JS_DIR / "core.js"
+_SCROLL_FOLLOW_JS = _JS_DIR / "scroll-follow.js"
+_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "app" / "templates"
+_CSS_PATH = Path(__file__).resolve().parent.parent / "app" / "static" / "css" / "primer.css"
 
 # 基线值：当前 app.js 的顶层函数数量与总行数。
 # 新增功能应优先考虑是否可拆分到独立模块文件，而非继续向 app.js 堆叠。
@@ -84,3 +87,92 @@ def test_app_js_has_no_bare_window_globals() -> None:
         f"app.js 引入了禁止的 window 裸全局导出：{forbidden}。"
         "应通过 IA 命名空间暴露公共接口。"
     )
+
+
+# ── 滚动跟随模块（ScrollFollow）结构约束 ─────────────────────────────
+
+
+def test_scroll_follow_module_exports_api() -> None:
+    """scroll-follow.js 必须存在并通过 IA.ScrollFollow 暴露 notify/reset 接口。"""
+    assert _SCROLL_FOLLOW_JS.exists(), "缺少 app/static/js/scroll-follow.js 滚动跟随模块"
+    text = _SCROLL_FOLLOW_JS.read_text(encoding="utf-8")
+    assert "IA.ScrollFollow" in text, "scroll-follow.js 未暴露 IA.ScrollFollow 命名空间"
+    assert "notify" in text and "reset" in text, "IA.ScrollFollow 缺少 notify/reset 方法"
+    # pinned 状态机核心逻辑标记：贴底跟随 + 未读徽标 + 跳底按钮
+    assert "pinned" in text, "缺少 pinned 跟随状态"
+    assert "unread" in text, "缺少未读消息计数"
+    assert "jump-latest-btn" in text, "未绑定回到底部按钮"
+    # 无 window 裸全局导出
+    bare = re.findall(r"window\.(\w+)\s*=", text)
+    assert all(name in {"IssueAgent", "addEventListener", "removeEventListener"} for name in bare)
+    # 后台标签页健壮性：rAF 被暂停时必须有定时器兜底与 visibilitychange 补滚
+    assert "scheduleFollowFallback" in text, "缺少 scheduleFollowFallback 定时器兜底（后台标签页 rAF 暂停时跟随失效）"
+    assert "visibilitychange" in text, "缺少 visibilitychange 监听（切回标签页时应立即补滚贴底）"
+
+
+def test_index_html_includes_jump_button_and_module() -> None:
+    """index.html 必须包含跳底按钮，且 scroll-follow.js 在 app.js 之前加载。"""
+    html = (_TEMPLATES_DIR / "index.html").read_text(encoding="utf-8")
+    assert 'id="jump-latest-btn"' in html, "index.html 缺少 #jump-latest-btn 按钮"
+    assert "jump-latest-badge" in html, "index.html 缺少未读徽标元素"
+    assert "jump_to_latest" in html, "按钮缺少 data-i18n 国际化绑定"
+    follow_pos = html.find("/static/js/scroll-follow.js")
+    app_pos = html.find("/static/js/app.js")
+    core_pos = html.find("/static/js/core.js")
+    assert core_pos != -1 and follow_pos != -1 and app_pos != -1
+    assert core_pos < follow_pos < app_pos, "scroll-follow.js 必须在 core.js 之后、app.js 之前加载"
+
+
+def test_app_js_delegates_scroll_following() -> None:
+    """app.js 的滚动跟随必须委托给 ScrollFollow 模块并保留降级路径。"""
+    text = _APP_JS.read_text(encoding="utf-8")
+    assert "IA.ScrollFollow" in text, "app.js 未接入 IA.ScrollFollow 模块"
+    assert "IA.ScrollFollow.reset()" in text, "resetWorkspace 未调用 ScrollFollow.reset"
+    # fillToolCard 展开工具结果后必须触发滚动跟随（此前缺失导致进度不可见）
+    fill_start = text.index("function fillToolCard")
+    fill_end = text.index("const ISSUE_URL_PATTERN", fill_start)
+    fill_block = text[fill_start:fill_end]
+    assert "scrollToBottomIfNear" in fill_block, "fillToolCard 展开后未触发滚动跟随"
+
+
+def test_css_has_jump_latest_button_styles() -> None:
+    """primer.css 必须包含跳底按钮的悬浮样式与未读徽标样式。"""
+    css = _CSS_PATH.read_text(encoding="utf-8")
+    assert "#jump-latest-btn" in css, "缺少 #jump-latest-btn 样式"
+    assert "#jump-latest-btn.visible" in css, "缺少按钮可见态样式"
+    assert ".jump-latest-badge" in css, "缺少未读徽标样式"
+    assert ".jump-latest-label" in css, "缺少窄屏隐藏文案的响应式规则"
+
+
+def test_charts_have_stagger_animation_and_reduced_motion_fallback() -> None:
+    """charts.js 必须提供 stagger 入场动画并尊重 prefers-reduced-motion。
+
+    顶尖监控面板（Grafana/Datadog）的标配：条形依次生长而非齐刷刷弹现；
+    无障碍要求减弱动效偏好下全部动画禁用。
+    """
+    text = (_JS_DIR / "charts.js").read_text(encoding="utf-8")
+    assert "withAnim" in text, "缺少 withAnim 动画配置工厂"
+    assert "animationDelay" in text, "缺少 stagger 延迟动画"
+    assert "prefersReducedMotion" in text, "缺少 prefers-reduced-motion 检测"
+    # 所有入场 setOption 都必须经 withAnim 包装（禁止退回裸 setOption 丢动画配置）。
+    # 例外：ResizeObserver 的增量更新（animationDurationUpdate）不带入场动画语义。
+    bare_setoption = [m for m in re.findall(r"setOption\(\{([^}]*)", text)
+                      if "animationDurationUpdate" not in m]
+    assert not bare_setoption, f"发现 {len(bare_setoption)} 处未包装 withAnim 的 setOption"
+
+
+def test_charts_have_hover_focus_and_tooltip_dots() -> None:
+    """条形/热图系列必须有 hover 聚焦淡出（emphasis.focus）与 tooltip 色点。"""
+    text = (_JS_DIR / "charts.js").read_text(encoding="utf-8")
+    assert 'focus: "self"' in text, "缺少 emphasis.focus: self 聚焦配置"
+    assert 'blurScope: "coordinateSystem"' in text, "缺少 blurScope 坐标系级淡出"
+    assert "tooltipDot" in text, "缺少 tooltip 色点工厂"
+
+
+def test_risk_matrix_marker_uses_ripple_effect() -> None:
+    """风险矩阵定位标记必须用 effectScatter 涟漪，且减弱动效下降级普通散点。"""
+    text = (_JS_DIR / "charts.js").read_text(encoding="utf-8")
+    assert "effectScatter" in text, "风险矩阵标记未使用 effectScatter 涟漪"
+    assert "rippleEffect" in text, "缺少 rippleEffect 涟漪配置"
+    degraded = 'prefersReducedMotion() ? "scatter" : "effectScatter"' in text
+    assert degraded, "effectScatter 必须在 prefers-reduced-motion 下降级为普通散点"
