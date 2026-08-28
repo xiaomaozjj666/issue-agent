@@ -9,13 +9,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
+import app.routes.sessions as sessions_routes
 from app.agent import IssueAgent, ModelResponseError
 from app.build import BUILD_ID
 from app.circuit_breaker import CircuitBreaker
-from app.config import Settings
+from app.config import Settings, get_settings
+from app.deps import get_circuit_breaker, get_session_manager
 from app.events import done_event, phase_event, tool_call_event, tool_result_event
 from app.github import GitHubError, GitHubRateLimitError, GitHubResourceError
-from app.main import app, get_circuit_breaker, get_session_manager, get_settings
+from app.main import app
 from app.models import AnalysisReport, ApplyFixRequest, ChatResponse, IssueData
 from app.sessions import SessionManager
 
@@ -296,7 +298,7 @@ async def test_apply_fix_new_and_legacy_routes_require_confirmation(monkeypatch)
     manager = SessionManager()
     app.dependency_overrides[get_session_manager] = lambda: manager
     monkeypatch.setattr(
-        main_module,
+        sessions_routes,
         "get_settings",
         lambda: Settings(openai_api_key="test-key", write_mode=True),
     )
@@ -625,7 +627,7 @@ async def test_apply_fix_rolls_back_branch_on_generic_failure(monkeypatch, tmp_p
 
 
 def test_resolve_override_settings_forks_without_mutating_global() -> None:
-    from app.main import resolve_override_settings
+    from app.deps import resolve_override_settings
 
     class FakeReq:
         language = "en"
@@ -647,7 +649,7 @@ def test_resolve_override_settings_forks_without_mutating_global() -> None:
 
 
 def test_resolve_override_settings_no_overrides_returns_singleton() -> None:
-    from app.main import resolve_override_settings
+    from app.deps import resolve_override_settings
 
     class FakeReq:
         language = None
@@ -665,11 +667,11 @@ def test_rate_limit_exceeds_threshold_raises_429(monkeypatch) -> None:
     from fastapi import HTTPException
 
     from app.config import Settings
-    from app.main import _check_rate_limit, _rate_window_buckets
+    from app.rate_limit import _check_rate_limit, _rate_window_buckets
 
     _rate_window_buckets.clear()
     low_limit = Settings(openai_api_key="test-key", rate_limit_requests=2, rate_limit_window_seconds=60)
-    monkeypatch.setattr("app.main.get_settings", lambda: low_limit)
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: low_limit)
 
     async def run() -> None:
         await _check_rate_limit("rl-key-1")
@@ -697,11 +699,11 @@ def test_rate_limit_cleans_stale_keys(monkeypatch) -> None:
     from collections import deque
 
     from app.config import Settings
-    from app.main import _check_rate_limit, _rate_window_buckets
+    from app.rate_limit import _check_rate_limit, _rate_window_buckets
 
     _rate_window_buckets.clear()
     tiny_window = Settings(openai_api_key="test-key", rate_limit_window_seconds=1)
-    monkeypatch.setattr("app.main.get_settings", lambda: tiny_window)
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: tiny_window)
     # 101 个"远古时间戳"（0.0）的 key：开机超过 1 秒即必然判定为 stale
     for index in range(101):
         _rate_window_buckets[f"old-{index}"] = deque([0.0])
@@ -718,15 +720,15 @@ def test_rate_limit_cleans_stale_keys(monkeypatch) -> None:
 def test_rate_limit_middleware_returns_429_json(monkeypatch) -> None:
     """限流超限时返回 JSON 429（而非 500），带 Retry-After 头。"""
     from app.config import Settings
-    from app.main import get_session_manager as gsm
-    from app.main import get_settings as original_get_settings
+    from app.deps import get_session_manager as gsm
+    from app.rate_limit import get_settings as original_get_settings
 
     low_limit = Settings(
         openai_api_key="test-key",
         rate_limit_requests=2,
         rate_limit_window_seconds=60,
     )
-    monkeypatch.setattr("app.main.get_settings", lambda: low_limit)
+    monkeypatch.setattr("app.rate_limit.get_settings", lambda: low_limit)
     app.dependency_overrides[gsm] = lambda: SessionManager()  # /sessions 依赖（不碰 lock）
     client = TestClient(app)
     try:
@@ -740,14 +742,14 @@ def test_rate_limit_middleware_returns_429_json(monkeypatch) -> None:
         assert "retry-after" in {k.lower() for k in third.headers}
     finally:
         app.dependency_overrides.pop(gsm, None)
-        monkeypatch.setattr("app.main.get_settings", original_get_settings)
+        monkeypatch.setattr("app.rate_limit.get_settings", original_get_settings)
 
 
 async def test_chat_archived_session_returns_409() -> None:
     """归档会话继续 chat 返回 409。"""
     import httpx as httpx_client
 
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     async with main_module.lifespan(app):
         manager = app.state.session_manager
@@ -769,7 +771,7 @@ async def test_chat_archived_session_returns_409() -> None:
 
 def _with_session_manager():
     """为依赖 get_session_manager 的端点提供 manager（TestClient 无 lifespan）。"""
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     app.dependency_overrides[gsm] = lambda: SessionManager()
     return gsm
@@ -904,7 +906,7 @@ def test_analyze_api_error_maps_to_502(monkeypatch) -> None:
 
 async def _post_chat_with_error(monkeypatch, exc, expected_status):
     from app.agent import IssueAgent as AgentClass
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
@@ -948,7 +950,7 @@ async def test_chat_github_error_maps_to_502(monkeypatch) -> None:
 async def test_stream_session_conflict_yields_error(monkeypatch) -> None:
     """并发冲突（SessionConflictError）在 stream 中产出自描述 error 事件。"""
     from app.agent import IssueAgent as AgentClass
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
     from app.sessions import SessionConflictError
 
     manager = SessionManager()
@@ -974,7 +976,7 @@ async def test_stream_session_conflict_yields_error(monkeypatch) -> None:
 async def test_stream_generic_exception_marks_session_failed(monkeypatch) -> None:
     """stream 中未预期异常：会话被标记为 failed，且 yield error 事件。"""
     from app.agent import IssueAgent as AgentClass
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1005,7 +1007,7 @@ async def test_stream_generic_exception_marks_session_failed(monkeypatch) -> Non
 
 def test_stream_unknown_session_yields_error_and_404(monkeypatch) -> None:
     """传不存在的 session_id 续跑：yield error 事件，不新建会话。"""
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1023,7 +1025,7 @@ def test_stream_unknown_session_yields_error_and_404(monkeypatch) -> None:
 
 
 async def test_session_detail_404() -> None:
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1036,7 +1038,7 @@ async def test_session_detail_404() -> None:
 
 
 async def test_session_report_404() -> None:
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1049,7 +1051,7 @@ async def test_session_report_404() -> None:
 
 
 async def test_session_proposal_404() -> None:
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1084,7 +1086,7 @@ async def test_lifespan_startup_recovery_and_purge_failures_are_tolerated(monkey
 
 
 async def test_chat_stream_requires_session_id() -> None:
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1097,7 +1099,7 @@ async def test_chat_stream_requires_session_id() -> None:
 
 
 async def test_chat_stream_unknown_session_returns_404() -> None:
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1112,7 +1114,7 @@ async def test_chat_stream_unknown_session_returns_404() -> None:
 async def test_chat_stream_yields_deltas_and_marks_completed(monkeypatch) -> None:
     """正常流：delta 事件透传、流结束标记 completed。"""
     from app.agent import IssueAgent as AgentClass
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1141,7 +1143,7 @@ async def test_chat_stream_yields_deltas_and_marks_completed(monkeypatch) -> Non
 async def test_chat_stream_error_event_marks_failed(monkeypatch) -> None:
     """agent 吞异常并 yield error 事件：终态为 failed。"""
     from app.agent import IssueAgent as AgentClass
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
@@ -1165,7 +1167,7 @@ async def test_chat_stream_error_event_marks_failed(monkeypatch) -> None:
 
 
 async def test_chat_stream_archived_session_returns_409() -> None:
-    from app.main import get_session_manager as gsm
+    from app.deps import get_session_manager as gsm
 
     manager = SessionManager()
     app.dependency_overrides[gsm] = lambda: manager
