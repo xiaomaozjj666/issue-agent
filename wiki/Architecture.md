@@ -10,7 +10,9 @@
              │                  │                   │
 ┌────────────▼──────────────────▼───────────────────▼─────────────┐
 │                     FastAPI Application (main.py)                │
-│  Routing · DI · SSE Streaming · Auth Middleware · Error Mapping  │
+│   Lifespan 装配 · 中间件 · 异常处理器 · 健康检查 / 首页           │
+│   路由: routes/（analysis · chat · sessions · batch）             │
+│   DI: deps.py · 限流: rate_limit.py · SSE 心跳: sse.py           │
 └────────────┬──────────────────┬───────────────────┬─────────────┘
              │                  │                   │
 ┌────────────▼──────┐ ┌────────▼────────┐ ┌───────▼──────────────┐
@@ -39,7 +41,11 @@
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| **入口 & 路由** | `main.py` | HTTP 端点定义、DI 容器、SSE 流组装、错误映射 |
+| **入口** | `main.py` | lifespan 装配、中间件挂载、异常处理器、健康检查 / 首页 |
+| **域路由** | `routes/` | analysis（分析 + SSE 流式）、chat、sessions、batch 各域端点与错误映射 |
+| **依赖注入** | `deps.py` | SessionManager / 熔断器 / 任务队列依赖、agent 构建、请求级设置覆盖 |
+| **限流** | `rate_limit.py` | 按 API key 的滑动窗口限流中间件 |
+| **SSE 心跳** | `sse.py` | 流式保活：慢步骤 shield 包装，超时只发心跳、绝不取消在途步骤 |
 | **调查引擎** | `agent.py` | 工具调用循环编排、并行文件预加载、流式事件生成 |
 | **工具执行** | `tools.py` | 沙盒化工具执行（read_file / list_directory / search_code / grep_content / create_pr） |
 | **报告生成** | `report_generator.py` | 从调查上下文构造报告 prompt、多级重试、流式 reasoning |
@@ -64,7 +70,7 @@
 ### 调查流程 (POST /stream)
 
 ```
-Client ──POST /stream──▶ main.py
+Client ──POST /stream──▶ routes/analysis.py
                            │
                     ┌──────▼──────┐
                     │ 创建 Session │
