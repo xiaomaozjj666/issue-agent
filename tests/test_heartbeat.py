@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from app.main import _HEARTBEAT, _iter_events_with_heartbeat
+from app.sse import _HEARTBEAT, _iter_events_with_heartbeat
 
 
 async def _stepping_generator(steps: int, step_sleep: float):

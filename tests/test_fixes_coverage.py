@@ -345,7 +345,7 @@ async def test_connection_pool_acquire_release_cycle(tmp_path) -> None:
 
 def test_rate_limiter_uses_deque_not_list() -> None:
     """限流器应使用 deque 而非 list，确保 popleft 是 O(1)。"""
-    from app.main import _rate_window_buckets
+    from app.rate_limit import _rate_window_buckets
 
     # 清空后添加一条
     _rate_window_buckets.clear()
@@ -362,7 +362,7 @@ def test_rate_limiter_uses_deque_not_list() -> None:
 
 
 async def _check_rate_limit_test_wrapper(key: str) -> None:
-    from app.main import _check_rate_limit
+    from app.rate_limit import _check_rate_limit
 
     await _check_rate_limit(key)
 
@@ -537,11 +537,11 @@ async def test_chat_stream_marks_session_failed_on_error_event(tmp_path) -> None
             async def aclose(self):
                 pass
 
-        # monkeypatch build_issue_agent
-        import app.main as main_mod
+        # monkeypatch build_issue_agent（目标：/chat/stream 处理器所在的路由模块）
+        import app.routes.chat as chat_mod
 
-        original_builder = main_mod.build_issue_agent
-        main_mod.build_issue_agent = lambda *args, **kwargs: MockAgent()
+        original_builder = chat_mod.build_issue_agent
+        chat_mod.build_issue_agent = lambda *args, **kwargs: MockAgent()
 
         ChatRequest(session_id=session.session_id, message="test")
 
@@ -557,7 +557,7 @@ async def test_chat_stream_marks_session_failed_on_error_event(tmp_path) -> None
         assert restored.status == "failed", f"error 事件后应为 failed，实际 {restored.status}"
         assert restored.phase == "failed"
 
-        main_mod.build_issue_agent = original_builder
+        chat_mod.build_issue_agent = original_builder
     finally:
         app.state.session_manager = None
         if hasattr(app.state, "circuit_breaker"):

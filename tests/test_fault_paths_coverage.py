@@ -19,13 +19,19 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+import app.deps as deps_module
 import app.main as main_module
+import app.rate_limit as rate_limit_module
+import app.routes.analysis as analysis_routes
+import app.routes.chat as chat_routes
+import app.routes.sessions as sessions_routes
 from app.agent import IssueAgent, ModelResponseError, friendly_chat_error
 from app.circuit_breaker import CircuitBreaker
 from app.config import Settings
+from app.deps import ProviderClients, get_circuit_breaker, get_session_manager
 from app.errors import CircuitBreakerOpenError
 from app.events import done_event, phase_event
-from app.main import app, get_circuit_breaker, get_session_manager
+from app.main import app
 from app.models import AnalysisReport, ChatRequest, IssueData, SourceFile, StreamRequest
 from app.sessions import Session, SessionConflictError, SessionManager
 
@@ -41,9 +47,9 @@ def _ensure_circuit_breaker_dependency():
 @pytest.fixture(autouse=True)
 def _reset_rate_limit_buckets():
     """模块级滑动窗口桶跨测试残留会让本文件的大量请求触发误判 429，逐测清空。"""
-    main_module._rate_window_buckets.clear()
+    rate_limit_module._rate_window_buckets.clear()
     yield
-    main_module._rate_window_buckets.clear()
+    rate_limit_module._rate_window_buckets.clear()
 
 
 def _report_data(**overrides: object) -> dict:
@@ -120,25 +126,25 @@ def test_i18n_endpoint_rejects_unknown_language() -> None:
 
 
 async def test_rate_limiter_evicts_expired_timestamps() -> None:
-    main_module._rate_window_buckets.clear()
+    rate_limit_module._rate_window_buckets.clear()
     old = time.monotonic() - 999
-    main_module._rate_window_buckets["evict-key"] = deque([old, old + 1])
+    rate_limit_module._rate_window_buckets["evict-key"] = deque([old, old + 1])
 
-    await main_module._check_rate_limit("evict-key")
+    await rate_limit_module._check_rate_limit("evict-key")
 
-    bucket = main_module._rate_window_buckets["evict-key"]
+    bucket = rate_limit_module._rate_window_buckets["evict-key"]
     assert all(ts > time.monotonic() - 120 for ts in bucket)
-    main_module._rate_window_buckets.clear()
+    rate_limit_module._rate_window_buckets.clear()
 
 
 def test_rate_limiter_uses_api_key_header_when_configured(monkeypatch) -> None:
     """API_KEY 已配置且请求带 X-API-Key：按 header 值限流（而非客户端 IP）。"""
     settings = Settings(openai_api_key="test-key", api_key="secret", rate_limit_requests=1)
-    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(rate_limit_module, "get_settings", lambda: settings)
     import app.auth as auth_module
 
     monkeypatch.setattr(auth_module, "get_settings", lambda: settings)
-    main_module._rate_window_buckets.clear()
+    rate_limit_module._rate_window_buckets.clear()
     client = TestClient(app)
     try:
         first = client.get("/i18n", params={"lang": "zh"}, headers={"X-API-Key": "secret"})
@@ -147,9 +153,9 @@ def test_rate_limiter_uses_api_key_header_when_configured(monkeypatch) -> None:
         assert first.status_code == 200
         assert second.status_code == 429
         assert "Retry-After" in second.headers
-        assert "secret" in main_module._rate_window_buckets
+        assert "secret" in rate_limit_module._rate_window_buckets
     finally:
-        main_module._rate_window_buckets.clear()
+        rate_limit_module._rate_window_buckets.clear()
 
 
 async def test_session_conflict_handler_returns_409(monkeypatch) -> None:
@@ -202,13 +208,13 @@ def test_stream_keepalive_emitted_for_slow_steps(monkeypatch) -> None:
     """单个事件产出超过心跳阈值：SSE 输出 keepalive 注释并 touch 会话活跃度。"""
     manager = SessionManager()
     _override_session_manager(manager)
-    original = main_module._iter_events_with_heartbeat
+    original = analysis_routes._iter_events_with_heartbeat
 
     async def fast_heartbeat(event_iter, *, timeout: float = 15.0):
         async for item in original(event_iter, timeout=0.05):
             yield item
 
-    monkeypatch.setattr(main_module, "_iter_events_with_heartbeat", fast_heartbeat)
+    monkeypatch.setattr(analysis_routes, "_iter_events_with_heartbeat", fast_heartbeat)
 
     async def slow_stream(self: IssueAgent, issue_url: str, *, session=None):
         await asyncio.sleep(0.2)
@@ -285,8 +291,11 @@ async def test_stream_cancellation_marks_session_interrupted(monkeypatch) -> Non
         yield  # pragma: no cover
 
     monkeypatch.setattr(IssueAgent, "investigate_stream", cancelled_stream)
-    response = await main_module.stream_analysis(
-        StreamRequest(issue_url="https://github.com/acme/widget/issues/1"), manager, breaker
+    response = await analysis_routes.stream_analysis(
+        StreamRequest(issue_url="https://github.com/acme/widget/issues/1"),
+        ProviderClients(None, None),
+        manager,
+        breaker,
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -305,15 +314,18 @@ async def test_stream_cancellation_survives_interrupt_persist_failure(monkeypatc
     async def failing_mark(manager_, session_id: str, started_at: float) -> None:
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(main_module, "mark_stream_interrupted", failing_mark)
+    monkeypatch.setattr(analysis_routes, "mark_stream_interrupted", failing_mark)
 
     async def cancelled_stream(self: IssueAgent, issue_url: str, *, session=None):
         raise asyncio.CancelledError
         yield  # pragma: no cover
 
     monkeypatch.setattr(IssueAgent, "investigate_stream", cancelled_stream)
-    response = await main_module.stream_analysis(
-        StreamRequest(issue_url="https://github.com/acme/widget/issues/1"), manager, breaker
+    response = await analysis_routes.stream_analysis(
+        StreamRequest(issue_url="https://github.com/acme/widget/issues/1"),
+        ProviderClients(None, None),
+        manager,
+        breaker,
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -365,7 +377,7 @@ def test_apply_regenerate_points_at_last_user_message() -> None:
     )
     request = ChatRequest(message="regenerate")
 
-    main_module.apply_regenerate(session, request)
+    deps_module.apply_regenerate(session, request)
 
     assert request.message == "second question"
     assert session.messages == [
@@ -382,7 +394,7 @@ def test_apply_regenerate_without_user_messages_is_noop() -> None:
     )
     request = ChatRequest(message="regenerate")
 
-    main_module.apply_regenerate(session, request)
+    deps_module.apply_regenerate(session, request)
 
     assert request.message == "regenerate"
     assert len(session.messages) == 1
@@ -396,7 +408,7 @@ def test_apply_regenerate_with_empty_user_content_keeps_request_message() -> Non
     )
     request = ChatRequest(message="fallback")
 
-    main_module.apply_regenerate(session, request)
+    deps_module.apply_regenerate(session, request)
 
     assert request.message == "fallback"
     assert session.messages == []
@@ -516,13 +528,13 @@ async def test_chat_stream_regenerate_replays_last_user_message(monkeypatch) -> 
 async def test_chat_stream_keepalive_emitted_for_slow_first_token(monkeypatch) -> None:
     manager = SessionManager()
     _override_session_manager(manager)
-    original = main_module._iter_events_with_heartbeat
+    original = chat_routes._iter_events_with_heartbeat
 
     async def fast_heartbeat(event_iter, *, timeout: float = 15.0):
         async for item in original(event_iter, timeout=0.05):
             yield item
 
-    monkeypatch.setattr(main_module, "_iter_events_with_heartbeat", fast_heartbeat)
+    monkeypatch.setattr(chat_routes, "_iter_events_with_heartbeat", fast_heartbeat)
 
     async def slow_chat(self: IssueAgent, session: Session, message: str):
         await asyncio.sleep(0.2)
@@ -556,7 +568,9 @@ async def test_chat_stream_cancellation_marks_interrupted(monkeypatch) -> None:
         raise asyncio.CancelledError
 
     monkeypatch.setattr(IssueAgent, "chat_stream", cancelled_chat)
-    response = await main_module.chat_stream(ChatRequest(session_id=session.session_id, message="hi"), manager, breaker)
+    response = await chat_routes.chat_stream(
+        ChatRequest(session_id=session.session_id, message="hi"), ProviderClients(None, None), manager, breaker
+    )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
             pass
@@ -577,14 +591,16 @@ async def test_chat_stream_cancellation_survives_persist_failure(monkeypatch) ->
     async def failing_mark(manager_, session_id: str, started_at: float) -> None:
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(main_module, "mark_stream_interrupted", failing_mark)
+    monkeypatch.setattr(chat_routes, "mark_stream_interrupted", failing_mark)
 
     async def cancelled_chat(self: IssueAgent, session: Session, message: str):
         raise asyncio.CancelledError
         yield  # pragma: no cover
 
     monkeypatch.setattr(IssueAgent, "chat_stream", cancelled_chat)
-    response = await main_module.chat_stream(ChatRequest(session_id=session.session_id, message="hi"), manager, breaker)
+    response = await chat_routes.chat_stream(
+        ChatRequest(session_id=session.session_id, message="hi"), ProviderClients(None, None), manager, breaker
+    )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
             pass
@@ -612,7 +628,9 @@ async def test_chat_stream_generic_exception_yields_error_event(monkeypatch) -> 
         yield  # pragma: no cover
 
     monkeypatch.setattr(IssueAgent, "chat_stream", failing_chat)
-    response = await main_module.chat_stream(ChatRequest(session_id=session.session_id, message="hi"), manager, breaker)
+    response = await chat_routes.chat_stream(
+        ChatRequest(session_id=session.session_id, message="hi"), ProviderClients(None, None), manager, breaker
+    )
     chunks = [chunk async for chunk in response.body_iterator]
 
     assert any('"type": "error"' in chunk for chunk in chunks)
@@ -782,7 +800,7 @@ def _import_request(body: bytes, content_length: str | None) -> Request:
 async def test_import_rejects_invalid_content_length_header() -> None:
     manager = SessionManager()
     with pytest.raises(HTTPException) as exc_info:
-        await main_module.import_session(_import_request(b"{}", "abc"), manager)
+        await sessions_routes.import_session(_import_request(b"{}", "abc"), manager)
 
     assert exc_info.value.status_code == 400
 
@@ -790,9 +808,9 @@ async def test_import_rejects_invalid_content_length_header() -> None:
 async def test_import_rejects_body_larger_than_declared_length(monkeypatch) -> None:
     manager = SessionManager()
     settings = Settings(openai_api_key="test-key", max_session_import_bytes=65_536)
-    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(sessions_routes, "get_settings", lambda: settings)
     with pytest.raises(HTTPException) as exc_info:
-        await main_module.import_session(_import_request(b"x" * 70_000, "100"), manager)
+        await sessions_routes.import_session(_import_request(b"x" * 70_000, "100"), manager)
 
     assert exc_info.value.status_code == 413
 
@@ -811,7 +829,7 @@ async def test_import_tolerates_invalid_issue_and_report_data() -> None:
         },
         "events": [],
     }
-    summary = await main_module.import_session(_import_request(json.dumps(payload).encode(), None), manager)
+    summary = await sessions_routes.import_session(_import_request(json.dumps(payload).encode(), None), manager)
 
     assert summary.issue_url == "https://github.com/acme/widget/issues/1"
     assert summary.status == "completed"
@@ -828,7 +846,7 @@ async def test_import_tolerates_invalid_issue_and_report_data() -> None:
 
 
 def test_batch_submit_and_status_happy_path() -> None:
-    from app.main import get_task_queue
+    from app.deps import get_task_queue
     from app.task_queue import Batch, BatchTask
 
     batch = Batch(
@@ -2525,13 +2543,13 @@ def test_stream_keepalive_survives_touch_failure(monkeypatch) -> None:
     """心跳里的 touch 失败（如 DB 短暂不可用）：仅记 debug 日志，不影响流。"""
     manager = SessionManager()
     _override_session_manager(manager)
-    original = main_module._iter_events_with_heartbeat
+    original = analysis_routes._iter_events_with_heartbeat
 
     async def fast_heartbeat(event_iter, *, timeout: float = 15.0):
         async for item in original(event_iter, timeout=0.05):
             yield item
 
-    monkeypatch.setattr(main_module, "_iter_events_with_heartbeat", fast_heartbeat)
+    monkeypatch.setattr(analysis_routes, "_iter_events_with_heartbeat", fast_heartbeat)
 
     async def failing_touch(session_id: str) -> None:
         raise RuntimeError("db unavailable")
@@ -2608,7 +2626,7 @@ async def test_import_returns_500_when_refreshed_session_missing(monkeypatch) ->
     }
 
     with pytest.raises(HTTPException) as exc_info:
-        await main_module.import_session(_import_request(json.dumps(payload).encode(), None), manager)
+        await sessions_routes.import_session(_import_request(json.dumps(payload).encode(), None), manager)
 
     assert exc_info.value.status_code == 500
     assert "could not be loaded" in exc_info.value.detail
