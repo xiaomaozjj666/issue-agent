@@ -44,7 +44,11 @@ python -m uvicorn app.main:app --port 8000 --reload
 issue-agent/
 ├── app/                    # 应用源码
 │   ├── __init__.py         # 包导出
-│   ├── main.py             # FastAPI 入口 & 路由
+│   ├── main.py             # FastAPI 入口（lifespan / 中间件 / 健康检查）
+│   ├── routes/             # 域路由（analysis / chat / sessions / batch）
+│   ├── deps.py             # FastAPI 依赖注入 & 请求级辅助
+│   ├── rate_limit.py       # 滑动窗口限流中间件
+│   ├── sse.py              # SSE 流式心跳助手
 │   ├── agent.py            # 调查引擎（工具循环）
 │   ├── tools.py            # 工具定义 & 执行器
 │   ├── report_generator.py # 报告生成
@@ -210,17 +214,21 @@ async def _tool_my_tool(self, arguments: dict[str, Any]) -> str:
 ## 添加新端点
 
 1. 在 `app/models.py` 定义 Request/Response 模型
-2. 在 `app/main.py` 添加路由，使用 `SessionMgr` 依赖注入
-3. 业务逻辑放在 `app/services.py`（保持 main.py 仅处理 HTTP 关注点）
+2. 在对应域路由模块（`app/routes/`，如 `analysis.py` / `sessions.py`）添加路由，使用 `SessionMgr` 等依赖注入
+3. 业务逻辑放在 `app/services.py`（保持路由模块仅处理 HTTP 关注点）
 4. 添加测试到 `tests/test_main.py`
 
 ```python
-@app.post("/my-endpoint", response_model=MyResponse)
+router = APIRouter()
+
+@router.post("/my-endpoint", response_model=MyResponse)
 async def my_endpoint(request: MyRequest, session_mgr: SessionMgr) -> MyResponse:
     # HTTP 关注点: 参数验证、状态码
     # 业务逻辑委托给 services 层
     ...
 ```
+
+路由模块通过 `app.main` 中的 `include_router` 挂载；新增路由文件后需在 `main.py` 注册。
 
 ---
 

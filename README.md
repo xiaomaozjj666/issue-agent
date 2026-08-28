@@ -209,7 +209,11 @@ python -m uvicorn app.main:app --port 9123 --reload
 
 ```
 app/
-  main.py              FastAPI 入口：路由、SSE 流、限流 / 认证中间件
+  main.py              FastAPI 入口：lifespan 装配、中间件、异常处理器、健康检查 / 首页
+  routes/              域路由模块：analysis（分析 + SSE 流式）· chat · sessions · batch
+  deps.py              FastAPI 依赖注入与请求级辅助（agent 构建、设置覆盖、重生成）
+  rate_limit.py        按 API key 的滑动窗口限流中间件
+  sse.py               SSE 流式心跳助手（慢步骤 shield 保活，绝不取消在途调查）
   agent.py             IssueAgent：多阶段调查（获取 → 预读 → 探索 → 验证 → 报告 → 评审）
   tools.py             工具定义与执行器（只读工具 + 可选的 create_pull_request 提案）
   github.py            GitHub REST 客户端（重试、连接池、缓存、路径 / 树分析）
@@ -222,7 +226,8 @@ app/
   task_queue.py        进程内异步批量任务队列
   services.py          会话状态、PR 应用 / 回滚等服务逻辑
   cli.py               Rich 终端 CLI
-  static/              前端 JS / CSS（无构建步骤）
+  static/              前端 JS / CSS（无构建步骤；core / markdown / 计时器 /
+                       文件追踪 / 导出 / charts 等按职责拆分的 IIFE 模块）
   templates/           Web 页面模板
 tests/                 pytest 单元 / 集成测试
 e2e/                   Playwright 端到端测试
