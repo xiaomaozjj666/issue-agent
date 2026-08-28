@@ -677,6 +677,76 @@
     setTimeout(function () { target.classList.remove("section-highlight"); }, 1500);
   }
 
+
+  // ── Issue URL 规范化 / 错误详情格式化 / CDN 降级提示（自 app.js 移入的通用工具）──
+  // 简写支持：owner/repo#123 → https://github.com/owner/repo/issues/123
+  const ISSUE_SHORTHAND_PATTERN = /^([\w.-]+)\/([\w.-]+)#(\d+)$/;
+
+  function normalizeIssueUrl(raw) {
+    // 从可能粘贴的多行文本中提取第一个 GitHub issue URL
+    const match = raw.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#][^\s]*)?/i);
+    if (match) return match[0];
+    // 简写：owner/repo#123
+    const shorthand = raw.trim().match(ISSUE_SHORTHAND_PATTERN);
+    if (shorthand) return `https://github.com/${shorthand[1]}/${shorthand[2]}/issues/${shorthand[3]}`;
+    return raw.split(/\s+/)[0];
+  }
+
+  function formatErrorDetail(detail) {
+    if (detail == null) return "";
+    if (typeof detail === "string") return detail;
+    // FastAPI 422 返回 [{loc, msg, type}, ...] 数组，需要序列化为可读字符串
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (item && typeof item === "object") {
+            const loc = Array.isArray(item.loc) ? item.loc.join(".") : String(item.loc ?? "");
+            return (loc ? loc + ": " : "") + (item.msg || item.type || "");
+          }
+          return String(item);
+        })
+        .join("; ");
+    }
+    try {
+      return JSON.stringify(detail);
+    } catch (e) {
+      return String(detail);
+    }
+  }
+
+  // #33 CDN 降级统一提示：检测 CDN 脚本加载失败标志，展示统一可关闭的横幅
+  function checkCdnFailures() {
+    const failures = [];
+    if (window.__echartsFailed) failures.push("ECharts");
+    if (window.__markedFailed) failures.push("marked");
+    if (window.__domPurifyFailed) failures.push("DOMPurify");
+    if (window.__hljsFailed) failures.push("highlight.js");
+    if (!failures.length) return;
+    // 避免重复插入
+    if (document.getElementById("cdn-notice")) return;
+    const notice = document.createElement("div");
+    notice.id = "cdn-notice";
+    notice.className = "cdn-notice";
+    notice.setAttribute("role", "alert");
+    notice.innerHTML =
+      `<div class="cdn-notice-icon" aria-hidden="true">${svgIcon("alert")}</div>` +
+      `<div class="cdn-notice-body">` +
+        `<div class="cdn-notice-title">${escapeHtml(translate("cdn_offline_notice"))}</div>` +
+        `<div class="cdn-notice-detail">${escapeHtml(failures.join(", "))}</div>` +
+      `</div>` +
+      `<button type="button" class="cdn-notice-close" aria-label="${escapeHtml(translate("report_close"))}">×</button>`;
+    notice.querySelector(".cdn-notice-close").addEventListener("click", function () {
+      notice.remove();
+    });
+    // 插入到主区域顶部
+    const main = document.getElementById("main");
+    if (main && main.firstChild) {
+      main.insertBefore(notice, main.firstChild);
+    } else if (main) {
+      main.appendChild(notice);
+    }
+  }
+
   const ns = {
     apiJson,
     apiKey,
@@ -700,6 +770,9 @@
     ensureVendor,
     jumpToEvidence,
     jumpToSection,
+    normalizeIssueUrl,
+    formatErrorDetail,
+    checkCdnFailures,
   };
 
   window.IssueAgent = ns;

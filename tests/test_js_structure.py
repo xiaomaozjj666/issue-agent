@@ -26,12 +26,13 @@ _CSS_PATH = Path(__file__).resolve().parent.parent / "app" / "static" / "css" / 
 
 # 基线值：当前 app.js 的顶层函数数量与总行数。
 # 新增功能应优先考虑是否可拆分到独立模块文件，而非继续向 app.js 堆叠。
-# 2026-08-24 上调行数预算：续跑功能（startAnalysisStream / resumeAnalysis /
-# addResumePrompt）与 analyze / restoreSession 共享闭包状态（currentStream、
-# sessionId、navigationStack 等），拆分需大规模暴露闭包变量，风险高于收益，
-# 故按测试授权条款上调并说明（净增 3 个函数为续跑相关，函数总数 75 <= 80 仍合规）。
-_APP_JS_MAX_FUNCTIONS = 80   # 当前 75，容差 +5
-_APP_JS_MAX_LINES = 4300     # 当前 4234，容差 +66（续跑功能所致，见上方说明）
+# 2026-08-29 下调基线：将低耦合职责块拆分至独立模块（markdown.js /
+# analysis-timer.js / files-tracker.js / export.js，通用工具并入 core.js），
+# app.js 经 IA 命名空间 + 本地 const 别名委托调用（与 enumLabel 同一模式），
+# 顶层函数 75 → 46、总行数 4234 → 3323。与 analyze/restoreSession 共享闭包
+# 状态的续跑/流式逻辑仍保留在 app.js 内。
+_APP_JS_MAX_FUNCTIONS = 51   # 当前 46，容差 +5
+_APP_JS_MAX_LINES = 3423     # 当前 3323，容差 +100
 
 
 def _count_top_level_functions(text: str) -> int:
