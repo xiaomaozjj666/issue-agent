@@ -106,9 +106,21 @@ if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
     throw "Missing .env and .env.example."
 }
 
-& $python -c "import uvicorn; from app.main import app"
-if ($LASTEXITCODE -ne 0) {
-    throw "Issue Agent dependencies could not be loaded."
+# 探测依赖；失败时透出底层错误（不要只抛一句笼统的提示）
+$PSNativeCommandUseErrorActionPreference = $false  # pwsh 7.3+ 下 stderr 不因 EAP=Stop 提前终止
+$probeDetail = $null
+try {
+    $probeDetail = (& $python -c "import uvicorn; from app.main import app" 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "dependency probe exited with code $LASTEXITCODE"
+    }
+}
+catch {
+    if ([string]::IsNullOrWhiteSpace($probeDetail)) { $probeDetail = $_.Exception.Message }
+    if ($probeDetail -match "did not find executable at") {
+        throw "Issue Agent cannot start: the virtual environment's base Python was moved or uninstalled.`nFix: delete the .venv folder and recreate it, then reinstall dependencies (see README 'Local Setup').`n$probeDetail"
+    }
+    throw "Issue Agent dependencies could not be loaded.`n$probeDetail"
 }
 
 $localBuildId = (& $python -c "from app.build import calculate_build_id; print(calculate_build_id())").Trim()
