@@ -301,7 +301,8 @@
     analyzing_btn: "Analyzing…",
     api_key_required: "API key required: the server is authenticated. Add your key in the settings panel (⚙️).",
     evidence_claim_group_hint: "Evidence in this group supports the conclusion above",
-    chart_blast_radius_note: "Affected modules (colored by severity; no patch diff available)",
+    chart_blast_radius_note: "No patch diff line counts found, so change sizes across modules cannot be compared.",
+    chart_blast_module_count: "Affected modules: {count}",
   };
 
   function loadI18n() {
