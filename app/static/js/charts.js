@@ -716,6 +716,20 @@
     if (originalDirs.length > 1) return originalDirs[0];
     return originalDirs[0] || "root";
   }
+  // 徽章流视图专用：目录全被判定为通用根（src/lib/app/…）时，
+  // 退回到「原始路径前两级」而不是单层通用名，避免多个真实模块被合并成歧义的 src/lib。
+  function chipNameOf(path) {
+    const p = String(path || "").replace(/\\/g, "/").trim();
+    if (!p) return "root";
+    if (p.indexOf("/") === -1 && p.indexOf(".") === -1) return p;
+    const parts = p.split("/").filter(function (s) { return s; });
+    const dirParts = parts.slice();
+    if (dirParts.length && dirParts[dirParts.length - 1].indexOf(".") !== -1) dirParts.pop();
+    while (dirParts.length && GENERIC_ROOTS[dirParts[0].toLowerCase()]) dirParts.shift();
+    if (dirParts.length) return dirParts.slice(0, 2).join("/");
+    if (parts.length > 2) return parts.slice(0, 2).join("/");
+    return parts[0] || "root";
+  }
   function renderBlastRadius(container, report, sessionData) {
     if (!container) return null;
     if (!isAvailable()) {
@@ -753,15 +767,33 @@
     // 等长的装饰条形没有信息量，紧凑标签 + 严重度着色更诚实。
     const totalChanged = modules.reduce(function (s, m) { return s + (moduleChanges[m] || 0); }, 0);
     if (totalChanged === 0) {
-      const chips = modules.map(function (mod) {
-        return '<span class="blast-chip" style="border-color:' + sevColor + ';color:' + sevColor + ';">' +
-          IA.escapeHtml(mod) + "</span>";
+      // 无补丁改动行数 → 没有数值维度，用「细粒度模块名」徽章 + 严重度/数量速读列示。
+      // 徽章不重复原始路径：同名模块合并为一个徽章，悬停 title 显示完整来源。
+      const chipMap = {};
+      rawModules.forEach(function (p) {
+        const name = chipNameOf(p);
+        if (!chipMap[name]) chipMap[name] = [];
+        chipMap[name].push(p);
+      });
+      const chipNames = Object.keys(chipMap);
+      const chips = chipNames.map(function (name) {
+        const title = chipMap[name].join(", ");
+        const attr = title ? ' title="' + IA.escapeAttr(title) + '"' : "";
+        return '<span class="blast-chip" role="listitem"' + attr +
+          ' style="color:' + sevColor + ';">' +
+          IA.escapeHtml(name) + "</span>";
       }).join("");
       container.innerHTML =
-        '<div class="blast-chips" role="list">' + chips + "</div>" +
-        '<div class="blast-chips-note">' + IA.escapeHtml(t("chart_blast_radius_note")) + "</div>";
-      container.style.height = "";
-      container.style.minHeight = "";
+        '<div class="blast-fallback">' +
+          '<div class="blast-fallback-meta">' +
+            '<span class="blast-fallback-sev"><span class="blast-fallback-dot" aria-hidden="true" style="background:' + sevColor + ';"></span>' +
+            IA.escapeHtml(t("report_severity")) + ': <b style="color:' + sevColor + ';">' +
+            IA.escapeHtml(enumLabel("severity", sev)) + "</b></span>" +
+            '<span class="blast-fallback-count">' + IA.escapeHtml(t("chart_blast_module_count", { count: chipNames.length })) + "</span>" +
+          "</div>" +
+          '<div class="blast-chips" role="list">' + chips + "</div>" +
+          '<p class="blast-chips-note">' + IA.escapeHtml(t("chart_blast_radius_note")) + "</p>" +
+        "</div>";
       return null;
     }
     const useBar = modules.length <= 3;
