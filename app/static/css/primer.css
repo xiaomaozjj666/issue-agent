@@ -514,6 +514,14 @@ a:hover {
   gap: var(--space-2);
 }
 
+/* 输入校验错误：显示在输入框正下方（用户视线所在处），数秒后自动消失 */
+.compose-error {
+  margin: 0;
+  color: var(--red);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
 /* 输入框 */
 /* 排除 checkbox：ID 选择器特异性会压过 .session-checkbox，
    把复选框渲染成 34px 高的文本输入框样式 */

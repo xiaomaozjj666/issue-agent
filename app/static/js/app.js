@@ -260,6 +260,28 @@
       : null;
 
     if (!sessions.length) {
+      const searchQuery = (document.getElementById("history-search")?.value || "").trim();
+      if (searchQuery && !showArchived) {
+        // 搜索无结果：与「还没有会话」的首次空态区分开，并提供一键清除
+        list.innerHTML =
+          `<div class="history-empty-cta">` +
+            `<div class="history-empty-cta-icon">${IA.svgIcon("search")}</div>` +
+            `<div class="history-empty-cta-text">${IA.escapeHtml(t("history_empty_search"))}</div>` +
+            `<button class="history-empty-cta-btn" type="button" id="empty-clear-search">${IA.escapeHtml(t("history_empty_search_clear"))}</button>` +
+          `</div>`;
+        const clearBtn = document.getElementById("empty-clear-search");
+        if (clearBtn) {
+          clearBtn.addEventListener("click", function () {
+            const input = document.getElementById("history-search");
+            if (input) {
+              input.value = "";
+              input.focus();
+            }
+            loadSessions();
+          });
+        }
+        return;
+      }
       const emptyKey = showArchived ? "history_empty_archive" : "history_empty_active";
       if (showArchived) {
         list.innerHTML = `<div class="history-empty">${t(emptyKey)}</div>`;
@@ -1313,6 +1335,20 @@
   // 若在 DOMContentLoaded 里才绑定监听，首个 401 事件会丢失。
   bindUnauthorizedHint();
 
+  // 侧栏输入框下方的行内错误提示：出现在用户视线处，数秒后自动消失
+  let urlErrorTimer = null;
+  function showUrlError(message) {
+    const el = document.getElementById("url-error");
+    if (!el) {
+      addMsg("error", t("error_prefix") + message);
+      return;
+    }
+    el.textContent = message;
+    el.hidden = false;
+    if (urlErrorTimer) window.clearTimeout(urlErrorTimer);
+    urlErrorTimer = window.setTimeout(function () { el.hidden = true; }, 4000);
+  }
+
   async function analyze() {
     // 防重入：快速双击或回车多次时只允许一个流，避免状态错乱和旧 reader 泄漏
     if (analyzeInProgress) return;
@@ -1332,7 +1368,8 @@
     if (!raw) return;
     const url = normalizeIssueUrl(raw);
     if (!ISSUE_URL_PATTERN.test(url)) {
-      addMsg("error", t("error_prefix") + t("invalid_issue_url"));
+      // 错误显示在侧栏输入框正下方（用户视线所在处），而不是主区底部远处
+      showUrlError(t("invalid_issue_url"));
       // M11 修复：URL 错误时输入框加视觉提示
       const input = document.getElementById("issueUrl");
       input.setAttribute("aria-invalid", "true");
@@ -1529,10 +1566,11 @@
         loadSessions();
         break;
       case "phase":
-        setAnalysisPhase(evt.data.label || evt.data.phase);
+        // label 已由后端按 LANGUAGE 本地化；phase key 传给计时器用于稳定匹配进度百分比
+        setAnalysisPhase(evt.data.label || evt.data.phase, evt.data.phase);
         break;
       case "start":
-        setAnalysisPhase(t("exploring_files", { count: evt.data.file_count }));
+        setAnalysisPhase(t("exploring_files", { count: evt.data.file_count }), "exploring");
         if (evt.data.title) document.querySelector(".conversation-label").textContent = evt.data.title;
         // E28: 分析开始时初始化文件追踪
         resetFilesTracker();
@@ -1548,6 +1586,7 @@
                 return "";
               }
             })(),
+          "tool_call",
         );
         const card = addToolCard(evt.data.name, evt.data.args);
         toolCardRef.setToolCard(card);
@@ -1565,7 +1604,7 @@
         appendReasoningDelta(evt.data.delta || "");
         break;
       case "review":
-        setAnalysisPhase(t("review_progress", { status: evt.data.status }));
+        setAnalysisPhase(t("review_progress", { status: evt.data.status }), "review");
         break;
       case "report":
         report = evt.data;
@@ -2597,6 +2636,8 @@
   }
 
   function toggleReport(open) {
+    // 守卫：没有报告数据时不打开面板，避免出现只有标题栏的空白面板
+    if (open && !report) return;
     document.getElementById("main").classList.toggle("report-open", open);
     document.body.classList.toggle("report-visible", open);
     syncReportToggle(open);

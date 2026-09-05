@@ -60,6 +60,8 @@
     session_list_label: "Session list",
     history_empty_active: "No sessions yet.<br>Paste an Issue URL to begin.",
     history_empty_archive: "No archived sessions.",
+    history_empty_search: "No matching sessions. Try a different keyword.",
+    history_empty_search_clear: "Clear search",
     history_group_running: "Running",
     history_group_today: "Today",
     history_group_week: "Previous 7 days",

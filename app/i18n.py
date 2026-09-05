@@ -379,6 +379,41 @@ def get_review_unavailable_message(language: str | None = None) -> str:
     return "Independent review was unavailable; this report only passed deterministic evidence validation."
 
 
+# 调查阶段标签：随 LANGUAGE 本地化，用于 SSE 进度条与会话事件时间线。
+# phase key 同时是前端 PHASE_PROGRESS 的进度锚点，新增阶段需同步 analysis-timer.js。
+_PHASE_LABELS: dict[str, dict[str, str]] = {
+    "fetching": {
+        "zh": "正在获取 Issue 与仓库树",
+        "en": "Fetching issue and repository tree",
+    },
+    "preloading": {
+        "zh": "正在预读 Issue 引用的 {count} 个文件",
+        "en": "Pre-loading {count} issue-referenced file(s)",
+    },
+    "exploring": {
+        "zh": "正在探索候选文件",
+        "en": "Investigating candidate files",
+    },
+    "verifying": {
+        "zh": "正在核验证据并准备报告",
+        "en": "Validating evidence and preparing the report",
+    },
+    "reviewing": {
+        "zh": "正在运行独立证据评审",
+        "en": "Running independent evidence review",
+    },
+}
+
+
+def get_phase_label(phase: str, language: str | None = None, **kwargs: object) -> str:
+    """Return the localized investigation-phase label shown in the UI timeline."""
+    labels = _PHASE_LABELS.get(phase)
+    if labels is None:
+        return phase
+    template = labels["zh"] if (language or get_settings().language) == "zh" else labels["en"]
+    return template.format(**kwargs) if kwargs else template
+
+
 _FRONTEND_STRINGS = {
     "zh": {
         "doc_title": "GitHub Issue Agent",
@@ -401,6 +436,8 @@ _FRONTEND_STRINGS = {
         "session_list_label": "会话列表",
         "history_empty_active": "暂无会话。<br>粘贴 Issue 链接开始排查。",
         "history_empty_archive": "暂无归档会话。",
+        "history_empty_search": "没有匹配的会话，换个关键词试试。",
+        "history_empty_search_clear": "清除搜索",
         "history_group_running": "运行中",
         "history_group_today": "今天",
         "history_group_week": "最近 7 天",
@@ -807,6 +844,8 @@ _FRONTEND_STRINGS = {
         "session_list_label": "Session list",
         "history_empty_active": "No sessions yet.<br>Paste an Issue URL to begin.",
         "history_empty_archive": "No archived sessions.",
+        "history_empty_search": "No matching sessions. Try a different keyword.",
+        "history_empty_search_clear": "Clear search",
         "history_group_running": "Running",
         "history_group_today": "Today",
         "history_group_week": "Previous 7 days",

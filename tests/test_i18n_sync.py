@@ -143,3 +143,18 @@ def test_enum_label_dynamic_keys_exist_in_both_languages() -> None:
                 missing_en.add(key)
     assert not missing_zh, f"enumLabel 动态 key 在 zh 字典缺失：{sorted(missing_zh)}"
     assert not missing_en, f"enumLabel 动态 key 在 en 字典缺失：{sorted(missing_en)}"
+
+
+def test_backend_phase_labels_localized_for_all_languages() -> None:
+    """后端调查阶段标签必须覆盖 zh/en，且未知 phase 原样返回（防御性兜底）。"""
+    from app.i18n import _PHASE_LABELS, get_phase_label
+
+    for phase, labels in _PHASE_LABELS.items():
+        assert labels.get("zh"), f"阶段 {phase} 缺少 zh 标签"
+        assert labels.get("en"), f"阶段 {phase} 缺少 en 标签"
+    assert get_phase_label("fetching", "zh") == "正在获取 Issue 与仓库树"
+    assert get_phase_label("fetching", "en") == "Fetching issue and repository tree"
+    # 带参数模板正常填充
+    assert get_phase_label("preloading", "zh", count=3) == "正在预读 Issue 引用的 3 个文件"
+    # 未知阶段兜底：返回 key 本身而非抛错
+    assert get_phase_label("unknown_phase", "zh") == "unknown_phase"

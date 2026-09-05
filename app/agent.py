@@ -38,6 +38,7 @@ from app.evidence import EvidenceValidator
 from app.github import GitHubClient, extract_referenced_paths, parse_issue_url, select_candidate_paths
 from app.i18n import (
     get_chat_system_prompt,
+    get_phase_label,
     get_review_unavailable_message,
     get_system_prompt,
     t,
@@ -126,7 +127,7 @@ class IssueAgent:
                 "review_calls": 0,
                 "files_read": 0,
             }
-        yield phase_event("fetching", "Fetching issue and repository tree")
+        yield phase_event("fetching", get_phase_label("fetching", self.settings.language))
 
         github_context = self._github_client or GitHubClient(
             self.settings.github_token,
@@ -160,7 +161,7 @@ class IssueAgent:
             if referenced_paths:
                 yield phase_event(
                     "preloading",
-                    f"Pre-loading {len(referenced_paths)} issue-referenced file(s)",
+                    get_phase_label("preloading", self.settings.language, count=len(referenced_paths)),
                 )
                 preload_paths = referenced_paths[: self.settings.max_candidate_files]
 
@@ -180,7 +181,7 @@ class IssueAgent:
                         if session is not None:
                             session.metrics["tool_calls"] = int(session.metrics.get("tool_calls", 0)) + 1
 
-            yield phase_event("exploring", "Investigating candidate files")
+            yield phase_event("exploring", get_phase_label("exploring", self.settings.language))
 
             tools = get_tool_definitions(self.settings)
             client = self._get_client()
@@ -270,7 +271,7 @@ class IssueAgent:
 
             if session is not None:
                 session.metrics["exploration_ms"] = round((monotonic() - exploration_started) * 1000)
-            yield phase_event("verifying", "Validating evidence and preparing the report")
+            yield phase_event("verifying", get_phase_label("verifying", self.settings.language))
             # 流式生成报告：实时推送 reasoning 思考过程到前端，避免长时间黑盒等待
             report: AnalysisReport | None = None
             report_started = monotonic()
@@ -289,7 +290,7 @@ class IssueAgent:
             if session is not None:
                 session.metrics["report_ms"] = round((monotonic() - report_started) * 1000)
             if self.settings.independent_review:
-                yield phase_event("reviewing", "Running independent evidence review")
+                yield phase_event("reviewing", get_phase_label("reviewing", self.settings.language))
                 if session is not None:
                     session.metrics["review_calls"] = int(session.metrics.get("review_calls", 0)) + 1
                 review_started = monotonic()

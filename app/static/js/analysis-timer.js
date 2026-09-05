@@ -13,6 +13,9 @@
   let analysisTimerId = null;
   let analysisStartTime = 0;
   let currentPhaseText = "";
+  // 阶段 key（后端 phase 事件的原phase 标识），用于稳定匹配进度百分比——
+  // 本地化后的阶段文本不含英文关键词，不能再用文本匹配推算进度
+  let currentPhaseKey = "";
 
   function formatElapsed(seconds) {
     if (seconds < 60) return seconds + "s";
@@ -21,22 +24,27 @@
     return m + ":" + (s < 10 ? "0" + s : s);
   }
 
-  // 各阶段估算百分比（基于真实调查流程：fetch→explore→iterate→review→report）
+  // 各阶段估算百分比（基于真实调查流程：fetch→preload→explore→iterate→verify→review→report）
   const PHASE_PROGRESS = {
     fetching: 5,
+    preloading: 10,
+    exploring: 15,
     exploring_files: 15,
     thinking: 35,
     planning: 40,
     tool_call: 50,
+    verifying: 88,
     review: 80,
+    reviewing: 80,
     report: 95,
     done: 100,
   };
 
-  function phaseProgress(phaseText) {
-    if (!phaseText) return 0;
+  function phaseProgress() {
+    if (currentPhaseKey && PHASE_PROGRESS[currentPhaseKey] != null) return PHASE_PROGRESS[currentPhaseKey];
+    if (!currentPhaseText) return 0;
     for (const key of Object.keys(PHASE_PROGRESS)) {
-      if (phaseText.toLowerCase().includes(key) || phaseText === t(key)) return PHASE_PROGRESS[key];
+      if (currentPhaseText.toLowerCase().includes(key) || currentPhaseText === t(key)) return PHASE_PROGRESS[key];
     }
     return 0;
   }
@@ -47,7 +55,7 @@
     analysisTimerId = window.setInterval(function () {
       const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
       const phase = currentPhaseText || t("fetching");
-      const pct = phaseProgress(phase);
+      const pct = phaseProgress();
       const progressEl = document.getElementById("progress");
       if (pct > 0) {
         progressEl.innerHTML = `<span class="progress-text">${IA.escapeHtml(phase)} · ${IA.escapeHtml(t("elapsed_time", { seconds: formatElapsed(elapsed) }))}</span>` +
@@ -66,8 +74,9 @@
     analysisStartTime = 0;
   }
 
-  function setAnalysisPhase(text) {
+  function setAnalysisPhase(text, progressKey) {
     currentPhaseText = text || "";
+    currentPhaseKey = progressKey || "";
     if (analysisTimerId !== null) {
       const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
       document.getElementById("progress").textContent =
@@ -80,6 +89,7 @@
   // 仅重置内部相位文本，不触碰 DOM（对应旧闭包写法 currentPhaseText = ""）
   function clearPhase() {
     currentPhaseText = "";
+    currentPhaseKey = "";
   }
 
   const ns = {
