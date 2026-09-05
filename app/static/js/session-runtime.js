@@ -198,6 +198,9 @@
     const progressEl = document.getElementById("progress");
     button.disabled = true;
     button.textContent = t("cancelling");
+    // 立即停掉分析计时器：否则 interval 每秒用「阶段 · 已用时」覆盖取消提示，
+    // 用户点击后看起来毫无反馈（取消要等在途模型调用结束才真正生效）
+    if (IA.AnalysisTimer) IA.AnalysisTimer.stop();
     if (progressEl) progressEl.textContent = t("cancelling");
     try {
       await IA.apiJson(`/session/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
