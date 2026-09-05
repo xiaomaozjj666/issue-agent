@@ -684,3 +684,40 @@ test("shows a friendly hint when the API requires a key", async ({ page }) => {
   await page.waitForTimeout(5200);
   await expect(page.locator("#settings-btn.settings-attention")).toHaveCount(0);
 });
+
+test("shows inline URL validation error next to the input, not in the thread", async ({ page }) => {
+  await mockCompletedSessions(page);
+  await page.goto("/");
+  await expect(page.locator(".hero")).toBeVisible();
+  await page.fill("#issueUrl", "not a valid url");
+  await page.locator("#analyze-btn").click();
+  // 错误出现在侧栏输入框正下方（用户视线所在处），而不是主区消息流底部
+  const inlineError = page.locator("#url-error");
+  await expect(inlineError).toBeVisible();
+  await expect(inlineError).toContainText("请输入合法的 GitHub issue 链接");
+  await expect(page.locator("#messages .msg.error")).toHaveCount(0);
+  // 数秒后自动消失
+  await expect(inlineError).toBeHidden({ timeout: 6000 });
+});
+
+test("distinguishes empty search results from the first-run empty state", async ({ page }) => {
+  // mock 按 q 参数过滤：搜索无结果时前端应展示"没有匹配"文案，而非首次空态引导
+  await page.route("**/sessions?**", (route) => {
+    const q = new URL(route.request().url()).searchParams.get("q") || "";
+    const sessions = q.includes("zzz") ? [] : [summary("session-1", "路径解析失败")];
+    route.fulfill({ json: sessions });
+  });
+  await page.route(/\/session\/session-1$/, (route) => route.fulfill({ json: detail("session-1", "路径解析失败") }));
+  await page.goto("/");
+  await expect(historyCard(page, 1)).toBeVisible();
+
+  await page.locator("#history-search").fill("zzz-no-match");
+  const list = page.locator("#history-list");
+  await expect(list).toContainText("没有匹配的会话");
+  await expect(list).not.toContainText("粘贴一个 Issue 链接");
+
+  // 一键清除：输入框清空并重新拉取会话列表
+  await page.locator("#empty-clear-search").click();
+  await expect(page.locator("#history-search")).toHaveValue("");
+  await expect(historyCard(page, 1)).toBeVisible();
+});
