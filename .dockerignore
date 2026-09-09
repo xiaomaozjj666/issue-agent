@@ -15,7 +15,6 @@ dist/
 *.egg-info/
 *.py[cod]
 .git/
-.qoder/
 data/
 reports/
 .env
