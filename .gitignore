@@ -18,7 +18,6 @@ dist/
 *.py[cod]
 reports/
 data/
-.qoder/
 *.tmp_*.json
 _ui_charts_*.png
 github_issue_agent.egg-info/
