@@ -128,7 +128,7 @@ async def test_investigate_stream_yields_events(
     assert "report" in types
     assert "done" in types
     calls = agent._client.chat.completions.calls
-    assert calls[0]["model"] == "deepseek-v4-pro"
+    assert calls[0]["model"] == "deepseek-flash"
     assert calls[0]["extra_body"] == {"thinking": {"type": "enabled"}}
     assert calls[0]["reasoning_effort"] == "high"
     assert "tool_choice" not in calls[0]

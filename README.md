@@ -118,7 +118,7 @@ cp .env.example .env
 ```dotenv
 OPENAI_API_KEY=<your-key>
 OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-pro
+OPENAI_MODEL=deepseek-flash
 ```
 
 私有仓库或需要更高 GitHub 限流时，设置 `GITHUB_TOKEN=<your-token>`。建议使用仅授予 contents 与 issues 只读权限的 fine-grained token；只有开启 `WRITE_MODE` 时才需要 contents 与 pull-requests 的写权限。
@@ -167,7 +167,7 @@ python -m uvicorn app.main:app --port 9123 --reload
 |---|---|---|
 | `OPENAI_API_KEY` | 必填 | LLM 供应商 API key |
 | `OPENAI_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容 API 地址 |
-| `OPENAI_MODEL` | `deepseek-v4-pro` | 调查模型名 |
+| `OPENAI_MODEL` | `deepseek-flash` | 调查模型名 |
 | `OPENAI_THINKING` | `enabled` | 思考模式（`enabled` / `disabled`） |
 | `OPENAI_REASONING_EFFORT` | `high` | 思考强度（`high` / `max`） |
 | `OPENAI_TIMEOUT` | `180` | 单次请求超时（秒），思考模式常需 60–120s |

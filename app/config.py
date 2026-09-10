@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # ── LLM provider ─────────────────────────────────────────────────
     openai_api_key: str = Field(min_length=1)
     openai_base_url: str = "https://api.deepseek.com"
-    openai_model: str = Field(default="deepseek-v4-pro", min_length=1)
+    openai_model: str = Field(default="deepseek-flash", min_length=1)
     openai_thinking: Literal["enabled", "disabled"] = "enabled"
     openai_reasoning_effort: Literal["high", "max"] = "high"
     openai_timeout: float = Field(default=180.0, gt=0, le=300, description="DeepSeek thinking mode often needs 60-120s")

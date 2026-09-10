@@ -11,7 +11,7 @@ def test_deepseek_request_options_make_thinking_explicit() -> None:
 
     assert is_deepseek(settings) is True
     assert options == {
-        "model": "deepseek-v4-pro",
+        "model": "deepseek-flash",
         "extra_body": {"thinking": {"type": "enabled"}},
         "reasoning_effort": "high",
     }
