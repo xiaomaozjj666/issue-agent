@@ -10,7 +10,7 @@
 |------|--------|------|------|
 | `OPENAI_API_KEY` | *(必填)* | — | LLM 提供商 API Key |
 | `OPENAI_BASE_URL` | `https://api.deepseek.com` | — | OpenAI-compatible API 地址 |
-| `OPENAI_MODEL` | `deepseek-v4-pro` | — | 调查模型名称 |
+| `OPENAI_MODEL` | `deepseek-flash` | — | 调查模型名称 |
 | `OPENAI_THINKING` | `enabled` | `enabled` / `disabled` | DeepSeek thinking mode |
 | `OPENAI_REASONING_EFFORT` | `high` | `high` / `max` | 推理深度 |
 | `OPENAI_TIMEOUT` | `180` | 1–300 | 单次 LLM 请求超时（秒） |
@@ -132,7 +132,7 @@
 # LLM
 OPENAI_API_KEY=sk-your-key-here
 OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-pro
+OPENAI_MODEL=deepseek-flash
 OPENAI_THINKING=enabled
 OPENAI_TIMEOUT=180
 
