@@ -19,6 +19,7 @@ class BatchTaskResponse(PydanticBaseModel):
     issue_url: str
     status: str
     error: str | None = None
+    has_report: bool = False
 
 
 class BatchStatusResponse(PydanticBaseModel):
@@ -39,7 +40,8 @@ async def submit_batch(request: BatchSubmitRequest, queue: TaskQueueDep) -> Batc
 
 @router.get("/batch/{batch_id}", response_model=BatchStatusResponse)
 async def get_batch_status(batch_id: str, queue: TaskQueueDep) -> BatchStatusResponse:
-    batch = queue.get_batch(batch_id)
+    # 优先读内存；进程重启后从 SQLite 恢复的批次也能被查到
+    batch = await queue.get_batch_async(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
     return _batch_response(batch)
@@ -56,6 +58,7 @@ def _batch_response(batch: Batch) -> BatchStatusResponse:
                 issue_url=t.issue_url,
                 status=t.status,
                 error=t.error,
+                has_report=t.result is not None,
             )
             for t in batch.tasks
         ],

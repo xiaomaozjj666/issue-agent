@@ -55,6 +55,8 @@
 | **会话管理** | `sessions.py` | Session 数据模型、Memory/SQLite 双后端、OCC 并发控制 |
 | **数据库** | `db.py` | Schema DDL、迁移、性能索引 |
 | **服务层** | `services.py` | 无状态业务逻辑（事件记录、报告格式化、PR 应用） |
+| **批量队列** | `task_queue.py` | 进程内 asyncio worker；可选 SQLite 持久化批次状态与完成报告 |
+| **评测** | `evals/` | 黄金用例打分（根因关键词 / 证据路径 / 置信度 / 补丁） |
 | **配置** | `config.py` | pydantic-settings，frozen 实例，环境变量驱动 |
 | **国际化** | `i18n.py` | 中英文 system prompt、工具策略、前端字符串 |
 | **事件协议** | `events.py` | SSE 事件类型定义（AgentEvent dataclass） |
@@ -165,7 +167,8 @@ Session 完整状态仅在关键节点（phase / report / done）写入 SQLite�
 `EvidenceValidator` 是纯确定性逻辑（无 LLM 调用）：
 - 验证 evidence 中的文件路径是否在 `files_read` 中
 - 验证行号范围 `L12-L45` 是否在实际读取的文件行数内
-- 无有效证据 → 强制 `confidence = "low"`
+- 有 `file_cache` 时抽取引用行内容，与根因/理由中的英文标识符做对齐；无交集则将该条证据强度降为 `weak`
+- 无有效证据 → 强制 `confidence = "low"`；全部证据内容不对齐时 high 上限压到 medium
 
 ### 7. 独立评审
 

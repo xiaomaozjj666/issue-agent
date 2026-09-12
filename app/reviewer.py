@@ -80,9 +80,7 @@ class ReviewerAgent:
 
         for attempt in range(total_attempts):
             if deadline is not None and monotonic() > deadline:
-                raise TimeoutError(
-                    f"Review exceeded process deadline at {deadline - monotonic():.1f}s remaining"
-                )
+                raise TimeoutError(f"Review exceeded process deadline at {deadline - monotonic():.1f}s remaining")
             record_model_request(metrics, "review", retry=attempt > 0)
             is_last = attempt == total_attempts - 1
             # 用 build_attempt_plan 统一构造 options（thinking 降级逻辑集中管理）
@@ -159,6 +157,7 @@ class ReviewerAgent:
             outcome.report,
             files_read=files_read,
             line_counts=line_counts,
+            file_cache=file_cache,
         )
         reviewed_payload = outcome.report.model_dump(exclude={"review_audit", "files_examined", "evidence_audit"})
         if outcome.verdict == "approved" and reviewed_payload != original_payload:

@@ -45,6 +45,7 @@ from app.i18n import (
 )
 from app.models import AnalysisReport, ChatResponse, IssueData, ReviewAudit
 from app.provider import (
+    apply_cost_estimate,
     chat_request_options,
     create_openai_client,
     iter_deltas,
@@ -325,6 +326,7 @@ class IssueAgent:
                 session.metrics["files_read"] = len(executor.files_read)
                 session.metrics["github_cache_hits"] = int(getattr(github, "cache_hits", 0)) - github_hits_before
                 session.metrics["github_cache_misses"] = int(getattr(github, "cache_misses", 0)) - github_misses_before
+                apply_cost_estimate(session.metrics, self.settings)
 
             yield report_event(report.model_dump())
 
@@ -332,7 +334,7 @@ class IssueAgent:
             elapsed_ms = round((monotonic() - investigation_start) * 1000)
             logger.info(
                 "Investigation complete: issue=%s/%s#%d elapsed_ms=%d "
-                "model_calls=%s tool_calls=%s files_read=%s confidence=%s",
+                "model_calls=%s tool_calls=%s files_read=%s tokens=%s cost_usd=%s confidence=%s",
                 owner,
                 repo,
                 number,
@@ -340,6 +342,8 @@ class IssueAgent:
                 session.metrics.get("model_calls", 0) if session else "n/a",
                 session.metrics.get("tool_calls", 0) if session else "n/a",
                 session.metrics.get("files_read", 0) if session else "n/a",
+                session.metrics.get("total_tokens", 0) if session else "n/a",
+                session.metrics.get("estimated_cost_usd", "n/a") if session else "n/a",
                 report.confidence,
             )
 
@@ -435,9 +439,10 @@ class IssueAgent:
         return github, executor, messages
 
     def _chat_finalize(self, executor: ToolExecutor, session: Session) -> None:
-        """Chat 共享收尾：回写 file_cache/files_read 并裁剪历史消息。"""
+        """Chat 共享收尾：回写 file_cache/files_read、更新费用估算并裁剪历史消息。"""
         session.file_cache = executor.file_cache
         session.files_read = executor.files_read
+        apply_cost_estimate(session.metrics, self.settings)
         history_budget = self.settings.max_total_context_chars - sum(
             len(content) for content in session.file_cache.values()
         )

@@ -82,9 +82,11 @@ issue-agent/
 │   ├── test_reviewer.py    # 评审测试
 │   ├── test_auth.py        # 认证测试
 │   └── ...
+├── evals/                  # 调查质量评测（黄金用例 + 打分）
 ├── wiki/                   # 项目文档
 ├── .github/workflows/      # CI 配置
 ├── pyproject.toml          # 项目元数据 & 工具配置
+├── uv.lock                 # 可复现依赖锁定（uv lock 生成）
 ├── Dockerfile              # 容器构建
 └── .env.example            # 配置模板
 ```

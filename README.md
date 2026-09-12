@@ -60,7 +60,9 @@ flowchart LR
 - ⚡ **并发安全** — 会话版本号乐观锁，防止多 worker / 多进程静默覆盖
 - 🔁 **熔断器** — LLM 供应商连续失败后快速失败，应用在故障期间仍能响应
 - 🚦 **限流** — 按 API key 的滑动窗口限流（未配置时按客户端 IP 兜底），健康检查与静态资源豁免
-- ⚙️ **批量分析** — 一次提交多个 Issue 到进程内异步任务队列后台分析，轮询进度
+- ⚙️ **批量分析** — 一次提交多个 Issue 到进程内异步任务队列后台分析，轮询进度；配置 SQLite 路径时批次状态与完成报告落盘，重启可恢复 pending 任务
+- 📈 **成本可观测** — 会话 metrics 记录 token 用量与估算费用（`estimated_cost_usd`），时间线展示 tokens / 花费
+- 🧪 **评测脚手架** — `evals/` 黄金用例 + 离线打分，用于对比 prompt / 模型调整后的根因命中率
 - 💾 **会话导出 / 导入** — 任意会话可下载为 JSON，导入后生成全新会话继续使用
 - 🖥️ **双接口** — FastAPI REST API + Rich 终端 CLI + 内嵌 Web UI（带图表）
 - 🐳 **Docker 支持** — 现成 Dockerfile，非 root 用户运行，含健康检查
@@ -171,6 +173,8 @@ python -m uvicorn app.main:app --port 9123 --reload
 | `OPENAI_THINKING` | `enabled` | 思考模式（`enabled` / `disabled`） |
 | `OPENAI_REASONING_EFFORT` | `high` | 思考强度（`high` / `max`） |
 | `OPENAI_TIMEOUT` | `180` | 单次请求超时（秒），思考模式常需 60–120s |
+| `INPUT_TOKEN_PRICE_PER_MILLION` | `0.27` | 估算费用用的输入 token 单价（美元 / 百万） |
+| `OUTPUT_TOKEN_PRICE_PER_MILLION` | `1.10` | 估算费用用的输出 token 单价（美元 / 百万） |
 | `GITHUB_TOKEN` | 可选 | GitHub 令牌，提高限流额度并访问私有仓库 |
 | `GITHUB_MAX_FILE_BYTES` | `512000` | 跳过大于此字节数的文件 |
 | `GITHUB_TIMEOUT` | `30` | GitHub API 请求超时（秒） |
@@ -231,6 +235,7 @@ app/
   templates/           Web 页面模板
 tests/                 pytest 单元 / 集成测试
 e2e/                   Playwright 端到端测试
+evals/                 调查质量评测（黄金用例 + 打分）
 wiki/                  项目文档
 ```
 

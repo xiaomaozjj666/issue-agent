@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     openai_timeout: float = Field(default=180.0, gt=0, le=300, description="DeepSeek thinking mode often needs 60-120s")
     # SDK 层不重试：报告生成/审查已有应用层重试（max_report_retries），避免双重重试放大延迟。
     openai_max_retries: int = Field(default=0, ge=0, le=5)
+    # 估算费用用的单价（美元 / 百万 token）。默认贴近 DeepSeek 官方价；
+    # 换供应商或调价时用环境变量覆盖，不影响实际计费，只影响报告里的估算值。
+    input_token_price_per_million: float = Field(default=0.27, ge=0, le=100)
+    output_token_price_per_million: float = Field(default=1.10, ge=0, le=1000)
 
     # ── GitHub integration ───────────────────────────────────────────
     github_token: str | None = None

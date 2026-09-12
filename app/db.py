@@ -67,6 +67,27 @@ CREATE TABLE IF NOT EXISTS pending_pr (
     changes_json TEXT NOT NULL DEFAULT '[]',
     created_at   TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS batches (
+    batch_id     TEXT PRIMARY KEY,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    created_at   TEXT DEFAULT (datetime('now')),
+    updated_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS batch_tasks (
+    task_id      TEXT PRIMARY KEY,
+    batch_id     TEXT NOT NULL,
+    issue_url    TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    error        TEXT,
+    report_json  TEXT,
+    created_at   TEXT DEFAULT (datetime('now')),
+    updated_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_tasks_batch_id ON batch_tasks(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_tasks_status ON batch_tasks(status);
 """
 
 
@@ -131,9 +152,9 @@ async def _migrate_report_enrichment(conn: aiosqlite.Connection) -> None:
         from app.report_backfill import enrich_report
     except Exception:  # pragma: no cover - enrichment is best-effort
         return
-    rows = await (await conn.execute(
-        "SELECT session_id, report_json FROM sessions WHERE report_json IS NOT NULL"
-    )).fetchall()
+    rows = await (
+        await conn.execute("SELECT session_id, report_json FROM sessions WHERE report_json IS NOT NULL")
+    ).fetchall()
     for row in rows:
         sid, rj = row["session_id"], row["report_json"]
         if not rj:

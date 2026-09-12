@@ -123,7 +123,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     stale_recovery_task = asyncio.create_task(periodic_stale_recovery())
 
-    # 批量分析任务队列：纯 asyncio 实现，无需外部 broker
+    # 批量分析任务队列：纯 asyncio 实现，无需外部 broker。
+    # 配置了持久化路径时，批量状态与完成报告写入同一 SQLite，重启不丢进度。
+    durable_batch_path = None if settings.session_db_path == ":memory:" else settings.session_db_path
     task_queue = TaskQueue(
         settings,
         breaker,
@@ -132,6 +134,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         max_history=settings.batch_max_history,
         client=openai_client,
         github_client=github_client,
+        db_path=durable_batch_path,
     )
     await task_queue.start()
     _app.state.task_queue = task_queue
