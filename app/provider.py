@@ -48,6 +48,38 @@ def record_model_usage(metrics: dict | None, response: Any, phase: str) -> None:
             metrics[f"{phase}_{target}"] = int(metrics.get(f"{phase}_{target}", 0)) + value
 
 
+def estimate_usd_cost(
+    metrics: dict | None,
+    *,
+    input_price_per_million: float,
+    output_price_per_million: float,
+) -> float | None:
+    """Estimate spend from recorded token counts. Returns None when usage is unknown."""
+    if not metrics:
+        return None
+    input_tokens = metrics.get("input_tokens")
+    output_tokens = metrics.get("output_tokens")
+    if not isinstance(input_tokens, int) and not isinstance(output_tokens, int):
+        return None
+    in_tok = input_tokens if isinstance(input_tokens, int) else 0
+    out_tok = output_tokens if isinstance(output_tokens, int) else 0
+    usd = (in_tok * input_price_per_million + out_tok * output_price_per_million) / 1_000_000
+    return round(usd, 6)
+
+
+def apply_cost_estimate(metrics: dict | None, settings: Settings) -> None:
+    """Write ``estimated_cost_usd`` into metrics when token usage is available."""
+    if metrics is None:
+        return
+    cost = estimate_usd_cost(
+        metrics,
+        input_price_per_million=settings.input_token_price_per_million,
+        output_price_per_million=settings.output_token_price_per_million,
+    )
+    if cost is not None:
+        metrics["estimated_cost_usd"] = cost
+
+
 def is_deepseek(settings: Settings) -> bool:
     """Return whether the configured endpoint is the official DeepSeek API."""
     hostname = (urlparse(settings.openai_base_url).hostname or "").casefold()

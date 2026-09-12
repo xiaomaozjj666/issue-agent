@@ -176,14 +176,24 @@
 
     // 2. 指标网格
     const reviewLabel = review.status !== "not_run" ? enumLabel("review_status", review.status) : "—";
-    parts.push('<div class="metrics">' +
-      metricCard(t("report_metric_evidence_count"), evCount) +
-      metricCard(t("report_metric_files_examined"), (r.files_examined || []).length) +
-      metricCard(t("report_metric_confidence"), enumLabel("confidence", r.confidence)) +
-      metricCard(t("report_metric_review"), reviewLabel) +
-      metricCard(t("report_metric_proposed_changes"), (r.proposed_changes || []).length) +
-      metricCard(t("report_metric_risks"), (r.risks || []).length) +
-      '</div>');
+    const exportMetrics = [
+      metricCard(t("report_metric_evidence_count"), evCount),
+      metricCard(t("report_metric_files_examined"), (r.files_examined || []).length),
+      metricCard(t("report_metric_confidence"), enumLabel("confidence", r.confidence)),
+      metricCard(t("report_metric_review"), reviewLabel),
+      metricCard(t("report_metric_proposed_changes"), (r.proposed_changes || []).length),
+      metricCard(t("report_metric_risks"), (r.risks || []).length),
+    ];
+    if (metrics.total_tokens) {
+      exportMetrics.push(
+        metricCard(t("report_metric_tokens"), Number(metrics.total_tokens).toLocaleString()),
+      );
+    }
+    if (metrics.estimated_cost_usd !== undefined && metrics.estimated_cost_usd !== null) {
+      const costText = IA.formatCostUsd(metrics.estimated_cost_usd);
+      if (costText) exportMetrics.push(metricCard(t("report_metric_cost"), costText));
+    }
+    parts.push('<div class="metrics">' + exportMetrics.join("") + '</div>');
 
     // 3. 图表占位（内部 script 填充）：补丁改动分布 + 证据核对
     const hasPatchExport = !!(r.patch && String(r.patch).trim());

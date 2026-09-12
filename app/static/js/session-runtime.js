@@ -27,6 +27,13 @@
     if (metrics && metrics.tool_calls !== undefined) metricItems.push(countLabel(metrics.tool_calls, "timeline_tool_calls"));
     if (metrics && metrics.review_calls !== undefined) metricItems.push(countLabel(metrics.review_calls, "timeline_reviews"));
     if (metrics && metrics.files_read !== undefined) metricItems.push(countLabel(metrics.files_read, "timeline_files_read"));
+    if (metrics && metrics.total_tokens) {
+      metricItems.push(t("timeline_tokens", { count: Number(metrics.total_tokens).toLocaleString() }));
+    }
+    if (metrics && metrics.estimated_cost_usd !== undefined && metrics.estimated_cost_usd !== null) {
+      const costText = IA.formatCostUsd(metrics.estimated_cost_usd);
+      if (costText) metricItems.push(t("timeline_cost_usd", { cost: costText }));
+    }
 
     // 默认展示聚合摘要：同名工具调用合并计数，长轨迹保留开头与结尾各 4 条。
     // 用户仍可展开查看完整时序，兼顾扫描效率和审计完整性。

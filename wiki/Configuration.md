@@ -15,6 +15,8 @@
 | `OPENAI_REASONING_EFFORT` | `high` | `high` / `max` | 推理深度 |
 | `OPENAI_TIMEOUT` | `180` | 1–300 | 单次 LLM 请求超时（秒） |
 | `OPENAI_MAX_RETRIES` | `0` | 0–5 | SDK 层重试次数；默认由业务层控制报告与评审重试 |
+| `INPUT_TOKEN_PRICE_PER_MILLION` | `0.27` | ≥0 | 估算费用用的输入 token 单价（美元 / 百万） |
+| `OUTPUT_TOKEN_PRICE_PER_MILLION` | `1.10` | ≥0 | 估算费用用的输出 token 单价（美元 / 百万） |
 
 > **注意**: DeepSeek thinking mode 下单次请求可能需要 60–120s，建议 timeout ≥ 120。
 

@@ -1,0 +1,12 @@
+{
+  "id": "demo-synthetic-001",
+  "issue_url": "https://github.com/example/demo/issues/1",
+  "description": "Schema sample. Replace with real closed issues that have known fix commits.",
+  "expected": {
+    "root_cause_keywords": ["null", "nil", "None", "missing check"],
+    "evidence_path_substrings": ["src/", "lib/", "app/"],
+    "min_confidence": "low",
+    "require_patch": false
+  },
+  "notes": "Keyword matching is case-insensitive substring over root_cause and summary. Evidence paths may match any substring. Keep cases offline-friendly for unit tests; live scoring needs network + OPENAI_API_KEY."
+}

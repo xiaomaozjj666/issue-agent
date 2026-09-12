@@ -1,0 +1,12 @@
+{
+  "id": "jinja-2180-lrucache-tuple-key",
+  "issue_url": "https://github.com/pallets/jinja/issues/2180",
+  "description": "Baseline case from a local investigation with thinking disabled.",
+  "expected": {
+    "root_cause_keywords": ["LRUCache", "tuple", "dict", "weakref", "cache"],
+    "evidence_path_substrings": ["jinja", "utils", "environment"],
+    "min_confidence": "low",
+    "require_patch": false
+  },
+  "notes": "One run: confidence=medium, 5 evidence items, ~57k tokens, ~$0.019."
+}

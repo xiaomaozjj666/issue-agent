@@ -147,6 +147,8 @@
     timeline_tool_calls: "{count} tool call(s)",
     timeline_reviews: "{count} review(s)",
     timeline_files_read: "{count} file(s) read",
+    timeline_tokens: "{count} tokens",
+    timeline_cost_usd: "est. ${cost}",
     timeline_expand: "Show all",
     timeline_collapse: "Collapse",
     historical_summary_title: "Historical report summary",
@@ -750,6 +752,15 @@
     }
   }
 
+  // 估算费用展示：小额保留 4 位小数，避免显示成 $0.00
+  function formatCostUsd(value) {
+    if (value === undefined || value === null || value === "") return "";
+    const cost = Number(value);
+    if (!isFinite(cost)) return "";
+    if (cost > 0 && cost < 0.01) return "$" + cost.toFixed(4);
+    return "$" + cost.toFixed(2);
+  }
+
   const ns = {
     apiJson,
     apiKey,
@@ -763,6 +774,7 @@
     applyI18n,
     formatDuration,
     formatRelativeTime,
+    formatCostUsd,
     svgIcon,
     copyToClipboard,
     downloadFile,

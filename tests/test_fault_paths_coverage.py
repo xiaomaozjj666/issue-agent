@@ -865,6 +865,9 @@ def test_batch_submit_and_status_happy_path() -> None:
         def get_batch(self, batch_id):
             return batch if batch_id == "batch-1" else None
 
+        async def get_batch_async(self, batch_id):
+            return batch if batch_id == "batch-1" else None
+
     app.dependency_overrides[get_task_queue] = lambda: _FakeQueue()
     try:
         client = TestClient(app)

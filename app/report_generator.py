@@ -162,6 +162,7 @@ class ReportGenerator:
                 report,
                 files_read=executor.files_read,
                 line_counts=executor.line_counts,
+                file_cache=executor.file_cache,
             )
             logger.info(
                 "Analysis complete: confidence=%s, evidence=%d, files=%d",
@@ -175,8 +176,12 @@ class ReportGenerator:
         raise ModelResponseError("The model returned an invalid analysis report")
 
     async def generate(
-        self, messages: list[dict], executor: ToolExecutor, metrics: dict | None = None,
-        *, deadline: float | None = None,
+        self,
+        messages: list[dict],
+        executor: ToolExecutor,
+        metrics: dict | None = None,
+        *,
+        deadline: float | None = None,
     ) -> AnalysisReport:
         """非流式包装器：消费所有 reasoning 事件并返回最终报告。
 
