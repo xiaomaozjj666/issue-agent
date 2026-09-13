@@ -55,7 +55,7 @@ flowchart LR
 - 🛡️ **证据审计** — 确定性交叉核验模型结论与实际读取的文件与行号，无有效证据支撑的根因强制 `confidence: low`
 - 🧭 **独立评审** — 独立的评审 Agent 基于原始源码证据挑战根因、备选假设、修复与测试建议，输出再次校验，评审服务不可用时安全降级
 - 📊 **结构化报告** — JSON 输出：摘要、根因（完整因果链）、代码证据（路径 + 行号 + 理由 + 强度）、置信度、修复建议、统一 diff 补丁、建议测试、风险，以及备选假设、影响面、复现路径等增强字段
-- 💬 **交互式聊天** — 调查后继续追问，可调用工具，支持 `/regenerate` 重新生成回答
+- 💬 **交互式聊天** — 调查后继续追问，可调用工具；重新生成回答由 Web UI 的「重新生成」按钮触发（API 字段 `ChatRequest.regenerate`，忽略上一条 assistant 回复重新请求），CLI 内为 `/save` `/quit` `/exit`
 - 🗂️ **会话工作区** — SQLite 持久化，可搜索、归档、恢复、取消、删除；导出 / 导入完整会话 JSON 用于跨实例备份迁移
 - ⚡ **并发安全** — 会话版本号乐观锁，防止多 worker / 多进程静默覆盖
 - 🔁 **熔断器** — LLM 供应商连续失败后快速失败，应用在故障期间仍能响应
@@ -103,7 +103,7 @@ flowchart LR
 
 ```powershell
 python -m venv .venv
-.\venv\Scripts\python -m pip install -e ".[dev]"
+.\.venv\Scripts\python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
@@ -214,19 +214,27 @@ python -m uvicorn app.main:app --port 9123 --reload
 ```
 app/
   main.py              FastAPI 入口：lifespan 装配、中间件、异常处理器、健康检查 / 首页
+  logging_config.py    日志配置：console / JSON-line 双格式
   routes/              域路由模块：analysis（分析 + SSE 流式）· chat · sessions · batch
   deps.py              FastAPI 依赖注入与请求级辅助（agent 构建、设置覆盖、重生成）
+  models.py            Pydantic 数据模型（Issues、报告、会话、聊天请求）
   rate_limit.py        按 API key 的滑动窗口限流中间件
+  auth.py              API key 认证中间件（X-API-Key 校验，未配置 API_KEY 时放行）
   sse.py               SSE 流式心跳助手（慢步骤 shield 保活，绝不取消在途调查）
+  events.py            SSE 事件类型定义（AgentEvent 序列化与解析）
   agent.py             IssueAgent：多阶段调查（获取 → 预读 → 探索 → 验证 → 报告 → 评审）
   tools.py             工具定义与执行器（只读工具 + 可选的 create_pull_request 提案）
   github.py            GitHub REST 客户端（重试、连接池、缓存、路径 / 树分析）
   provider.py          OpenAI 兼容 provider 的请求选项与流式解析
+  circuit_breaker.py   LLM 供应商熔断器（CLOSED → OPEN → HALF_OPEN，连续失败快速失败）
   report_generator.py  结构化报告生成（多级重试 + 思考降级）
   reviewer.py          独立评审 Agent
   evidence.py          确定性证据校验
+  json_utils.py        从模型响应文本中提取 JSON（剥离 markdown 代码块）
+  errors.py            领域异常类型集中定义（避免模块间循环导入）
   retry.py             报告 / 评审共用的重试与思考降级策略
   sessions.py / db.py  会话管理与 SQLite 持久化（连接池 + 乐观锁）
+  report_backfill.py   历史会话报告字段回填（纯 stdlib，补齐增强字段）
   task_queue.py        进程内异步批量任务队列
   services.py          会话状态、PR 应用 / 回滚等服务逻辑
   cli.py               Rich 终端 CLI
@@ -270,7 +278,13 @@ pytest -v --cov=app --cov-report=term-missing
 npm install
 npx playwright install chromium
 npm run test:e2e
+
+# 调查质量评测（evals/）：黄金用例 + 离线打分
+python -m evals.run_eval --dir evals/cases
+python -m evals.score
 ```
+
+`evals/` 用已知根因的 Issue 当标尺：`run_eval` 真实跑调查（需 `.env` 中的 `OPENAI_API_KEY` 与 GitHub 访问），`score.py` 是无网络、无 LLM 的离线打分模块，由 `run_eval` 与 `tests/test_eval_score.py` 复用；改 prompt 或换模型后对比根因命中率与 `estimated_cost_usd`。
 
 Playwright 套件在独立本地服务上验证桌面 / 移动端布局、无障碍标签、报告导航、源码链接、XSS 转义、输入清空与网络故障恢复；CI 在每次 push / PR 上运行同一套件（Python 3.11–3.13 + Docker 构建 + 浏览器回归）。
 
