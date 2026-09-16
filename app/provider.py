@@ -128,3 +128,21 @@ async def iter_deltas(stream, *, on_chunk: Callable[[Any], None] | None = None) 
         if not chunk.choices:
             continue
         yield chunk.choices[0].delta
+
+
+async def iter_stream_with_breaker(stream, breaker) -> AsyncIterator:
+    """Yield chunks from *stream*, reporting the stream's real outcome to *breaker*.
+
+    ``CircuitBreaker.call`` counts a streaming call as a success as soon as the response
+    object is returned — before a single token arrives — so mid-stream disconnects were
+    invisible to the breaker (and even reset its failure count).  Reporting the outcome
+    here closes that gap without restructuring every consumption site.
+    """
+    try:
+        async for chunk in stream:
+            yield chunk
+    except Exception as exc:  # noqa: BLE001 — 先回报熔断器，再把异常原样抛给调用方
+        await breaker.report_stream_outcome(exc)
+        raise
+    else:
+        await breaker.report_stream_outcome()

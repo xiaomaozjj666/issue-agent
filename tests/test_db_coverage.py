@@ -117,7 +117,7 @@ async def test_migrate_report_enrichment_once_runs_only_once(tmp_path, monkeypat
         await original(conn)
 
     monkeypatch.setattr("app.db._migrate_report_enrichment", counting_migration)
-    monkeypatch.setattr("app.db._enrichment_migration_done", False)
+    monkeypatch.setattr("app.db._enrichment_migration_done", set())
     await _migrate_report_enrichment_once(conn)
     await _migrate_report_enrichment_once(conn)
     assert calls["n"] == 1

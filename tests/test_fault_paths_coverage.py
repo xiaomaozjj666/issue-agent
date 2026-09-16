@@ -296,6 +296,7 @@ async def test_stream_cancellation_marks_session_interrupted(monkeypatch) -> Non
         ProviderClients(None, None),
         manager,
         breaker,
+        asyncio.Semaphore(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -326,6 +327,7 @@ async def test_stream_cancellation_survives_interrupt_persist_failure(monkeypatc
         ProviderClients(None, None),
         manager,
         breaker,
+        asyncio.Semaphore(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -560,7 +562,9 @@ async def test_chat_stream_cancellation_marks_interrupted(monkeypatch) -> None:
     manager = SessionManager()
     breaker = CircuitBreaker(threshold=5, recovery=30)
     session = await manager.create("https://github.com/acme/widget/issues/1")
-    session.status = "running"
+    # 已完成态起步：running 的会话现在会被会话租约直接 409 拒绝（一个写者原则），
+    # 本用例要验证的是「取消 → interrupted 终态」，与初始状态无关。
+    session.status = "completed"
     await manager.save(session)
 
     async def cancelled_chat(self: IssueAgent, session: Session, message: str):
@@ -569,7 +573,11 @@ async def test_chat_stream_cancellation_marks_interrupted(monkeypatch) -> None:
 
     monkeypatch.setattr(IssueAgent, "chat_stream", cancelled_chat)
     response = await chat_routes.chat_stream(
-        ChatRequest(session_id=session.session_id, message="hi"), ProviderClients(None, None), manager, breaker
+        ChatRequest(session_id=session.session_id, message="hi"),
+        ProviderClients(None, None),
+        manager,
+        breaker,
+        asyncio.Semaphore(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -585,7 +593,7 @@ async def test_chat_stream_cancellation_survives_persist_failure(monkeypatch) ->
     manager = SessionManager()
     breaker = CircuitBreaker(threshold=5, recovery=30)
     session = await manager.create("https://github.com/acme/widget/issues/1")
-    session.status = "running"
+    session.status = "completed"  # 同上：running 会被会话租约 409 拒绝
     await manager.save(session)
 
     async def failing_mark(manager_, session_id: str, started_at: float) -> None:
@@ -599,7 +607,11 @@ async def test_chat_stream_cancellation_survives_persist_failure(monkeypatch) ->
 
     monkeypatch.setattr(IssueAgent, "chat_stream", cancelled_chat)
     response = await chat_routes.chat_stream(
-        ChatRequest(session_id=session.session_id, message="hi"), ProviderClients(None, None), manager, breaker
+        ChatRequest(session_id=session.session_id, message="hi"),
+        ProviderClients(None, None),
+        manager,
+        breaker,
+        asyncio.Semaphore(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -629,7 +641,11 @@ async def test_chat_stream_generic_exception_yields_error_event(monkeypatch) -> 
 
     monkeypatch.setattr(IssueAgent, "chat_stream", failing_chat)
     response = await chat_routes.chat_stream(
-        ChatRequest(session_id=session.session_id, message="hi"), ProviderClients(None, None), manager, breaker
+        ChatRequest(session_id=session.session_id, message="hi"),
+        ProviderClients(None, None),
+        manager,
+        breaker,
+        asyncio.Semaphore(4),
     )
     chunks = [chunk async for chunk in response.body_iterator]
 
@@ -2163,7 +2179,7 @@ async def test_migration_once_double_check_guard(tmp_path, monkeypatch) -> None:
     import aiosqlite
 
     conn = await aiosqlite.connect(db_path)
-    monkeypatch.setattr(db_module, "_enrichment_migration_done", False)
+    monkeypatch.setattr(db_module, "_enrichment_migration_done", set())
     await asyncio.gather(
         db_module._migrate_report_enrichment_once(conn),
         db_module._migrate_report_enrichment_once(conn),
@@ -2334,10 +2350,15 @@ async def test_mark_stream_interrupted_schedules_detached_persist_on_cancel() ->
     session.status = "running"
     await manager.save(session)
     original_save = manager.save
+    attempts = {"n": 0}
 
-    def cancelling_save(session_: Session):
-        # 模拟落库途中被客户端断开取消
-        raise asyncio.CancelledError
+    async def cancelling_save(session_: Session):
+        # 模拟落库途中被客户端断开取消：只取消第一次，让脱离取消作用域的重试真正落库。
+        # MemoryStore 现在与 SqliteStore 一样按副本读写，不能再依赖对象别名落库。
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise asyncio.CancelledError
+        await original_save(session_)
 
     manager.save = cancelling_save
 

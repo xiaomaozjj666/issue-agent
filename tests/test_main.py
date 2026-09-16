@@ -36,7 +36,13 @@ def test_health() -> None:
     response = TestClient(app).get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "app": "issue-agent", "build_id": BUILD_ID}
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["app"] == "issue-agent"
+    assert payload["build_id"] == BUILD_ID
+    # 新增字段：前端/运维据此判断实例安全姿态，而不是等第一次请求 401
+    assert payload["auth_enabled"] is False
+    assert payload["write_mode"] is False
 
 
 async def test_lifespan_initializes_and_closes_session_manager() -> None:

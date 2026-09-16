@@ -11,7 +11,11 @@ write amplification from 30-50 writes per investigation to ~5.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from time import monotonic
 
 from fastapi import HTTPException
@@ -24,6 +28,67 @@ from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import validate_pr_proposal
 
 logger = logging.getLogger(__name__)
+
+# 并发闸门打满 / 同一会话重复发起时的用户可见消息（error 事件正文，前端原样展示）。
+BUSY_INVESTIGATIONS = (
+    "Too many investigations are already running. Please retry in a moment."
+)
+SESSION_ALREADY_RUNNING = (
+    "This session already has a running investigation. Wait for it to finish, or cancel it first."
+)
+
+# 活跃心跳间隔：必须显著小于 session_stale_after_seconds（默认 300s），
+# 否则后台 stale recovery 会把正在跑的调查误判成孤儿并抢走终态（返回 409）。
+_TOUCH_INTERVAL_SECONDS = 15.0
+
+
+async def acquire_investigation_slot(slots: asyncio.Semaphore, *, timeout: float = 0.05) -> bool:
+    """Reserve one investigation slot, or return False immediately when the gate is full.
+
+    A short timeout keeps the request from queueing behind a long investigation (the
+    caller turns ``False`` into an actionable 429 / error event instead).
+    """
+    try:
+        await asyncio.wait_for(slots.acquire(), timeout=timeout)
+    except TimeoutError:
+        return False
+    return True
+
+
+@asynccontextmanager
+async def periodic_touch(manager: SessionManager, session_id: str | None) -> AsyncIterator[None]:
+    """Refresh ``updated_at`` every ``_TOUCH_INTERVAL_SECONDS`` while work is running.
+
+    ``/stream`` touches the session on every SSE keepalive, but blocking investigations
+    (``/chat``) have no heartbeat at all: a long run would be flipped to
+    ``failed/interrupted`` by stale recovery, and the final save then fails the
+    optimistic lock, handing the user a 409 even though the work succeeded.
+    """
+    if session_id is None:
+        yield
+        return
+    stop = asyncio.Event()
+
+    async def beat() -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=_TOUCH_INTERVAL_SECONDS)
+                return
+            except TimeoutError:
+                pass
+            try:
+                await manager.touch(session_id)
+            except Exception:  # noqa: BLE001 — 心跳失败不应中断调查
+                logger.debug("periodic touch failed for session %s", session_id, exc_info=True)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        stop.set()
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
 
 
 def format_report_text(report: AnalysisReport) -> str:
@@ -267,6 +332,20 @@ async def apply_fix(
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=f"Stored PR proposal is invalid: {error}") from error
+
+    # 审计：写下「哪个提案（内容哈希）被应用到了哪个仓库/分支」，便于事后追责。
+    proposal_digest = hashlib.sha256(
+        json.dumps(proposal, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    logger.info(
+        "Applying PR proposal for session %s: repo=%s/%s branch=%s files=%d digest=%s",
+        session_id,
+        session.issue.owner,
+        session.issue.repo,
+        proposal["branch"],
+        len(proposal.get("changes", [])),
+        proposal_digest,
+    )
 
     branch_created = False
     try:

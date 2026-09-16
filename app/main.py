@@ -45,11 +45,30 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     # Initialize session manager and attach to app state for DI
     settings = get_settings()
+
+    # 安全自检：写模式（可创建分支/PR）必须配合认证，否则任何能访问端口的人
+    # 都能用仓库 token 推代码。宁可拒绝启动，也不要静默地敞开写权限。
+    if settings.write_mode and not settings.api_key:
+        raise RuntimeError(
+            "WRITE_MODE=true requires API_KEY to be set: write mode can create branches and "
+            "pull requests, so an unauthenticated server must never expose it. "
+            "Set API_KEY (and optionally unset WRITE_MODE) in .env, then restart."
+        )
+    if not settings.api_key:
+        logger.warning(
+            "API_KEY is not set: every endpoint is unauthenticated. Bind to 127.0.0.1 "
+            "(the default launcher does) or set API_KEY before exposing this server."
+        )
+
     db_path: str | None = settings.session_db_path
     if db_path == ":memory:":
         db_path = None
     manager = SessionManager(db_path=db_path)
     _app.state.session_manager = manager
+
+    # 调查并发闸门：跨请求共享，避免同一 key 在限流窗口内开出大量长任务，成本与
+    # SQLite 写入失去上界（限流只按请求数计，一次 /stream 可能跑满 investigation_timeout）。
+    _app.state.investigation_slots = asyncio.Semaphore(settings.max_concurrent_investigations)
 
     # 熔断器：跨请求共享，追踪 LLM provider 全局健康状态
     breaker = CircuitBreaker(
@@ -207,8 +226,17 @@ async def circuit_breaker_handler(request: Request, error: CircuitBreakerOpenErr
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "app": "issue-agent", "build_id": get_build_id()}
+async def health() -> dict[str, object]:
+    settings = get_settings()
+    # auth_enabled / write_mode 让前端（与运维脚本）能判断当前实例的安全姿态，
+    # 而不是靠猜：未开认证时 UI 可以提前提示，而不是等第一次请求 401。
+    return {
+        "status": "ok",
+        "app": "issue-agent",
+        "build_id": get_build_id(),
+        "auth_enabled": settings.api_key is not None,
+        "write_mode": settings.write_mode,
+    }
 
 
 @app.get("/i18n")

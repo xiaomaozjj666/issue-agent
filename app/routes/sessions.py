@@ -141,11 +141,16 @@ async def get_pr_proposal(session_id: str, manager: SessionMgr) -> dict:
         "branch": proposal["branch"],
         "title": proposal["title"],
         "body": proposal["body"],
+        # 前端据此把「创建 PR」置灰并给出可行动原因（而不是等到点下去才 403）
+        "write_mode": get_settings().write_mode,
         "changes": [
             {
                 "path": change["path"],
                 "message": change["message"],
                 "proposed_lines": len(str(change.get("content", "")).splitlines()),
+                "proposed_bytes": len(str(change.get("content", "")).encode("utf-8")),
+                # 内容预览：人工确认必须看得到「到底要写什么」，而不是只有行数摘要。
+                "preview": "\n".join(str(change.get("content", "")).splitlines()[:20]),
             }
             for change in proposal.get("changes", [])
         ],
@@ -265,19 +270,26 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     async with new_session.lock:
         await manager.save(new_session)
 
-    # 恢复 pending_pr（导入后可继续 apply-fix）
-    pending_pr = body.get("pending_pr")
-    if isinstance(pending_pr, dict) and pending_pr:
-        await manager.save_pr_proposal(new_session.session_id, pending_pr)
+    # 导入的写意图**不恢复**：pending_pr 完全来自请求体，若照单全收，任何持 API_KEY 的
+    # 调用方都能「导入一个提案 → 直接 apply-fix」，用仓库 token 推任意文件并开 PR，
+    # 绕过 Agent 调查与人工确认。导入后必须重新跑一次调查才会再次产生提案。
+    if body.get("pending_pr"):
+        logger.warning(
+            "Ignoring pending_pr from imported payload for session %s: write intent must be regenerated",
+            new_session.session_id,
+        )
 
     # 导入事件历史：校验每个事件的 type 字段，跳过无效项避免 KeyError 导致整个导入中途失败。
-    # 限制事件数量防止恶意超大 payload 长时间阻塞写操作。
+    # 限制事件数量防止恶意超大 payload 长时间阻塞写操作；批量单事务写入（旧实现逐条
+    # INSERT+commit，5MB 上限导入最多 5000 次事务，长时间占住 SQLite 写锁）。
     events = body.get("events")
     if isinstance(events, list):
         max_events = 5000
-        for event in events[:max_events]:
-            if isinstance(event, dict) and event.get("type"):
-                await manager.append_event(new_session.session_id, event)
+        valid_events = [
+            event for event in events[:max_events] if isinstance(event, dict) and event.get("type")
+        ]
+        if valid_events:
+            await manager.append_events(new_session.session_id, valid_events)
 
     refreshed = await manager.get(new_session.session_id)
     if refreshed is None:

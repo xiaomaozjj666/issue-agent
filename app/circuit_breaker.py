@@ -24,6 +24,22 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# 只有这些状态码代表 provider 侧不健康；其余 4xx 属于调用方输入问题。
+_RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+
+def is_retryable_failure(exc: BaseException) -> bool:
+    """Whether *exc* indicates provider ill-health (and should count toward the breaker).
+
+    Client-side input errors (400/401/403/404/422 …) must NOT open the circuit: a bad
+    model name or a malformed request is the caller's problem, and counting those lets
+    five bad requests take the provider offline for every other user.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status in _RETRYABLE_STATUS or status >= 500
+    return True  # 连接/超时/协议错误等没有 status_code，一律视为可重试
+
 
 class State(Enum):
     CLOSED = auto()  # Normal operation
@@ -105,11 +121,29 @@ class CircuitBreaker:
         try:
             result = await fn(*args, **kwargs)
         except Exception as exc:
-            await self._record_failure(exc)
+            if is_retryable_failure(exc):
+                await self._record_failure(exc)
+            else:
+                # 请求级错误（400/401/403/404/422 等）是调用方的问题，不是 provider 故障：
+                # 若计入失败，5 次写错的 model 名就能把整个 provider 熔断 30 秒。
+                logger.info("Circuit breaker: ignoring non-retryable failure (%s)", exc)
             raise
 
         await self._record_success()
         return result
+
+    async def report_stream_outcome(self, exc: Exception | None = None) -> None:
+        """Record the outcome of a *streamed* provider call once the stream is consumed.
+
+        ``call()`` records success as soon as the streaming response object comes back —
+        before a single token arrives — so mid-stream disconnects were invisible to the
+        breaker (and even reset its failure count). Streaming callers report the real
+        outcome here instead.
+        """
+        if exc is None:
+            await self._record_success()
+        elif is_retryable_failure(exc):
+            await self._record_failure(exc)
 
     async def _record_failure(self, exc: Exception) -> None:
         async with self._get_lock():

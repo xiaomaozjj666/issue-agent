@@ -41,7 +41,11 @@ async def test_create_generates_unique_ids(manager) -> None:
 async def test_get_returns_session_by_id(manager) -> None:
     session = await manager.create("https://github.com/a/b/issues/1")
     retrieved = await manager.get(session.session_id)
-    assert retrieved is session
+    # 返回副本（与 SqliteStore 一致）：MemoryStore 不再泄漏可变对象，否则
+    # :memory:/dev 模式下并发写入问题会被对象别名掩盖。
+    assert retrieved is not None
+    assert retrieved.session_id == session.session_id
+    assert retrieved is not session
 
 
 async def test_get_returns_none_for_unknown_id(manager) -> None:

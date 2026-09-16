@@ -1,5 +1,6 @@
 """Shared FastAPI dependencies and request-scoped helpers used by the route modules."""
 
+import asyncio
 from typing import Annotated, NamedTuple
 
 from fastapi import Depends, Request
@@ -33,10 +34,25 @@ def get_task_queue(request: Request) -> TaskQueue:
     return queue
 
 
+def get_investigation_slots(request: Request) -> asyncio.Semaphore:
+    """FastAPI dependency: process-wide investigation concurrency gate.
+
+    Created in ``lifespan``; the fallback keeps tests / embedded apps that build the
+    app without running lifespan working (the gate is still enforced).
+    """
+    state = request.app.state
+    slots = getattr(state, "investigation_slots", None)
+    if slots is None:
+        slots = asyncio.Semaphore(get_settings().max_concurrent_investigations)
+        state.investigation_slots = slots
+    return slots
+
+
 # Annotated dependency alias — avoids B008 lint warnings and reduces line length.
 SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
 CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
 TaskQueueDep = Annotated[TaskQueue, Depends(get_task_queue)]
+InvestigationSlots = Annotated[asyncio.Semaphore, Depends(get_investigation_slots)]
 
 
 class ProviderClients(NamedTuple):

@@ -4,7 +4,9 @@ const python = process.env.PYTHON || (process.platform === "win32" ? ".venv\\Scr
 
 module.exports = defineConfig({
   testDir: "./e2e",
-  fullyParallel: true,
+  // fullyParallel 必须保持关闭：本套件只有一个共享 webServer + :memory: SQLite，
+  // 文件级并行会让会话/图表状态互相串扰（与下方 workers: 1 矛盾）。
+  fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   // 始终单 worker：多个 worker 共享同一 webServer + :memory: SQLite 会互相干扰（会话/图表状态串扰）。

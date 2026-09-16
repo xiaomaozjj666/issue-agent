@@ -705,7 +705,7 @@
     const msgs = document.querySelectorAll("#messages > .msg.assistant");
     if (!msgs.length) return;
     const last = msgs[msgs.length - 1];
-    if (last.querySelector(".regenerate-btn")) return;
+    if (last.classList.contains("superseded") || last.querySelector(".regenerate-btn")) return;
     const btn = make("button", "msg-action-btn regenerate-btn");
     btn.type = "button";
     btn.setAttribute("aria-label", t("regenerate_label"));
@@ -714,8 +714,14 @@
       const users = document.querySelectorAll("#messages > .msg.user");
       if (!users.length) return;
       const lastUser = users[users.length - 1];
+      // 重发内容仍取 textContent：避免把已渲染的 markdown 当成指令重发
       const text = lastUser.textContent || "";
-      if (last && last.parentNode) last.parentNode.removeChild(last);
+      // #10 修复：不再 removeChild 旧回答（失败即永久丢失，且逼得用户重看一遍）
+      // 改为标记"已被新回答取代"并淡化，旧内容仍可阅读/复制；失败时它还在。
+      last.classList.add("superseded");
+      last.style.opacity = "0.45";
+      const oldBtn = last.querySelector(".regenerate-btn");
+      if (oldBtn) oldBtn.remove();
       window.__iaRegenerate = true;
       try { if (IA.chat) IA.chat(text); } finally { delete window.__iaRegenerate; }
     });
@@ -724,31 +730,73 @@
   }
 
   /* ───────────────────────── 流式预期提示 + 断线恢复 ───────────────────────── */
+  // #1 修复：真实调查要 2–5 分钟，原实现 25s 后无条件移除提示，之后只剩"已用时"，
+  // 用户不知道还要等多久。改为按阶段驱动、不自动消失，直到报告就绪或分析结束。
+  // 阶段 key 来自 app.js 的 setAnalysisPhase（analysis-timer.js 的 PHASE_PROGRESS）。
+  const PHASE_HINT_KEYS = {
+    fetching: "hint_phase_fetching",
+    preloading: "hint_phase_fetching",
+    exploring: "hint_phase_exploring",
+    exploring_files: "hint_phase_exploring",
+    planning: "hint_phase_exploring",
+    thinking: "hint_phase_exploring",
+    tool_call: "hint_tool_running",
+    reviewing: "hint_phase_report",
+    review: "hint_phase_report",
+    verifying: "hint_phase_report",
+    report: "hint_phase_report",
+  };
+  let phaseHint = null;
+  function removePhaseHint() {
+    if (phaseHint && phaseHint.parentNode) phaseHint.parentNode.removeChild(phaseHint);
+    phaseHint = null;
+  }
+  function ensurePhaseHint() {
+    // 会话切换会清空 #messages，此时旧节点已脱离 DOM，需要重新插入
+    if (phaseHint && phaseHint.parentNode) return phaseHint;
+    phaseHint = IA.addMsg ? IA.addMsg("system", t("hint_phase_fetching")) : null;
+    return phaseHint;
+  }
+  function updatePhaseHint(key, tool) {
+    const hintKey = PHASE_HINT_KEYS[key];
+    if (!hintKey) {
+      // 未知/缺省阶段：已有提示保持不变，没有提示时按"获取中"起步
+      ensurePhaseHint();
+      return;
+    }
+    const text = hintKey === "hint_tool_running"
+      ? t(hintKey, { tool: tool ? IA.toolLabel(tool) : t("thinking") })
+      : t(hintKey);
+    const node = ensurePhaseHint();
+    if (node) node.textContent = text;
+  }
+  function clearPhaseHint() { removePhaseHint(); }
+
   function setupStreamingHints() {
+    // app.js 的阶段别名会回调这里（阶段变化刷新文案，计时结束移除提示）
+    IA.PhaseHint = { update: updatePhaseHint, clear: clearPhaseHint };
     const origAnalyze = IA.analyze;
     if (typeof origAnalyze !== "function") return;
     IA.analyze = function () {
-      const hint = IA.addMsg ? IA.addMsg("system", t("expecting_thinking")) : null;
-      // 报告生成后（report-toggle 出现）移除提示
+      removePhaseHint();
+      ensurePhaseHint();
+      // 报告生成后（report-toggle 可见）移除提示；不设自动消失定时器
       const toggle = el("report-toggle");
-      let removed = false;
-      const removeHint = function () {
-        if (removed || !hint || !hint.parentNode) return;
-        removed = true;
-        hint.parentNode.removeChild(hint);
-        if (observer) observer.disconnect();
-      };
       let observer = null;
+      const finish = function () {
+        if (observer) observer.disconnect();
+        observer = null;
+        removePhaseHint();
+      };
       if (toggle) {
         observer = new MutationObserver(function () {
-          if (toggle.style.display !== "none") removeHint();
+          if (toggle.style.display !== "none") finish();
         });
         observer.observe(toggle, { attributes: true, attributeFilter: ["style"] });
       }
-      setTimeout(removeHint, 25000);
       const p = origAnalyze.apply(this, arguments);
       if (p && typeof p.then === "function") {
-        p.then(removeHint).catch(function () { recoverIfReportReady(); removeHint(); });
+        p.then(finish).catch(function () { recoverIfReportReady(); finish(); });
       }
       return p;
     };

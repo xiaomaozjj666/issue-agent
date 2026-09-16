@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_LIST_ENTRIES = 80
 _MAX_GREP_RESULTS = 50
+# 嵌套量词启发式（如 (a+)+ / (a*)* / (a+){2,}）：经典灾难性回溯形态，直接拒绝执行
+_DANGEROUS_REGEX = re.compile(r"\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*[+*{]")
 _MAX_SEARCH_RESULTS = 50
 _DUPLICATE_TOOL_RESULT = "Duplicate tool call skipped; the unchanged result is already present in the conversation."
 _PARALLEL_SAFE_TOOLS = {
@@ -37,6 +39,27 @@ _PARALLEL_SAFE_TOOLS = {
     "list_branches",
     "get_file_at_commit",
 }
+
+# ── 写路径保护（模型生成的补丁绝不能改这些）──────────────────
+# CI 工作流可被 pull_request_target 触发任意代码执行；容器/依赖/密钥文件同理。
+_PROTECTED_PATH_PREFIXES = (".github/", ".git/", ".circleci/", ".gitlab/", ".husky/")
+_PROTECTED_PATH_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".lock")
+_PROTECTED_PATH_NAMES = {
+    "dockerfile",
+    ".env",
+    ".env.local",
+    ".env.production",
+    "codeowners",
+    "package-lock.json",
+    "uv.lock",
+    "poetry.lock",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "pipfile.lock",
+}
+# 人工/发布分支不允许作为提案的目标分支
+_PROTECTED_BRANCHES = {"main", "master", "develop", "development", "trunk", "gh-pages"}
+_PROTECTED_BRANCH_PREFIXES = ("release/", "hotfix/", "rc/")
 
 
 _READ_ONLY_TOOLS = [
@@ -477,7 +500,32 @@ class ToolExecutor:
             lines.extend(f"  {fragment}" for fragment in fragments)
         return self._limit_tool_context("\n".join(lines))
 
+    def _grep_lines(self, regex: re.Pattern[str], cache: dict[str, str]) -> list[str]:
+        """Synchronous scan executed in a worker thread.
+
+        扫描规模本身已有上界：``_file_cache`` 受 ``max_total_context_chars``（默认 80k）
+        与 ``max_file_chars`` 双重截断，因此这里的真正风险不是「扫得太多」，而是
+        「单行正则回溯爆炸」——后者由调用方的嵌套量词拒绝 + 线程隔离一起兜住。
+        """
+        results: list[str] = []
+        for file_path, content in cache.items():
+            for i, line in enumerate(content.splitlines(), 1):
+                if regex.search(line):
+                    results.append(f"{file_path}:L{i}: {line}")
+                    if len(results) >= _MAX_GREP_RESULTS:
+                        return results
+        return results
+
     async def _tool_grep_content(self, pattern: str, path: str | None = None) -> str:
+        # 正则来自模型/聊天输入，存在灾难性回溯（ReDoS）风险：CPython 的 re 没有超时，
+        # 一旦陷入回溯会同步占满事件循环——连 /health 与 SSE 心跳都会一起卡住。
+        # 因此：先做嵌套量词启发式拒绝，再放到工作线程执行（最坏只烧一个线程，
+        # 事件循环仍然可用，取消/心跳不受影响）。
+        if _DANGEROUS_REGEX.search(pattern):
+            return (
+                "Refusing to run this pattern: nested quantifiers can trigger catastrophic "
+                "backtracking. Use a literal substring or a bounded repetition instead."
+            )
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error:
@@ -489,15 +537,7 @@ class ToolExecutor:
             if normalized not in cache:
                 return f"'{path}' has not been read yet. Use read_file first, or omit path to search all read files."
             cache = {normalized: cache[normalized]}
-        results: list[str] = []
-        for file_path, content in cache.items():
-            for i, line in enumerate(content.splitlines(), 1):
-                if regex.search(line):
-                    results.append(f"{file_path}:L{i}: {line}")
-                    if len(results) >= _MAX_GREP_RESULTS:
-                        break
-            if len(results) >= _MAX_GREP_RESULTS:
-                break
+        results = await asyncio.to_thread(self._grep_lines, regex, cache)
         if not results:
             scope = f"'{path}'" if path else "files read so far"
             return f"No matches for '{pattern}' in {scope}."
@@ -591,6 +631,23 @@ def _tool_call_key(name: str, arguments: dict) -> str:
     return f"{name}:{rendered}"
 
 
+def _is_protected_write_path(path: str) -> bool:
+    """Whether a model-generated patch must never rewrite this path.
+
+    Write mode pushes to the real repository with the deployment's token, so a patch
+    induced by a malicious issue (or a hallucinated "fix") must not be able to touch
+    CI workflows (``pull_request_target`` ⇒ code execution), container/infra files,
+    lock files or secrets.
+    """
+    lowered = path.casefold()
+    name = lowered.rsplit("/", 1)[-1]
+    return (
+        lowered.startswith(_PROTECTED_PATH_PREFIXES)
+        or lowered.endswith(_PROTECTED_PATH_SUFFIXES)
+        or name in _PROTECTED_PATH_NAMES
+    )
+
+
 def validate_pr_proposal(
     settings: Settings,
     *,
@@ -612,6 +669,9 @@ def validate_pr_proposal(
         raise ValueError("Invalid branch name")
     if default_branch and normalized_branch == default_branch:
         raise ValueError("The proposal branch must differ from the repository default branch")
+    lowered_branch = normalized_branch.casefold()
+    if lowered_branch in _PROTECTED_BRANCHES or lowered_branch.startswith(_PROTECTED_BRANCH_PREFIXES):
+        raise ValueError("The proposal branch must not target a protected branch")
     normalized_title = title.strip()
     normalized_body = body.strip()
     if not normalized_title or not normalized_body:
@@ -627,6 +687,8 @@ def validate_pr_proposal(
         if not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
             raise ValueError(f"Invalid change path: {path or '<empty>'}")
         path = posixpath.normpath(path)
+        if _is_protected_write_path(path):
+            raise ValueError(f"Refusing to modify protected path: {path}")
         content = change.get("content")
         message = str(change.get("message", "")).strip()
         if path in seen_paths or not isinstance(content, str) or not message:

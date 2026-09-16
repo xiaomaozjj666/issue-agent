@@ -402,7 +402,7 @@ async def test_export_includes_file_cache_and_pending_pr(tmp_path) -> None:
 
 
 async def test_import_restores_file_cache_and_pending_pr(tmp_path) -> None:
-    """导入应恢复 file_cache 和 pending_pr，使导入的会话可继续 chat 和 apply-fix。"""
+    """导入应恢复 file_cache，但**不**恢复 pending_pr：写意图必须由 Agent 重新生成。"""
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -446,10 +446,10 @@ async def test_import_restores_file_cache_and_pending_pr(tmp_path) -> None:
         assert restored.file_cache == {"src/parser.py": "cached content"}, "file_cache 应被恢复"
         assert restored.files_read == ["src/parser.py"]
 
-        # 验证 pending_pr 已恢复
+        # 验证 pending_pr **未被**恢复（安全修复）：写意图必须重新生成，否则任何持
+        # API_KEY 的调用方都能「导入提案 → apply-fix」用仓库 token 推任意文件并开 PR。
         pr = await manager.get_pr_proposal(new_id)
-        assert pr is not None, "pending_pr 应被恢复"
-        assert pr["branch"] == "fix-branch"
+        assert pr is None, "导入不应恢复 pending_pr（写意图必须重新生成）"
 
         # 验证事件已恢复
         events = await manager.list_events(new_id)

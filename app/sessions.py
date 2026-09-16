@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import copy
 import json
 import logging
 import uuid
@@ -77,17 +78,69 @@ class MemoryStore:
         return session
 
     async def get(self, session_id: str) -> Session | None:
-        return self._sessions.get(session_id)
+        """Return a *copy* of the stored session.
+
+        Returning the live object made MemoryStore behave differently from
+        SqliteStore (which deserializes a fresh object per call and relies on the
+        optimistic-lock version), so concurrent-request bugs stayed invisible in
+        ``:memory:``/dev mode.  The shared ``lock`` is preserved on purpose — it
+        is what serializes writes for one session.
+        """
+        stored = self._sessions.get(session_id)
+        if stored is None:
+            return None
+        clone = copy.copy(stored)
+        clone.messages = copy.deepcopy(stored.messages)
+        clone.metrics = dict(stored.metrics)
+        clone.file_cache = dict(stored.file_cache)
+        clone.files_read = list(stored.files_read)
+        clone.tree = list(stored.tree)
+        clone.issue = copy.deepcopy(stored.issue)
+        clone.report = copy.deepcopy(stored.report)
+        clone.pending_pr = copy.deepcopy(stored.pending_pr)
+        return clone
 
     async def save(self, session: Session) -> None:
+        stored = self._sessions.get(session.session_id)
+        if stored is not None and stored is not session and stored.version != session.version:
+            raise SessionConflictError(
+                f"Session {session.session_id} was updated concurrently "
+                f"(in memory v{session.version}, stored v{stored.version})"
+            )
         session.updated_at = _now()
         session.version += 1
+        self._sessions[session.session_id] = session
+
+    async def try_claim_running(self, session_id: str, *, phase: str = "starting") -> Session | None:
+        """Atomically flip a non-running session to ``running`` (investigation lease).
+
+        Returns the refreshed session, or ``None`` when another request already owns
+        the lease — mirrors ``SqliteStore.try_claim_running`` so ``:memory:`` behaves
+        like the durable backend.
+        """
+        stored = self._sessions.get(session_id)
+        if stored is None or stored.status == "running":
+            return None
+        stored.status = "running"
+        stored.phase = phase
+        stored.cancel_requested = False
+        stored.error_message = None
+        stored.updated_at = _now()
+        stored.version += 1
+        return await self.get(session_id)
 
     async def append_event(self, session_id: str, event: dict) -> dict:
         records = self._events.setdefault(session_id, [])
         record = {**event, "sequence": len(records) + 1, "created_at": _now()}
         records.append(record)
         return record
+
+    async def append_events(self, session_id: str, events: list[dict]) -> int:
+        """Bulk-append events (import path): one call instead of N round trips."""
+        records = self._events.setdefault(session_id, [])
+        for event in events:
+            records.append({**event, "sequence": len(records) + 1, "created_at": _now()})
+        return len(events)
 
     async def list_events(self, session_id: str) -> list[dict]:
         return list(self._events.get(session_id, []))
@@ -266,6 +319,57 @@ class SqliteStore:
                 raise SessionConflictError(f"Session {session.session_id} was updated concurrently")
             await db.commit()
         session.version += 1
+
+    async def try_claim_running(self, session_id: str, *, phase: str = "starting") -> Session | None:
+        """Atomically flip a non-running session to ``running`` (investigation lease).
+
+        Returns the refreshed session, or ``None`` when another request already owns the
+        lease.  Without this guard two concurrent investigations of the same session would
+        both run ``clear_events`` (deleting each other's event history) and then fight over
+        the optimistic-lock version, potentially leaving the session without a terminal state.
+        """
+        async with self._conn() as db:
+            cursor = await db.execute(
+                "UPDATE sessions SET status='running', phase=?, cancel_requested=0,"
+                " error_message=NULL, updated_at=?, version=version+1"
+                " WHERE session_id=? AND status != 'running'",
+                (phase, _now(), session_id),
+            )
+            await db.commit()
+            if cursor.rowcount != 1:
+                return None
+        return await self.get(session_id)
+
+    async def append_events(self, session_id: str, events: list[dict]) -> int:
+        """Bulk-insert events in ONE transaction.
+
+        The import path used to call ``append_event`` per row (up to 5000 separate commits
+        for a 5 MB payload), holding the single SQLite writer for the whole import.
+        """
+        if not events:
+            return 0
+        now = _now()
+        rows = [
+            (
+                session_id,
+                event["type"],
+                json.dumps(event.get("data"), ensure_ascii=False, default=str)
+                if event.get("data") is not None
+                else None,
+                event.get("message", ""),
+                now,
+            )
+            for event in events
+        ]
+        async with self._conn() as db:
+            await db.executemany(
+                "INSERT INTO session_events"
+                " (session_id, event_type, data_json, message, created_at)"
+                " VALUES (?,?,?,?,?)",
+                rows,
+            )
+            await db.commit()
+        return len(rows)
 
     async def append_event(self, session_id: str, event: dict) -> dict:
         async with self._conn() as db:
@@ -528,6 +632,17 @@ class SessionManager:
 
     async def append_event(self, session_id: str, event: dict) -> dict:
         return await self._store.append_event(session_id, event)
+
+    async def append_events(self, session_id: str, events: list[dict]) -> int:
+        """Bulk-append events (import path) in a single store transaction."""
+        return await self._store.append_events(session_id, events)
+
+    async def try_claim_running(self, session_id: str, *, phase: str = "starting") -> Session | None:
+        """Acquire the per-session investigation lease; ``None`` when already running."""
+        claimed = await self._store.try_claim_running(session_id, phase=phase)
+        if claimed is not None:
+            claimed.lock = self._locks.setdefault(session_id, asyncio.Lock())
+        return claimed
 
     async def list_events(self, session_id: str) -> list[dict]:
         return await self._store.list_events(session_id)

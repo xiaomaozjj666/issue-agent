@@ -307,6 +307,39 @@
     evidence_claim_group_hint: "Evidence in this group supports the conclusion above",
     chart_blast_radius_note: "No patch diff line counts found, so change sizes across modules cannot be compared.",
     chart_blast_module_count: "Affected modules: {count}",
+    "pr_section_title": "Create pull request",
+    "pr_button_create": "Create PR",
+    "pr_button_checking": "Checking proposal…",
+    "pr_no_proposal": "This session has no pending PR proposal.",
+    "pr_write_disabled": "Write mode is off on the server (WRITE_MODE=false). Download the .patch and apply it manually.",
+    "pr_confirm_title": "Create branch and pull request?",
+    "pr_confirm_body": "A branch {branch} with {count} file(s) will be pushed to {repo}, then a PR will be opened. This writes to the remote repository.",
+    "pr_confirm_changes": "Files to be written",
+    "pr_confirm_action": "Create",
+    "pr_creating": "Creating…",
+    "pr_created": "Pull request #{number} created",
+    "pr_open": "Open PR",
+    "pr_failed": "Could not create the PR: {message}",
+    "hint_phase_fetching": "Fetching the issue and repository — usually 10–30 seconds.",
+    "hint_phase_exploring": "Investigating the code — usually 2–5 minutes depending on repo size. You can cancel anytime.",
+    "hint_phase_report": "Generating the report — usually 1–2 minutes.",
+    "hint_tool_running": "Running {tool}. Searches on large repos can take 1–3 minutes — no action needed.",
+    "analysis_failed_retry": "The analysis did not finish. The server may still be working — click \"Resume analysis\" to continue.",
+    "archive_toast": "Archived. Restore it anytime from \"Archived\" in the sidebar.",
+    "delete_toast": "Session deleted.",
+    "empty_input_hint": "Paste a GitHub issue URL first, then press Enter or click \"New analysis\".",
+    "copy_report_json": "Copy report JSON",
+    "downloaded_file": "Downloaded {filename}",
+    "report_ready_hint": "Report ready — tap \"View report\".",
+    "tool_read_file": "Read file",
+    "tool_search_code": "Search code",
+    "tool_grep_content": "Content search",
+    "tool_list_directory": "List directory",
+    "tool_search_files": "Find files",
+    "tool_get_file_history": "File history",
+    "tool_list_branches": "List branches",
+    "tool_get_file_at_commit": "Read file at commit",
+    "tool_create_pull_request": "Prepare PR proposal",
   };
 
   function loadI18n() {
@@ -390,6 +423,64 @@
     return translated === key ? String(value || "") : translated;
   }
 
+  // 工具名本地化：构造 `tool_<name>` 的 i18n key，取不到时回落原始工具名
+  // （与 enumLabel 同一模式）。中文界面不应出现 read_file 这类内部标识符。
+  function toolLabel(name) {
+    const key = "tool_" + safeClass(name);
+    const translated = translate(key);
+    return translated === key ? String(name || "") : translated;
+  }
+
+  // 工具参数摘要：输出结构化短语（如 `src/app.py`、`"parse_path"`、`pattern=foo`），
+  // 而不是整段 JSON——中文界面里裸露 {"path":"..."} 既难读又占宽度。
+  // 仅用于展示，调用方必须对结果做 escapeHtml 转义。
+  function toolArgsSummary(name, args) {
+    const a = args || {};
+    const val = function (key) {
+      const v = a[key];
+      return v === undefined || v === null ? "" : String(v);
+    };
+    // 依次尝试多个别名键（后端工具签名可能用 path/file/query/pattern）
+    const first = function (keys) {
+      for (let i = 0; i < keys.length; i++) if (val(keys[i])) return val(keys[i]);
+      return "";
+    };
+    switch (safeClass(name)) {
+      case "read_file":
+      case "get_file_history":
+        return first(["path", "file", "file_path"]);
+      case "search_code":
+      case "search_files": {
+        const q = first(["query", "q", "pattern", "keyword"]);
+        return q ? '"' + q + '"' : "";
+      }
+      case "get_file_at_commit": {
+        const p = first(["path", "file"]);
+        const sha = first(["sha", "commit"]);
+        if (p && sha) return p + " @ " + sha.slice(0, 8);
+        return p || sha;
+      }
+      case "grep_content": {
+        const p = "pattern=" + (first(["pattern", "query", "q"]) || "…");
+        const where = first(["path", "file", "glob"]);
+        return where ? p + " " + where : p;
+      }
+      case "list_directory":
+        return first(["path", "dir", "directory"]);
+      case "list_branches":
+        return first(["repo", "owner"]);
+      case "create_pull_request":
+        return first(["title", "head"]);
+      default: {
+        try {
+          return JSON.stringify(a).substring(0, 80);
+        } catch (e) {
+          return "";
+        }
+      }
+    }
+  }
+
   // API_KEY 认证支持：服务端配置 API_KEY 后，所有 API 请求必须携带 X-API-Key。
   // 密钥仅保存在本浏览器 localStorage（iaApiKey），经设置面板维护。
   function apiKey() {
@@ -407,22 +498,26 @@
     return headers;
   }
 
+  // 认证类失败的统一派发：401 = 未携带密钥，403 = 密钥被服务端判为无效
+  // （后端返回 {"detail":"Invalid API key"}）。两者都应引导用户去设置面板，
+  // 否则用户只看到一句 "HTTP 403: Invalid API key" 而不知道去哪改。
+  // 注意：必须在 document 上派发（app.js 在 document 上监听）；
+  // CustomEvent 默认不冒泡，window.dispatchEvent 不会传到 document 监听器。
+  function notifyUnauthorized(status) {
+    if (typeof document.dispatchEvent !== "function") return;
+    try {
+      document.dispatchEvent(new CustomEvent("ia-unauthorized", { detail: { status: status || 401 } }));
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   async function apiJson(url, options) {
     options = options || {};
     options.headers = authHeaders(options.headers);
     const response = await fetch(url, options);
     if (!response.ok) {
-      // 401 = 服务器要求 API_KEY 认证但请求未携带（或密钥无效）。
-      // 派发全局事件，让 UI 层给出友好引导（设置面板填写密钥）。
-      // 注意：必须在 document 上派发（app.js 在 document 上监听）；
-      // CustomEvent 默认不冒泡，window.dispatchEvent 不会传到 document 监听器。
-      if (response.status === 401 && typeof document.dispatchEvent === "function") {
-        try {
-          document.dispatchEvent(new CustomEvent("ia-unauthorized"));
-        } catch (e) {
-          /* ignore */
-        }
-      }
+      if (response.status === 401 || response.status === 403) notifyUnauthorized(response.status);
       let detail = "";
       try {
         detail = (await response.json()).detail || "";
@@ -770,6 +865,9 @@
     escapeAttr,
     safeClass,
     enumLabel,
+    toolLabel,
+    toolArgsSummary,
+    notifyUnauthorized,
     translate,
     applyI18n,
     formatDuration,

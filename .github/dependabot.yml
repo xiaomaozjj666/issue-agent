@@ -1,0 +1,61 @@
+version: 2
+updates:
+  # Python 依赖（pyproject.toml）。dev 组单独成组，避免测试工具更新淹没运行时依赖。
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    groups:
+      python-runtime:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "mypy*"
+          - "ruff*"
+          - "pytest*"
+          - "pip-audit*"
+      python-dev:
+        patterns:
+          - "mypy*"
+          - "ruff*"
+          - "pytest*"
+          - "pip-audit*"
+    labels:
+      - dependencies
+
+  # 前端测试依赖（package.json）。数量少，单独一个组即可。
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    groups:
+      npm-tooling:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+
+  # GitHub Actions 按版本更新；CI 中被 pin 到 SHA，由 Dependabot 提 PR 更新 SHA 与注释。
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - ci

@@ -1,0 +1,149 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- `.github/dependabot.yml` — pip / npm / github-actions 三个生态的每周依赖更新，
+  按生态分组并限制并发 PR 数量。
+- `CHANGELOG.md` — 本文件。
+- CI 产物留存：测试作业上传 `coverage.xml` 与 `report.xml`；Docker 作业在构建后
+  真实启动容器并探活。
+- 调查并发闸门 MAX_CONCURRENT_INVESTIGATIONS（默认 3）与单次调查成本上限
+  MAX_SESSION_ESTIMATED_COST_USD（默认 0 = 不限）：限流只按请求数计，而一次
+  /stream 可能跑满 INVESTIGATION_TIMEOUT，需要并发闸门兜住 token 成本与写入压力。
+- GET /health 新增 uth_enabled / write_mode，前端与运维脚本据此判断实例安全姿态。
+- GET /session/{id}/proposal 新增 write_mode、proposed_bytes 与 preview
+  （每个待写入文件前 20 行）：人工确认必须看得到“到底要写什么”，而不是只有行数摘要。
+- **「创建 PR」界面（pp/static/js/pr-panel.js）**：后端 /session/{id}/proposal 与
+  pply-fix 早已就绪，但前端从未实现，用户只能下载 .patch 手工建分支。现在报告补丁
+  章节内会出现创建入口：先展示提案（分支/标题/正文/逐文件内容预览）供人工确认，确认后
+  才调用 pply-fix；写模式关闭时按钮置灰并给出可行动说明。面板用 MutationObserver
+  观察报告容器注入，不改动 pp.js 的渲染流程；插值全部走 	extContent（无 innerHTML）。
+
+### Fixed
+
+- **Docker 镜像内数据目录不可写（严重）**：`/app/data` 此前不存在且归 root 所有，
+  非 root 的 `appuser` 首次落库会 `PermissionError`（`SESSION_DB_PATH` 默认
+  `data/sessions.db`）。现在在 `USER appuser` 之前 `mkdir -p /app/data` 并 chown。
+- **CI 从不真正运行镜像**：docker 作业过去只 `docker build`，镜像"能构建但开机即坏"
+  无法被发现。现在构建后启动容器、轮询 `/health` 直到 `status=ok`（超时打印
+  `docker logs` 并失败），并以容器内 `appuser` 身份写入 `/app/data` 验证目录可写。
+- **`SESSION_STALE_AFTER_SECONDS` 三方冲突**：`.env.example` 与
+  `wiki/Configuration.md` 写 `1800`，而代码默认 `300`（`app/config.py`，`app/main.py`
+  的注释也明确按 300 设计）。由于 `start-issue-agent.ps1` 会把 `.env.example` 复制成
+  `.env`，一键启动跑 1800、Docker/CI 跑 300，行为不一致。现统一为 `300`，并在注释中
+  写明它必须大于 `INVESTIGATION_TIMEOUT`（默认 600），否则正在执行的调查会被
+  `recover_stale_sessions()` 误判为孤儿。
+- **一键启动把正常路径报成失败**：首次运行（无 `.env`）时 `start-issue-agent.ps1`
+  会复制示例、打开记事本并 `exit 2`，而 `打开 Issue Agent.cmd` 用 `if errorlevel 1`
+  判定，导致用户第一次双击看到"启动失败"。现在 `exit 2` 单独提示"已创建 .env，
+  请填入 `OPENAI_API_KEY` 后再次双击启动"。
+- **`scripts/backfill_reports.py`**：不再硬编码 `data/sessions.db`，改为通过
+  `app.config.get_settings().session_db_path` 解析（尊重 `SESSION_DB_PATH` 与 `.env`）；
+  数据库不存在时返回非零退出码并说明原因（此前静默 `return 0` 空转）；备份前先
+  `PRAGMA wal_checkpoint(TRUNCATE)`，避免 WAL 模式下未 checkpoint 的数据不在主库
+  文件里而被漏备。
+- **同一会话并发调查会互相抹掉事件史（严重）**：新增原子「会话调查租约」
+  （SessionManager.try_claim_running，SQLite 走条件 UPDATE、内存实现走状态检查），
+  只有把会话从非 running 翻成 running 的请求能继续，续跑前的 clear_events() 不再
+  可能删掉另一个正在跑的调查的事件；并发请求现在收到 409 / SSE error 事件。
+- **长调查被 stale recovery 误判为孤儿**（终态丢失、用户拿到 409）：/chat 与
+  /chat/stream 现在都有活跃心跳（periodic_touch，每 15s），与 /stream 的 SSE 心跳对齐。
+- **熔断器把请求级 4xx 计入失败**：只有可重试故障（408/409/425/429/5xx、连接/超时）
+  才计数，五次写错的 model 名不再能让 provider 全局熔断 30 秒；新增
+  
+eport_stream_outcome，流式调用在**消费完成后**补报真实结果（此前 call() 在拿到
+  响应对象时就记了成功，中途断流/超时对熔断器完全不可见）。
+- **请求体 model 缺少校验**：现在受字符集与长度约束
+  （[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}）。
+- **写路径缺少服务端不变量**：alidate_pr_proposal 拒绝受保护路径
+  （.github/**、.git/**、Dockerfile、.env*、锁文件、*.pem/*.key、CODEOWNERS）
+  与受保护分支（main/master/develop/release/hotfix/rc/gh-pages），并新增 apply-fix 审计日志
+  （仓库/分支/文件数/提案内容哈希）。
+- **POST /session/import 可注入 pending_pr**：导入不再恢复写意图，否则任何持
+  API_KEY 的调用方都能「导入一个提案 → 调用 apply-fix」用仓库 token 推任意文件并开 PR。
+- **WRITE_MODE=true 且未设 API_KEY 时拒绝启动**（写模式能推代码，绝不能免鉴权暴露）；
+  未设 API_KEY 时启动打印显著警告。
+- **grep_content 的 ReDoS 风险**：嵌套量词模式直接拒绝，扫描改到工作线程执行
+  （最坏只占用一个线程，事件循环与 SSE 心跳不受影响），并限制扫描字符总量。
+- **MemoryStore 与 SqliteStore 语义不一致**：get() 返回副本、save() 回写并检测版本
+  冲突，:memory:/dev 模式不再靠对象别名掩盖并发写入问题。
+- **会话导入逐条入库**：事件改为单事务批量插入（5MB 上限此前最多 5000 次 commit）。
+- **_migrate_report_enrichment_once 的进程级 flag**：改为按数据库路径记账，同进程内的
+  第二个数据库不再静默跳过回填。
+- /stream 的取消分支显式关闭心跳包装器（不再等 GC 回收），被取消的调查立刻停止，
+  不会再多跑完当前网络步骤并继续计费。
+- **进度条填充不可见**：.progress-bar-fill 引用从未定义的 --blue，实测背景为
+  
+gba(0,0,0,0)，进度条只剩灰槽。改用 ar(--accent)。
+- **浅色主题下「续跑提示卡」深底灰字**：--surface-2 同样未定义且兜底是深色，对比度约
+  2.5:1；改用主题感知的 --canvas-subtle / --border，实测 4.93:1（浅）/ 5.62:1（深）。
+- **进度条每次阶段变化被整块重建**（刚出现就被抹掉、	ool_call 后还会倒缩）：改为常驻
+  DOM + 单调递增钳制，阶段更新只改文本与宽度。
+- **取消分析后按钮不再恢复**：30s 轮询耗尽时按钮停在 display:none，用户既不能再次取消
+  也无法发起新分析；现在恢复按钮并说明服务端仍在收尾。
+- **文件追踪面板每次工具调用强制合上**：重建时保留用户展开状态。
+- **长任务没有时间预期**：唯一的「通常 30–120 秒」提示 25 秒后自行消失；现在按阶段持续
+  显示（获取信息 10–30s / 调查代码 2–5 分钟 / 生成报告 1–2 分钟），工具执行中改显示
+  「正在执行 <工具>」，看门狗阈值在工具执行期间放宽（30s/90s → 180s/300s），不再劝退
+  正常的慢搜索。
+- **分析失败没有重试出口**：流中断此前只给一行错误；现在与会话续跑（有会话）或重试
+  （无会话）按钮打通。
+- **空输入回车无反馈**：改为输入框下方行内提示，而不是静默 
+eturn。
+- **归档当前会话静默跳回首页 / 删除会话无反馈**：补 toast（归档文案说明去哪儿恢复）。
+- **「重新生成」先删掉上一条回答**（失败即永久丢失）：改为保留旧回答并标记「已被取代」。
+- **中文界面出现英文工具名**（
+ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
+  （「读取文件 src/app.py」「搜索代码 "parse_path"」「内容检索 pattern=TODO app/」）。
+- **密钥引导**：401/403 都触发全局引导（此前只有 401），并修正「设置面板在右上角」的
+  错误方位（实际是左上角齿轮按钮）。
+- **「复制」语义不明 / 反馈过短**：报告 JSON 复制按钮改为「复制报告 JSON」，toast 由
+  1.6s 延长到 2.5s，下载类 toast 带上真实文件名。
+- **导出 HTML 的数据岛转义错误**：<script type="application/json"> 是 raw text、实体
+  不解码，原用 scapeHtml 会把 < > & 变成字面量污染导出页数据；改用 \u003c 转义。
+
+### Changed
+
+- Dockerfile 改为非 editable 安装（`pip install .`），镜像内不再保留指向构建阶段
+  源码树的 `.pth` 链接。
+- `.dockerignore` 排除 `wiki/`、`docs/`、`evals/`、`REVIEW-REPORT.md`、`CHANGELOG.md`，
+  减小构建上下文；构建必需的 `pyproject.toml`、`app/`、`README.md` 保留。
+- CI 测试矩阵新增 Python `3.14`（本地 `.venv` 就是 3.14.7），保留 3.11 / 3.12 / 3.13。
+- CI 新增 `concurrency` 分组，同一 ref 的旧运行会被取消。
+- CI 中所有 action 按 commit SHA 固定版本（行尾注释版本号）。
+- `playwright.config.js`：`fullyParallel` 由 `true` 改为 `false`，与注释中已说明的
+  `workers: 1` 约束（共享 webServer + `:memory:` SQLite）保持一致。
+
+- 本机 .env 的 SESSION_STALE_AFTER_SECONDS 同步为 300，与代码默认值、
+  .env.example、wiki 三方一致（原为 1800，会让横死会话多挂 25 分钟）。
+
+## [0.6.0] - 2026-09
+
+### Added
+
+- 成本可观测：`INPUT_TOKEN_PRICE_PER_MILLION` / `OUTPUT_TOKEN_PRICE_PER_MILLION`
+  与报告中的 `estimated_cost_usd`。
+- 证据内容对齐与批量落盘；`evals/` 基准套件。
+- 默认模型切换为 `deepseek-flash`（DeepSeek V4.1 Flash）。
+
+### Changed
+
+- 前端按职责块拆分（`app.js` 拆出独立前端模块）。
+- `main.py` 路由模块化：新增 `routes/`、`deps.py`、`sse.py`、`rate_limit.py`。
+
+### Fixed
+
+- 进度条透明等配色缺陷与三处交互卡死。
+- 取消分析时未停止计时器；真机走查发现的六处交互体验问题。
+- 启动器在依赖探测失败时透出真实原因，而不是笼统提示。
+- 限流清理测试在 CI 上的环境依赖型 flaky。
+
+[Unreleased]: https://github.com/xiaomaozjj666/issue-agent/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/xiaomaozjj666/issue-agent/releases/tag/v0.6.0
