@@ -313,6 +313,15 @@ textarea:focus::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+/* 重新生成后被取代的旧回答：保留可读/可复制，但视觉上退到次要位置 */
+.msg.superseded {
+  opacity: 0.45;
+}
+.msg.superseded:hover,
+.msg.superseded:focus-within {
+  opacity: 1;
+}
+
 /* ── 波及范围徽章流（无补丁改动行数时的降级视图） ──
    垂直撑满画布：首行 = 严重度 + 数量速读，中部徽章流居中呼吸，底部注脚解释缺失维度。 */
 .blast-fallback {
