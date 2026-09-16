@@ -433,7 +433,11 @@
     cancel.type = "button";
     cancel.addEventListener("click", closeConfirm);
 
-    const busy = mode === "creating" || inFlight;
+    // busy 只反映「正在提交」这一个状态：早前把通用的请求锁 inFlight 也算进来，
+    // 而 openConfirm() 是在 requestProposal 的 finally 释放锁之前绘制的，
+    // 于是确认视图会被画成「正在创建…」+ disabled，且之后没有任何重绘——
+    // 用户永远无法点下确认（CI 的 e2e 真实点击复现了这一点）。
+    const busy = mode === "creating";
     const action = captureElement("button", "pr-confirm-btn", busy ? t("pr_creating") : t("pr_confirm_action"));
     action.type = "button";
     action.addEventListener("click", submitFix);
@@ -556,6 +560,10 @@
       setError(error, "", false);
     } finally {
       inFlight = false;
+      // 请求结束后补一次重绘：请求期间设置的 UI 状态（如临时禁用）必须被纠正，
+      // 不能停在「请求中」的渲染上（pr-panel 只在状态变化时重绘，不会自愈）。
+      touchOnly = true;
+      scheduleReconcile();
     }
   }
 
