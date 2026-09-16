@@ -307,6 +307,8 @@
     evidence_claim_group_hint: "Evidence in this group supports the conclusion above",
     chart_blast_radius_note: "No patch diff line counts found, so change sizes across modules cannot be compared.",
     chart_blast_module_count: "Affected modules: {count}",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
     "pr_section_title": "Create pull request",
     "pr_button_create": "Create PR",
     "pr_button_checking": "Checking proposal…",

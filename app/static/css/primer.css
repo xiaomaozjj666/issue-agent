@@ -117,7 +117,8 @@
   --fg: #1f2328;
   --fg-strong: #1f2328;
   --muted: #656d76;
-  --faint: #8c959f;
+  /* 原先 #8c959f 在白底上只有 2.9:1（低于 AA 4.5:1）；faint 用于时间戳/占位/说明等小字 */
+  --faint: #6e7781;
 
   --border: #d0d7de;
   --border-muted: #d8dee4;

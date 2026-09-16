@@ -199,11 +199,11 @@ test("renders responsive decision charts without overlaps or console errors", as
     evidenceRoot: "#0969da",
     riskMarker: "#8250df",
     riskLow: "#dafbe1",
-    riskHigh: "#ffebc8",
-    riskCritical: "#ffebe9",
+    riskHigh: "#fbd3ab",
+    riskCritical: "#ffc4c0",
     riskSeriesType: "heatmap",
     riskSeriesCount: 2,
-    riskCriticalHover: "#ffcecb",
+    riskCriticalHover: "#ffb3ae",
   });
 
   // 报告状态色使用轻量底色而非高饱和实心色块。
@@ -332,7 +332,7 @@ test("renders responsive decision charts without overlaps or console errors", as
       hoverColor: chart.getOption().series[0].data[11].emphasis.itemStyle.color,
     };
   });
-  expect(hoveredCell).toEqual({ seriesCount: 2, hoverColor: "#ffcecb" });
+  expect(hoveredCell).toEqual({ seriesCount: 2, hoverColor: "#ffb3ae" });
   await riskCanvas.click({ position: { x: 24, y: 24 } });
   await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0);
   await expect(page.locator(".motion-ripple")).toHaveCount(0);
@@ -383,9 +383,9 @@ test("renders responsive decision charts without overlaps or console errors", as
     // 证据链根节点使用强调深蓝（strengthStrong），不再是普通 primary 蓝
     evidenceRoot: "#2f81f7",
     riskMarker: "#bc8cff",
-    riskLow: "#1f4d32",
-    riskCritical: "#642b37",
-    riskCriticalHover: "#873e4b",
+    riskLow: "#173525",
+    riskCritical: "#8e2a48",
+    riskCriticalHover: "#a83a58",
   });
   await page.keyboard.press("Tab");
   await expect(page.locator(".chart-modal-close")).toBeFocused();
@@ -868,4 +868,34 @@ test("marks the transcript busy while a streamed reply is rendering", async ({ p
   await page.locator("#chat-send-btn").click();
   expect(await busyDuringStream).toBe(true);
   await expect(page.locator("#messages")).not.toHaveAttribute("aria-busy", "true", { timeout: 8000 });
+});
+
+test("activates report drill-down targets from the keyboard", async ({ page }) => {
+  await mockCompletedSessions(page);
+  await page.goto("/");
+  await historyCard(page, 1).click();
+  await page.getByRole("button", { name: "查看完整报告" }).click();
+
+  // 指标卡是 role="link" + tabindex="0"：必须能用键盘激活，而不只是「可聚焦但按不动」
+  const card = page.locator(".report-metric-card.clickable").first();
+  await card.scrollIntoViewIfNeeded();
+  await card.focus();
+  await expect(card).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#report-evidence")).toHaveClass(/section-highlight/, { timeout: 5000 });
+
+  // 修复方案条目：聚焦主按钮后回车同样应下钻并高亮目标章节
+  const change = page.locator(".change-item .report-item-primary").first();
+  await change.scrollIntoViewIfNeeded();
+  await change.focus();
+  await expect(change).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#report-patch")).toHaveClass(/section-highlight/, { timeout: 5000 });
+
+  // 空格键同样应生效（原生 button 语义）
+  await page.locator("#report-patch").scrollIntoViewIfNeeded();
+  const changeAgain = page.locator(".change-item .report-item-primary").first();
+  await changeAgain.focus();
+  await page.keyboard.press(" ");
+  await expect(changeAgain).toBeFocused();
 });
