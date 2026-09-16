@@ -1255,8 +1255,8 @@ a:hover {
   flex-direction: column;
   align-items: center;
   gap: var(--space-3);
-  background: var(--surface-2, #1c2128);
-  border: 1px solid var(--border, #30363d);
+  background: var(--canvas-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
   text-align: center;
 }
@@ -3226,7 +3226,7 @@ a:hover {
   display: block;
   height: 100%;
   border-radius: 2px;
-  background: var(--blue);
+  background: var(--accent);
   transition: width 0.5s var(--ease-standard);
 }
 

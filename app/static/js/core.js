@@ -303,7 +303,7 @@
     settings_api_key_placeholder: "Required only when the server sets API_KEY",
     settings_api_key_note: "Stored in this browser only; sent with every API request as X-API-Key.",
     analyzing_btn: "Analyzing…",
-    api_key_required: "API key required: the server is authenticated. Add your key in the settings panel (⚙️).",
+    api_key_required: "API key required: this server is authenticated. Add your key in Settings (gear icon, top-left).",
     evidence_claim_group_hint: "Evidence in this group supports the conclusion above",
     chart_blast_radius_note: "No patch diff line counts found, so change sizes across modules cannot be compared.",
     chart_blast_module_count: "Affected modules: {count}",

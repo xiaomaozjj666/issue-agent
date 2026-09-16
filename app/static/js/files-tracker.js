@@ -128,20 +128,27 @@
         `</li>`;
     }).join("");
 
+    // 每次工具调用都会重建面板：先记住用户当前的展开状态，重建后恢复，
+    // 避免「正在看文件树，被下一次工具调用强制合上」。
+    const wasExpanded = card.dataset.treeExpanded === "true";
+
     card.innerHTML =
       `<div class="files-tracker-header">` +
       `<span class="files-tracker-icon" aria-hidden="true">📁</span>` +
       `<span class="files-tracker-title">${IA.escapeHtml(t("files_tracker_title"))}</span>` +
       `<span class="files-tracker-summary">${IA.escapeHtml(summary)}</span>` +
-      `<button type="button" class="files-tracker-toggle" aria-expanded="false">${IA.escapeHtml(t("files_tracker_expand"))}</button>` +
+      `<button type="button" class="files-tracker-toggle" aria-expanded="${wasExpanded ? "true" : "false"}">${IA.escapeHtml(wasExpanded ? t("files_tracker_collapse") : t("files_tracker_expand"))}</button>` +
       `</div>` +
-      `<ul class="files-tracker-tree" hidden>${dirItems}</ul>`;
+      `<ul class="files-tracker-tree"${wasExpanded ? "" : " hidden"}>${dirItems}</ul>`;
+
+    card.dataset.treeExpanded = wasExpanded ? "true" : "false";
 
     const toggleBtn = card.querySelector(".files-tracker-toggle");
     const tree = card.querySelector(".files-tracker-tree");
     if (toggleBtn && tree) {
       toggleBtn.addEventListener("click", function () {
         const expanded = toggleBtn.getAttribute("aria-expanded") === "true";
+        card.dataset.treeExpanded = expanded ? "false" : "true";
         if (expanded) {
           tree.setAttribute("hidden", "");
           toggleBtn.setAttribute("aria-expanded", "false");
