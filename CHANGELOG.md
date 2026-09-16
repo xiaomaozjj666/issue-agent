@@ -106,11 +106,31 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
   错误方位（实际是左上角齿轮按钮）。
 - **「复制」语义不明 / 反馈过短**：报告 JSON 复制按钮改为「复制报告 JSON」，toast 由
   1.6s 延长到 2.5s，下载类 toast 带上真实文件名。
-- **导出 HTML 的数据岛转义错误**：<script type="application/json"> 是 raw text、实体
-  不解码，原用 scapeHtml 会把 < > & 变成字面量污染导出页数据；改用 \u003c 转义。
+- **导出 HTML 的数据岛转义错误**：`<script type="application/json">` 是 raw text、实体不解码，
+  原用 `escapeHtml` 会把 `< > &` 变成字面量污染导出页数据；改用 `\u003c` 转义。
+- **图表调色板在色盲下不可区分（可及性）**：风险矩阵的五个严重度标记
+  （critical/high/medium/low/unknown）会同时出现在一张图里，实测在红色盲
+  （protanopia）模拟下 `danger/riskMarkerHigh` 的 Lab 色差只有 **3.6**（暗色）/
+  **4.5**（浅色）——「严重」与「高」对红绿色盲用户几乎同色。调整后在同等约束
+  （页面背景与所在格底色对比度均 ≥ 3:1）下最差色差提升到 **15.6 / 27.1**：
+  暗色 `danger #f85149→#ff7b72`、`riskMarkerHigh #f0883e→#bc8cff`（改紫色以跳出
+  红-橙-黄坍缩）、`warning #d29922→#bf8700`、`success #3fb950→#7ee787`、
+  `muted #8b949e→#6e7681`；浅色 `riskMarkerHigh #bc6b00→#8250df`、
+  `warning #9a6700→#7d4e00`、`success #1a7f37→#0f5323`。新增
+  `tests/test_chart_palette_accessibility.py`，用 Viénot/Brettel 二色觉模拟把
+  「ΔE ≥ 14 且对比度 ≥ 3:1」固化为可回归的约束。
+- **触屏按钮小于最小可点区域**：手机视口下图标按钮实测 34×34，低于 iOS HIG /
+  Android 建议的 44×44。触屏媒体查询下提升到 ≥44×44，并在移动端 e2e 用例中断言
+  「可见图标按钮不得小于 44×44」。
+- **TypeScript 决策测试记录的是过期快照**：docstring 声称「无 package.json、
+  第三方库走 CDN、4644 行 / 3 个文件」，实际是「有 package.json（仅 Playwright
+  测试依赖、无构建脚本）、vendor 本地自带、约 8.1k 行 / 11 个文件」。改为用当前
+  文件系统事实做可计算断言，并在「构建链已就绪」时失败提醒重新决策。
 
 ### Changed
 
+- README 的「测试」命令与 CI 对齐（`ruff check app/ tests/`、`npm ci` 而非
+  `npm install`、补 `pip-audit --skip-editable`），本地照抄即可复现 CI 结论。
 - Dockerfile 改为非 editable 安装（`pip install .`），镜像内不再保留指向构建阶段
   源码树的 `.pth` 链接。
 - `.dockerignore` 排除 `wiki/`、`docs/`、`evals/`、`REVIEW-REPORT.md`、`CHANGELOG.md`，

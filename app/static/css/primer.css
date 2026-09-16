@@ -797,6 +797,18 @@ a:hover {
 /* #6 修复：触摸设备无 :hover，actions 永远不可见。用 @media (hover: none)
    统一覆盖平板/触屏笔记本（641px-1180px 区间原规则失效）。
    桌面带鼠标设备仍保持悬停才显示的简洁视觉。 */
+/* 触屏设备：图标按钮至少 44×44。实测手机视口下这些按钮是 34×34，
+   低于 iOS HIG / Android 建议的最小可点区域，拇指容易点空。 */
+@media (hover: none) {
+  .icon-button,
+  .back-button,
+  .mobile-history-toggle,
+  .archive-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 @media (hover: none) {
   .session-actions {
     opacity: 1;
