@@ -49,6 +49,7 @@ from app.provider import (
     chat_request_options,
     create_openai_client,
     iter_deltas,
+    iter_stream_with_breaker,
     record_model_request,
     record_model_usage,
 )
@@ -195,6 +196,7 @@ class IssueAgent:
                     raise TimeoutError(
                         f"Investigation exceeded {self.settings.investigation_timeout:.0f}s total timeout"
                     )
+                self._enforce_cost_budget(session)
                 record_model_request(session.metrics if session is not None else None, "exploration")
                 if self._circuit_breaker is not None:
                     response = await self._circuit_breaker.call(
@@ -491,6 +493,7 @@ class IssueAgent:
         async with github:
             try:
                 for _ in range(self.settings.max_agent_iterations):
+                    self._enforce_cost_budget(session)
                     record_model_request(session.metrics, "chat")
                     collected_content_parts: list[str] = []
                     # 工具调用 chunk 按 index 累积：{index: {"id": ..., "name": ..., "arguments": "..."}}
@@ -614,6 +617,7 @@ class IssueAgent:
         async with github:
             try:
                 for _ in range(self.settings.max_agent_iterations):
+                    self._enforce_cost_budget(session)
                     record_model_request(session.metrics, "chat")
                     response = await self._call_llm(messages, tools=tools, max_tokens=self.settings.max_chat_tokens)
                     record_model_usage(session.metrics, response, "chat")
@@ -707,6 +711,25 @@ class IssueAgent:
     def _has_valid_lines(lines: str | None, line_count: int) -> bool:
         return EvidenceValidator.has_valid_lines(lines, line_count)
 
+    def _enforce_cost_budget(self, session: Session | None) -> None:
+        """中止超出单次调查成本预算的运行（0 = 不限制）。
+
+        成本只有「事后可见」是不够的：模型一旦陷入反复工具调用，唯二的上界是轮次与
+        总时长，金额本身没有闸门。这里在每轮迭代前估算累计花费，超限即抛出，
+        由 SSE 转成一条可读的 error 事件。
+        """
+        limit = self.settings.max_session_estimated_cost_usd
+        if limit <= 0 or session is None:
+            return
+        metrics = session.metrics if isinstance(session.metrics, dict) else {}
+        apply_cost_estimate(metrics, self.settings)
+        spent = metrics.get("estimated_cost_usd")
+        if isinstance(spent, (int, float)) and spent > limit:
+            raise ModelResponseError(
+                f"Investigation stopped: estimated cost ${float(spent):.4f} exceeded the configured "
+                f"budget ${limit:.4f} (MAX_SESSION_ESTIMATED_COST_USD)"
+            )
+
     async def _call_llm(self, messages: list[dict], *, tools: list | None = None, max_tokens: int | None = None):
         client = self._get_client()
         kwargs: dict = {
@@ -745,7 +768,10 @@ class IssueAgent:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
         if self._circuit_breaker is not None:
-            return await self._circuit_breaker.call(client.chat.completions.create, **kwargs)
+            stream = await self._circuit_breaker.call(client.chat.completions.create, **kwargs)
+            # call() 在拿到响应对象时就记成功（此时一个 token 都还没到）：把真实结果
+            # 推迟到流消费完再补报，否则中途断流/超时永远不进熔断统计（还会清零失败数）。
+            return iter_stream_with_breaker(stream, self._circuit_breaker)
         return await client.chat.completions.create(**kwargs)
 
     def _build_executor(self, github: GitHubClient, issue: IssueData, tree: list[str], **kwargs) -> ToolExecutor:

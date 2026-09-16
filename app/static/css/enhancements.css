@@ -392,3 +392,264 @@ textarea:focus::placeholder {
   font-size: var(--text-xs);
   line-height: 1.5;
 }
+
+/* ── 创建 PR 面板（pr-panel.js，报告末尾注入） ─────────────────────
+   颜色一律走主题变量（--card/--border/--muted/--accent/--red），
+   data-theme 挂在 <html> 上，浅色/深色都能自动继承，无需额外覆写。
+   类名统一 pr-* 前缀，避免与 primer.css 的裸类选择器冲突。 */
+.pr-panel {
+  margin: var(--space-6) 0 var(--space-4);
+  padding: var(--space-4);
+  background: var(--card);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-lg);
+}
+.pr-title {
+  color: var(--fg-strong);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.pr-body {
+  margin-top: var(--space-3);
+}
+.pr-create {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 16px;
+  color: var(--fg);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--btn-inset-shadow);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
+}
+.pr-create:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: var(--control-hover-border);
+}
+.pr-create:focus-visible,
+.pr-cancel:focus-visible,
+.pr-confirm-btn:focus-visible,
+.pr-open:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.pr-create:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 提示区：无提案（中性）/ 写模式关闭（警示） */
+.pr-notice {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+}
+.pr-notice-warn {
+  padding: var(--space-2) var(--space-3);
+  color: var(--yellow-emphasis);
+  background: var(--yellow-subtle);
+  border: 1px solid var(--yellow-muted);
+  border-radius: var(--radius);
+}
+.pr-notice-error {
+  padding: var(--space-3);
+  color: var(--red-emphasis);
+  background: var(--red-subtle);
+  border: 1px solid var(--red-muted);
+  border-radius: var(--radius);
+  font-size: var(--text-xs);
+}
+.pr-notice-text {
+  margin: 0;
+  line-height: var(--leading);
+}
+.pr-notice-meta {
+  margin: var(--space-2) 0 0;
+}
+/* 失败时的 HTTP 状态码徽标：让用户能区分 403 与应用错误 */
+.pr-error-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  color: var(--muted);
+  background: var(--neutral-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.pr-notice-error .pr-notice-hint {
+  color: var(--muted);
+}
+
+/* 确认视图：写操作前必须看得见「到底要写什么」 */
+.pr-confirm {
+  padding: var(--space-3) var(--space-4);
+  background: var(--canvas-inset);
+  border: 1px solid var(--red-muted);
+  border-radius: var(--radius);
+}
+.pr-confirm-title {
+  margin: 0;
+  color: var(--fg-strong);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.pr-confirm-text {
+  margin: var(--space-2) 0 0;
+  color: var(--fg);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+}
+.pr-changes {
+  margin-top: var(--space-3);
+}
+.pr-changes-title {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pr-change-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.pr-change {
+  background: var(--card);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+}
+.pr-change-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+.pr-change-path {
+  overflow-wrap: anywhere;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.pr-change-lines {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.pr-change-preview {
+  max-height: 220px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  color: var(--fg);
+  background: var(--canvas-inset);
+  border-top: 1px solid var(--border-muted);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+}
+.pr-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.pr-cancel {
+  padding: 6px 14px;
+  color: var(--fg);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.pr-cancel:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+.pr-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* 确认按钮：危险色（写远端仓库），与取消按钮形成明确对比 */
+.pr-confirm-btn {
+  padding: 6px 14px;
+  color: var(--fg-strong);
+  background: var(--red);
+  border: 1px solid var(--red-muted);
+  border-radius: var(--radius);
+  box-shadow: var(--btn-shadow);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.pr-confirm-btn:hover:not(:disabled) {
+  background: var(--red-emphasis);
+}
+.pr-confirm-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+/* 成功态 */
+.pr-success {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--green-subtle);
+  border: 1px solid var(--green-muted);
+  border-radius: var(--radius);
+}
+.pr-success-text {
+  margin: 0;
+  color: var(--green-emphasis);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.pr-open {
+  color: var(--accent);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+.pr-open:hover {
+  text-decoration: underline;
+}
+
+/* 进行中指示：纯 CSS 旋转，无 JS 定时器（页面卸载不需要清理） */
+.pr-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pr-spin 640ms linear infinite;
+}
+@keyframes pr-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pr-spinner { animation: none; }
+  .pr-create,
+  .pr-cancel,
+  .pr-confirm-btn { transition: none; }
+}

@@ -30,7 +30,7 @@ from app.evidence import EvidenceValidator
 from app.i18n import get_final_output_prompt, get_report_phase_instruction, get_report_retry_prompt
 from app.json_utils import extract_json
 from app.models import AnalysisReport
-from app.provider import iter_deltas, record_model_request, record_model_usage
+from app.provider import iter_deltas, iter_stream_with_breaker, record_model_request, record_model_usage
 from app.retry import build_attempt_plan
 from app.tools import ToolExecutor
 
@@ -97,6 +97,9 @@ class ReportGenerator:
                     max_tokens=self._settings.max_output_tokens,
                     stream=True,
                 )
+                # 熔断器在拿到响应对象时就记了成功；真实结果（中途断流/超时）
+                # 必须等流消费完再补报，否则最主要的失败模式对熔断器完全不可见。
+                stream = iter_stream_with_breaker(stream, self._circuit_breaker)
             else:
                 stream = await self._client.chat.completions.create(  # type: ignore[call-overload]
                     **plan.options,

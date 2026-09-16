@@ -1,7 +1,7 @@
 """SSE streaming helpers shared by the analysis (``/stream``) and chat (``/chat/stream``) endpoints."""
 
 import asyncio
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncGenerator, AsyncIterator, Coroutine
 from contextlib import suppress
 from typing import Any, TypeVar, cast
 
@@ -19,7 +19,7 @@ _T = TypeVar("_T")
 
 async def _iter_events_with_heartbeat(
     event_iter: AsyncIterator[_T], *, timeout: float = 15.0
-) -> AsyncIterator[_T | _HeartbeatSentinel]:
+) -> AsyncGenerator[_T | _HeartbeatSentinel, None]:
     """Await events from *event_iter*, yielding ``_HEARTBEAT`` while a single step is slow.
 
     Unlike ``asyncio.wait_for(event_iter.__anext__(), timeout=...)`` — which *cancels* the

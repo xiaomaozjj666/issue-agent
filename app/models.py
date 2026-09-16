@@ -8,6 +8,9 @@ SessionStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 ReviewStatus = Literal["not_run", "approved", "revised", "unavailable"]
 
 _LINES_PATTERN = re.compile(r"L\d+(?:-L?\d+)?")
+# 允许 provider 的常见命名（deepseek-chat / gpt-4o / us.anthropic.claude-3 等），
+# 拒绝空白/控制字符等明显畸形的取值（它们会被原样透传给 provider）。
+_MODEL_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"
 
 
 class AnalyzeRequest(BaseModel):
@@ -19,7 +22,7 @@ class StreamRequest(BaseModel):
     session_id: str | None = None
     # 应用内设置覆盖：仅当显式提供时才覆盖服务端环境变量默认值
     language: Literal["zh", "en"] | None = None
-    model: str | None = Field(default=None, min_length=1, max_length=128)
+    model: str | None = Field(default=None, pattern=_MODEL_PATTERN)
     thinking: Literal["enabled", "disabled"] | None = None
     reasoning_effort: Literal["high", "max"] | None = None
     review: bool | None = None
@@ -141,7 +144,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=32_000)
     # 应用内设置覆盖
     language: Literal["zh", "en"] | None = None
-    model: str | None = Field(default=None, min_length=1, max_length=128)
+    model: str | None = Field(default=None, pattern=_MODEL_PATTERN)
     thinking: Literal["enabled", "disabled"] | None = None
     reasoning_effort: Literal["high", "max"] | None = None
     review: bool | None = None

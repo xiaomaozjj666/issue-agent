@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # not per connection in the pool.  _migrate_report_enrichment does a full-table
 # scan over every session with a report; running it pool_size times on cold start
 # is wasteful and adds startup latency.
-_enrichment_migration_done = False
+_enrichment_migration_done: set[str] = set()
 _enrichment_migration_lock = asyncio.Lock()
 
 SCHEMA = """
@@ -100,16 +100,18 @@ async def get_db(path: str) -> aiosqlite.Connection:
     """
     if path == ":memory:":
         conn = await aiosqlite.connect(":memory:")
+        db_key = ":memory:"
     else:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(p))
+        db_key = str(p.resolve())
     conn.row_factory = aiosqlite.Row
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA foreign_keys=ON")
     await conn.executescript(SCHEMA)
     await _migrate_sessions(conn)
-    await _migrate_report_enrichment_once(conn)
+    await _migrate_report_enrichment_once(conn, db_key)
     await _ensure_performance_indexes(conn)
     await conn.commit()
     return conn
@@ -177,22 +179,25 @@ async def _migrate_report_enrichment(conn: aiosqlite.Connection) -> None:
             )
 
 
-async def _migrate_report_enrichment_once(conn: aiosqlite.Connection) -> None:
-    """Run _migrate_report_enrichment at most once per process lifetime.
+async def _migrate_report_enrichment_once(
+    conn: aiosqlite.Connection, db_key: str | None = None
+) -> None:
+    """Run _migrate_report_enrichment at most once per database file per process.
 
     The full-table scan is expensive and was previously called once per pooled
-    connection (pool size 5 => 5 redundant scans on cold start).  This wrapper
-    gates execution behind a module-level flag so the backfill runs only on the
-    first connection to open.
+    connection (pool size 5 => 5 redundant scans on cold start).
+
+    按 *数据库路径* 记账（而不是进程级布尔量）：旧实现里同一进程内第二个数据库
+    （测试的多个 tmp DB、或运行期切换 SESSION_DB_PATH）会永远跳过回填，静默漏迁移。
     """
-    global _enrichment_migration_done
-    if _enrichment_migration_done:
+    key = db_key or ":memory:"
+    if key in _enrichment_migration_done:
         return
     async with _enrichment_migration_lock:
-        if _enrichment_migration_done:
+        if key in _enrichment_migration_done:
             return
         await _migrate_report_enrichment(conn)
-        _enrichment_migration_done = True
+        _enrichment_migration_done.add(key)
 
 
 class ConnectionPool:

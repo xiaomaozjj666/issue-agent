@@ -65,7 +65,7 @@ flowchart LR
 - 🧪 **评测脚手架** — `evals/` 黄金用例 + 离线打分，用于对比 prompt / 模型调整后的根因命中率
 - 💾 **会话导出 / 导入** — 任意会话可下载为 JSON，导入后生成全新会话继续使用
 - 🖥️ **双接口** — FastAPI REST API + Rich 终端 CLI + 内嵌 Web UI（带图表）
-- 🐳 **Docker 支持** — 现成 Dockerfile，非 root 用户运行，含健康检查
+- 🐳 **Docker 支持** — 现成 Dockerfile，非 root 用户运行，含健康检查；CI 会真实启动容器探活并校验数据目录可写
 
 ## 安全模型
 
@@ -137,6 +137,8 @@ docker run -p 8000:8000 --env-file .env -v issue-agent-data:/app/data issue-agen
 ```
 
 容器内固定监听 `8000`，可映射到任意宿主端口（`-p HOST:8000`）。
+
+镜像以非 root 的 `appuser` 运行，`/app/data` 已在构建时创建并授权，因此上面的具名卷挂载可直接落库（`SESSION_DB_PATH` 默认 `data/sessions.db`），无需额外 `chown`。启动器一键启动时 `.env` 由 `.env.example` 复制而来，两者与代码默认值一致。
 
 ### CLI 使用
 
@@ -286,7 +288,7 @@ python -m evals.score
 
 `evals/` 用已知根因的 Issue 当标尺：`run_eval` 真实跑调查（需 `.env` 中的 `OPENAI_API_KEY` 与 GitHub 访问），`score.py` 是无网络、无 LLM 的离线打分模块，由 `run_eval` 与 `tests/test_eval_score.py` 复用；改 prompt 或换模型后对比根因命中率与 `estimated_cost_usd`。
 
-Playwright 套件在独立本地服务上验证桌面 / 移动端布局、无障碍标签、报告导航、源码链接、XSS 转义、输入清空与网络故障恢复；CI 在每次 push / PR 上运行同一套件（Python 3.11–3.13 + Docker 构建 + 浏览器回归）。
+Playwright 套件在独立本地服务上验证桌面 / 移动端布局、无障碍标签、报告导航、源码链接、XSS 转义、输入清空与网络故障恢复；CI 在每次 push / PR 上运行同一套件（Python 3.11–3.14 + Docker 构建并真实启动容器探活 + 浏览器回归），并把 `coverage.xml` / `report.xml` 作为产物上传。版本变更记录见 `CHANGELOG.md`，依赖更新由 `.github/dependabot.yml` 每周提出。
 
 ## 已知限制
 

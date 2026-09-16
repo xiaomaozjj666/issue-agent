@@ -12,6 +12,7 @@ from openai import APIError
 from app.agent import ModelResponseError, friendly_chat_error
 from app.deps import (
     CircuitBreakerDep,
+    InvestigationSlots,
     ProviderClientsDep,
     SessionMgr,
     build_issue_agent,
@@ -21,6 +22,9 @@ from app.events import cancelled_event, error_event, session_event
 from app.github import GitHubError, GitHubRateLimitError, GitHubResourceError
 from app.models import AnalysisReport, AnalyzeRequest, StreamRequest
 from app.services import (
+    BUSY_INVESTIGATIONS,
+    SESSION_ALREADY_RUNNING,
+    acquire_investigation_slot,
     event_payload,
     finish_cancelled_session,
     mark_stream_interrupted,
@@ -36,8 +40,15 @@ router = APIRouter()
 
 @router.post("/analyze", response_model=AnalysisReport)
 async def analyze(
-    body: AnalyzeRequest, clients: ProviderClientsDep, breaker: CircuitBreakerDep
+    body: AnalyzeRequest,
+    clients: ProviderClientsDep,
+    breaker: CircuitBreakerDep,
+    slots: InvestigationSlots,
 ) -> AnalysisReport:
+    # 并发闸门：限流只按请求数计，一次调查却可能跑满 investigation_timeout，
+    # 因此还要限制同时在跑的调查数量（否则成本与资源没有上界）。
+    if not await acquire_investigation_slot(slots):
+        raise HTTPException(status_code=429, detail=BUSY_INVESTIGATIONS, headers={"Retry-After": "30"})
     agent = build_issue_agent(clients, resolve_override_settings(body), breaker)
     try:
         return await agent.investigate(str(body.issue_url))
@@ -56,11 +67,16 @@ async def analyze(
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await agent.aclose()
+        slots.release()
 
 
 @router.post("/stream")
 async def stream_analysis(
-    body: StreamRequest, clients: ProviderClientsDep, session_mgr: SessionMgr, breaker: CircuitBreakerDep
+    body: StreamRequest,
+    clients: ProviderClientsDep,
+    session_mgr: SessionMgr,
+    breaker: CircuitBreakerDep,
+    slots: InvestigationSlots,
 ) -> StreamingResponse:
     settings = resolve_override_settings(body)
     agent = build_issue_agent(clients, settings, breaker)
@@ -68,32 +84,49 @@ async def stream_analysis(
     async def event_generator() -> AsyncIterator[str]:
         session: Session | None = None
         started_at = monotonic()
+        slot_held = False
         try:
+            # 并发闸门先行：拿不到名额立刻回一条可行动的 error 事件，而不是排队等
+            # 前面的调查跑完（一次 /stream 最长 investigation_timeout = 10 分钟）。
+            if not await acquire_investigation_slot(slots):
+                yield error_event(BUSY_INVESTIGATIONS).to_sse()
+                return
+            slot_held = True
+
             if body.session_id:
-                session = await session_mgr.get(body.session_id)
+                # 原子占位（会话调查租约）：同一会话同时只允许一个调查在跑。否则第二个
+                # 请求会 clear_events() 删掉第一个正在跑的事件史，并在乐观锁上互相踩踏。
+                session = await session_mgr.try_claim_running(body.session_id, phase="starting")
                 if session is None:
-                    yield error_event("Session not found").to_sse()
+                    if await session_mgr.get(body.session_id) is None:
+                        yield error_event("Session not found").to_sse()
+                    else:
+                        yield error_event(SESSION_ALREADY_RUNNING).to_sse()
                     return
                 # 续跑：清空上一轮残留事件/报告/指标，从干净状态重新调查，
                 # 避免时间线重复或残留失败态。status/issue 等基本信息保留。
                 await session_mgr.clear_events(session.session_id)
+                refreshed = await session_mgr.get(session.session_id)
+                if refreshed is None:
+                    yield error_event("Session not found").to_sse()
+                    return
+                session = refreshed
             else:
                 session = await session_mgr.create(str(body.issue_url))
+                claimed = await session_mgr.try_claim_running(session.session_id, phase="starting")
+                if claimed is None:
+                    yield error_event(SESSION_ALREADY_RUNNING).to_sse()
+                    return
+                session = claimed
 
-            # 状态写入临界区：只在 session 状态切换时短暂持锁，不在 yield 期间持锁。
-            async with session.lock:
-                session.status = "running"
-                session.phase = "starting"
-                session.cancel_requested = False
-                session.error_message = None
-                await session_mgr.save(session)
             created_event = session_event(session.session_id)
             await record_agent_event(session_mgr, session, created_event, started_at)
             yield created_event.to_sse()
 
             event_stream = agent.investigate_stream(session.issue_url, session=session)
+            heartbeats = _iter_events_with_heartbeat(event_stream, timeout=15.0)
             try:
-                async for item in _iter_events_with_heartbeat(event_stream, timeout=15.0):
+                async for item in heartbeats:
                     if isinstance(item, _HeartbeatSentinel):
                         # SSE 心跳：防止 nginx 等反向代理因空闲超时断开连接。
                         # 注意：绝不能取消正在执行的生成器步骤（见 _iter_events_with_heartbeat）。
@@ -121,6 +154,9 @@ async def stream_analysis(
                         await session_mgr.update_metrics(session.session_id, session.metrics)
                     yield event.to_sse()
             finally:
+                # 显式关闭心跳包装器（而非等 GC）：提前 return 的取消分支也必须让
+                # 被取消的调查立刻停下，否则它还会跑完当前网络步骤并继续计费。
+                await heartbeats.aclose()
                 await event_stream.aclose()
 
             async with session.lock:
@@ -167,6 +203,8 @@ async def stream_analysis(
             yield failure.to_sse()
         finally:
             await agent.aclose()
+            if slot_held:
+                slots.release()
 
     return StreamingResponse(
         event_generator(),

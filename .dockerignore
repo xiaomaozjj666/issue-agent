@@ -20,3 +20,12 @@ reports/
 .env
 *.tmp_*.json
 tests/
+# 文档与评测资产不参与构建：wiki/docs 是纯文档，evals 依赖开发期依赖。
+wiki/
+docs/
+evals/
+# 仓库根的报告类 Markdown 只在 GitHub 上阅读，不进镜像。
+REVIEW-REPORT.md
+CHANGELOG.md
+# 注意：pyproject.toml / app/ / README.md 必须保留——
+# pyproject.toml 的 readme = "README.md" 需要该文件参与构建。

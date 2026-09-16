@@ -28,9 +28,11 @@
   const checkCdnFailures = IA.checkCdnFailures;
   const { render: renderMarkdown, enhanceCodeBlocks } = IA.Markdown;
   const startAnalysisTimer = IA.AnalysisTimer.start;
-  const stopAnalysisTimer = IA.AnalysisTimer.stop;
-  const setAnalysisPhase = IA.AnalysisTimer.setPhase;
-  const clearPhase = IA.AnalysisTimer.clearPhase;
+  // 计时器别名顺带驱动 PhaseHint（enhancements.js）：阶段变化刷新"预计耗时"提示，
+  // 计时结束/清相位时移除提示，避免提示与进度条状态脱节。
+  const stopAnalysisTimer = function () { IA.AnalysisTimer.stop(); if (IA.PhaseHint) IA.PhaseHint.clear(); };
+  const setAnalysisPhase = function (text, key, tool) { IA.AnalysisTimer.setPhase(text, key); if (IA.PhaseHint) IA.PhaseHint.update(key, tool); };
+  const clearPhase = function () { IA.AnalysisTimer.clearPhase(); if (IA.PhaseHint) IA.PhaseHint.clear(); };
   const resetFilesTracker = IA.FilesTracker.reset;
   const trackExploredFile = IA.FilesTracker.track;
   const normalizeIssueUrl = IA.normalizeIssueUrl;
@@ -842,6 +844,8 @@
         report = null;
         activeSession = null;
         resetWorkspace(true);
+        // #5 修复：归档当前会话会清空工作区跳回首页，必须给出可恢复的说明
+        flashToast(t("archive_toast"));
       }
       if (!archived) {
         showArchived = false;
@@ -876,6 +880,8 @@
         resetWorkspace(true);
       }
       await loadSessions();
+      // #6 修复：删除成功原本只刷新列表，没有任何"操作已完成"的反馈
+      flashToast(t("delete_toast"));
     } catch (error) {
       addMsg("error", error.message);
     } finally {
@@ -1258,15 +1264,10 @@
     m.className = "msg tool";
     m.setAttribute("data-tool-name", IA.safeClass(name));
     m.setAttribute("aria-expanded", "false");
-    const argsText = (() => {
-      try {
-        return JSON.stringify(args).substring(0, 80);
-      } catch (e) {
-        return "";
-      }
-    })();
+    // #8 修复：工具名走 tool_<name> 映射、参数改结构化摘要，中文界面不再裸露 JSON
+    const argsText = IA.toolArgsSummary(name, args);
     m.innerHTML =
-      `<div class="preview"><b>${IA.escapeHtml(name)}</b> ${IA.escapeHtml(argsText)}${argsText.length >= 80 ? "..." : ""}</div>` +
+      `<div class="preview"><b>${IA.escapeHtml(IA.toolLabel(name))}</b> ${IA.escapeHtml(argsText)}</div>` +
       `<div class="full" aria-hidden="true"></div>`;
     m.addEventListener("click", function () {
       const expanded = m.classList.toggle("expanded");
@@ -1295,6 +1296,10 @@
   const ISSUE_URL_PATTERN = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+(?:[/?#].*)?$/i;
 
   let analyzeInProgress = false;
+  // #2 修复：最近一条事件是否为未收到结果的 tool_call（工具执行中的看门狗放宽依据）
+  let toolInFlight = false;
+  // #9 修复：已就"报告已生成"提示过的 sessionId（同一会话只提示一次）
+  let reportReadyNotified = null;
 
   // session 操作防重入：追踪正在进行的删除/归档操作，防止连续点击触发多次请求
   const pendingSessionOps = new Set();
@@ -1314,17 +1319,24 @@
     document.title = title ? String(title).slice(0, 60) + " · GitHub Issue Agent" : "GitHub Issue Agent";
   }
 
-  // 401（服务器要求 API_KEY 但请求未携带/密钥无效）全局提示：仅提示一次，
-  // 引导用户在设置面板填写密钥。
+  // 401（未携带密钥）/ 403（密钥被服务端判为无效）全局提示：仅提示一次，
+  // 引导用户在设置面板填写/核对密钥。
   let unauthorizedNoticed = false;
   function bindUnauthorizedHint() {
-    document.addEventListener("ia-unauthorized", function () {
+    document.addEventListener("ia-unauthorized", function (event) {
       if (unauthorizedNoticed) return;
       unauthorizedNoticed = true;
+      const status = event && event.detail ? event.detail.status : 401;
       const container = document.getElementById("messages");
       const note = document.createElement("div");
       note.className = "msg system unauthorized-hint";
-      note.textContent = t("api_key_required");
+      // i18n 文件不在本次可改范围：403 无专用键，按界面语言补一句"核对密钥"，
+      // 再拼上已有的 api_key_required（已说明设置入口）
+      const isEn = String(document.documentElement.lang || "").toLowerCase().indexOf("en") === 0;
+      const invalidKey = isEn
+        ? "The API key was rejected (403 Invalid API key). Check the key in Settings (gear icon, top-left)."
+        : "API 密钥不正确（403 Invalid API key）。请点左上角的设置按钮（齿轮图标）核对密钥。";
+      note.textContent = (status === 403 ? invalidKey + " " : "") + t("api_key_required");
       if (container) container.appendChild(note);
       const settingsBtn = document.getElementById("settings-btn");
       if (settingsBtn) {
@@ -1367,7 +1379,13 @@
       chatInProgress = false;
     }
     const raw = document.getElementById("issueUrl").value.trim();
-    if (!raw) return;
+    if (!raw) {
+      // #4 修复：空输入回车原本静默 return，用户得不到任何反馈。
+      // 复用输入框下方的行内错误条（4s 自动消失）给出下一步指引。
+      showUrlError(t("empty_input_hint"));
+      document.getElementById("issueUrl").focus();
+      return;
+    }
     const url = normalizeIssueUrl(raw);
     if (!ISSUE_URL_PATTERN.test(url)) {
       // 错误显示在侧栏输入框正下方（用户视线所在处），而不是主区底部远处
@@ -1429,6 +1447,8 @@
         body: JSON.stringify(Object.assign({}, body, window.IA_SETTINGS || {})),
       });
       if (!resp.ok) {
+        // #11 修复：/stream 走裸 fetch（不经 apiJson），401/403 也要触发同一个密钥引导
+        if (resp.status === 401 || resp.status === 403) IA.notifyUnauthorized(resp.status);
         let detail = t("error_unable_to_start");
         try {
           const b = await resp.json();
@@ -1445,15 +1465,18 @@
 
       // C4 修复：stream 看门狗。30s 无事件显示"连接似乎变慢"提示，
       // 90s 仍未恢复则提示用户取消。每次收到任意事件重置计时器。
+      // #2 修复：工具执行中（tool_call 已发、tool_result 未回）大仓库代码搜索
+      // 动辄 1–3 分钟，按普通阈值报"卡死"会劝退用户，故放宽到 180s/300s。
       let lastEventTime = Date.now();
+      toolInFlight = false;
       let slowWarned = false;
       let stallWarned = false;
       const watchdogTimer = window.setInterval(function () {
         const elapsed = Date.now() - lastEventTime;
-        if (elapsed >= 90000 && !stallWarned) {
+        if (elapsed >= (toolInFlight ? 300000 : 90000) && !stallWarned) {
           stallWarned = true;
           addMsg("system", t("stream_stalled"));
-        } else if (elapsed >= 30000 && !slowWarned && !stallWarned) {
+        } else if (elapsed >= (toolInFlight ? 180000 : 30000) && !slowWarned && !stallWarned) {
           slowWarned = true;
           addMsg("system", t("stream_slow"));
         }
@@ -1477,7 +1500,15 @@
         window.clearInterval(watchdogTimer);
       }
     } catch (e) {
-      addMsg("error", t("connection_error") + e.message);
+      // #3 修复：分析失败必须给出重试出口（与 chat 失败同形态）。
+      // 有 sessionId 走续跑（服务端可能已完成/仍在跑），否则重发本次 URL。
+      const failedSessionId = sessionId;
+      addErrorWithRetry(
+        // 有 sessionId（服务端可能仍在跑）才提示"可续跑"，否则按钮语义就是重发本次分析
+        t("connection_error") + e.message + (failedSessionId ? " " + t("analysis_failed_retry") : ""),
+        failedSessionId ? function () { resumeAnalysis(failedSessionId); } : function () { analyze(); },
+        failedSessionId ? "resume_analysis" : "retry_send",
+      );
       document.getElementById("progress").textContent = "";
       IA.Runtime.setCancelVisible(false);
     } finally {
@@ -1578,18 +1609,9 @@
         resetFilesTracker();
         break;
       case "tool_call": {
-        setAnalysisPhase(
-          evt.data.name +
-            ": " +
-            (() => {
-              try {
-                return JSON.stringify(evt.data.args).substring(0, 60);
-              } catch (e) {
-                return "";
-              }
-            })(),
-          "tool_call",
-        );
+        // #8：进度区显示"读取文件 src/app.py"式短语；#1：工具名透传给阶段提示
+        setAnalysisPhase(IA.toolLabel(evt.data.name) + " " + IA.toolArgsSummary(evt.data.name, evt.data.args), "tool_call", evt.data.name);
+        toolInFlight = true;
         const card = addToolCard(evt.data.name, evt.data.args);
         toolCardRef.setToolCard(card);
         // E28: 从工具参数提取文件路径并更新文件追踪面板
@@ -1597,6 +1619,7 @@
         break;
       }
       case "tool_result":
+        toolInFlight = false;
         fillToolCard(toolCardRef.getToolCard(), evt.data.preview || "");
         break;
       case "thinking":
@@ -1629,6 +1652,12 @@
         }
         document.getElementById("input-bar").style.display = "flex";
         document.getElementById("report-toggle").style.display = "inline-flex";
+        // #9 修复：报告就绪信号（移动端尤其需要）。面板未打开且本会话未提示过才提示一次，
+        // 用 toast 而非模态，避免打扰正在阅读消息的用户。
+        if (!document.getElementById("main").classList.contains("report-open") && reportReadyNotified !== sessionId) {
+          reportReadyNotified = sessionId;
+          flashToast(t("report_ready_hint"));
+        }
         document.getElementById("progress").textContent = "";
         addReportPreview(report);
         // E13: 用户开启"默认全屏"偏好时，报告生成后自动进入全屏模式
@@ -1896,7 +1925,7 @@
     parts.push(
       `<div class="report-toolbar">` +
         `<span class="report-toolbar-label">${IA.escapeHtml(t("report_export_label"))}</span>` +
-        `<button class="report-action" type="button" data-action="copy-json">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_button"))}</span></button>` +
+        `<button class="report-action" type="button" data-action="copy-json">${IA.svgIcon("copy")}<span>${IA.escapeHtml(t("copy_report_json"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-json">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_json"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-md">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_markdown"))}</span></button>` +
         `<button class="report-action" type="button" data-action="download-html">${IA.svgIcon("download")}<span>${IA.escapeHtml(t("download_html"))}</span></button>` +
@@ -2951,7 +2980,9 @@
     if (input) input.disabled = disabled;
   }
 
-  function addErrorWithRetry(message) {
+  // 失败重试出口：chat 失败默认重发上一条消息（重试按钮 once:true 防重复触发）；
+  // 传入 onRetry/labelKey 可复用于分析失败（续跑或重发本次分析）。
+  function addErrorWithRetry(message, onRetry, labelKey) {
     const d = document.getElementById("messages");
     const m = document.createElement("div");
     m.className = "msg error with-retry";
@@ -2961,18 +2992,14 @@
     const retryBtn = document.createElement("button");
     retryBtn.type = "button";
     retryBtn.className = "retry-button";
-    retryBtn.innerHTML = IA.svgIcon("retry") + `<span>${IA.escapeHtml(t("retry_send"))}</span>`;
-    // once: true 防止事件队列中重复 click 触发多次 chat()
-    retryBtn.addEventListener(
-      "click",
-      function () {
-        // M2 修复：chat 进行中时不销毁重试按钮，避免消息丢失且 UI 无反馈
-        if (chatInProgress) return;
-        m.remove();
-        if (lastFailedChat !== null) chat(lastFailedChat);
-      },
-      { once: true },
-    );
+    retryBtn.innerHTML = IA.svgIcon("retry") + `<span>${IA.escapeHtml(t(labelKey || "retry_send"))}</span>`;
+    retryBtn.addEventListener("click", function () {
+      // M2 修复：chat 进行中时不销毁重试按钮，避免消息丢失且 UI 无反馈
+      if (!onRetry && chatInProgress) return;
+      m.remove();
+      if (onRetry) onRetry();
+      else if (lastFailedChat !== null) chat(lastFailedChat);
+    }, { once: true });
     m.appendChild(retryBtn);
     d.appendChild(m);
     // H5 修复：错误消息出现时尊重用户当前滚动位置
@@ -2988,20 +3015,23 @@
       flashToast(ok ? t("copied") : t("copy_failed"));
     } else if (action === "download-json") {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      IA.downloadFile(`report-${stamp}.json`, JSON.stringify(reportData, null, 2), "application/json;charset=utf-8");
-      // M6 修复：下载按钮也要有反馈，否则用户不知道是否触发
-      flashToast(t("download_started"));
+      const filename = `report-${stamp}.json`;
+      IA.downloadFile(filename, JSON.stringify(reportData, null, 2), "application/json;charset=utf-8");
+      // M6 修复：下载按钮也要有反馈，否则用户不知道是否触发；#7 带上文件名更明确
+      flashToast(t("downloaded_file", { filename: filename }));
     } else if (action === "download-md") {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      IA.downloadFile(`report-${stamp}.md`, reportAsMarkdown(reportData), "text/markdown;charset=utf-8");
-      flashToast(t("download_started"));
+      const filename = `report-${stamp}.md`;
+      IA.downloadFile(filename, reportAsMarkdown(reportData), "text/markdown;charset=utf-8");
+      flashToast(t("downloaded_file", { filename: filename }));
     } else if (action === "download-html") {
       // #9 导出自包含 HTML：嵌入报告 JSON + ECharts CDN，离线打开即可渲染图表
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const sessionInfo = activeSession || {};
       const html = generateSelfContainedHtml(reportData, sessionInfo);
-      IA.downloadFile(`report-${stamp}.html`, html, "text/html;charset=utf-8");
-      flashToast(t("download_started"));
+      const filename = `report-${stamp}.html`;
+      IA.downloadFile(filename, html, "text/html;charset=utf-8");
+      flashToast(t("downloaded_file", { filename: filename }));
     } else if (action === "copy-patch") {
       if (!reportData.patch) return;
       const ok = await IA.copyToClipboard(reportData.patch);
@@ -3010,8 +3040,9 @@
       // #15 下载 .patch 文件，可直接 git apply 使用
       if (!reportData.patch) return;
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      IA.downloadFile(`patch-${stamp}.patch`, reportData.patch, "text/x-diff;charset=utf-8");
-      flashToast(t("download_started"));
+      const filename = `patch-${stamp}.patch`;
+      IA.downloadFile(filename, reportData.patch, "text/x-diff;charset=utf-8");
+      flashToast(t("downloaded_file", { filename: filename }));
     } else if (action === "copy-pytest") {
       // #7 复制为 pytest 文件：将测试建议转换为可执行的 pytest 测试骨架
       const tests = reportData.tests || [];
@@ -3039,7 +3070,7 @@
     clearTimeout(toast._timer);
     toast._timer = setTimeout(function () {
       toast.classList.remove("visible");
-    }, 1600);
+    }, 2500);
   }
   // 暴露给其他模块（charts.js 点击下钻时需要 toast 反馈）
   IA.flashToast = flashToast;

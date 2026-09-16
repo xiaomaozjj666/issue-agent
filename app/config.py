@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     batch_max_concurrent: int = Field(default=2, ge=1, le=8)
     batch_max_queue_size: int = Field(default=100, ge=1, le=500)
     batch_max_history: int = Field(default=100, ge=10, le=10_000)
+    # ── Concurrency & cost budget ────────────────────────────────────
+    # 同时进行的调查上限（/stream 与新会话 /chat）。限流按“请求数/窗口”计，
+    # 而一次 /stream 只算 1 次请求却可能跑 10 分钟，因此还需要并发闸门兜住成本与资源。
+    max_concurrent_investigations: int = Field(default=3, ge=1, le=32)
+    # 单次调查的估算成本上限（美元）。0 = 不限制；超限时在迭代间隙中止并返回 error 事件。
+    max_session_estimated_cost_usd: float = Field(default=0.0, ge=0, le=1000)
+
     # ── Rate limiting ────────────────────────────────────────────────
     # 按 API key 的滑动窗口限流（main.py 的 RateLimitMiddleware 使用）
     rate_limit_requests: int = Field(default=30, ge=1, le=1000)

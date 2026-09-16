@@ -94,13 +94,20 @@
 | `API_KEY` | *(可选)* | — | 设置后启用 X-API-Key 认证 |
 | `WRITE_MODE` | `false` | — | 启用 PR 创建能力 |
 | `SESSION_DB_PATH` | `data/sessions.db` | — | SQLite 路径（`:memory:` 为临时） |
-| `SESSION_STALE_AFTER_SECONDS` | `1800` | 60–86400 | 心跳超时，标记中断会话 |
+| `SESSION_STALE_AFTER_SECONDS` | `300` | 60–86400 | 心跳超时（秒），超过即把 running 会话标记为中断 |
 | `SESSION_RETENTION_DAYS` | `30` | 1–365 | 自动清理已完成会话的天数 |
 | `MAX_PR_FILES` | `20` | 1–50 | PR 提案最大文件数 |
 | `MAX_PR_TOTAL_BYTES` | `1000000` | 4096–10000000 | PR 提案最大总字节数 |
 | `BATCH_MAX_CONCURRENT` | `2` | 1–8 | 批量调查 worker 数 |
 | `BATCH_MAX_QUEUE_SIZE` | `100` | 1–500 | 批量待处理任务上限 |
 | `BATCH_MAX_HISTORY` | `100` | 10–10000 | 内存中保留的已完成批次上限 |
+
+> **注意（`SESSION_STALE_AFTER_SECONDS` 与 `INVESTIGATION_TIMEOUT` 的关系）**：
+> stale 阈值必须**大于单步最长等待**，否则一个仍在正常执行的调查会因长时间没有心跳
+> 被 `recover_stale_sessions()` 误判为孤儿（前端显示"已中断"，实际进程还在分析）。
+> 默认 `300` 配合 `INVESTIGATION_TIMEOUT=600`（单次调查墙钟上限）与单请求
+> `OPENAI_TIMEOUT=180`；若你把 `INVESTIGATION_TIMEOUT` 调大，请同步调大该值。
+> 代码默认值见 `app/config.py`（`session_stale_after_seconds`），与 `.env.example` 一致。
 
 ---
 

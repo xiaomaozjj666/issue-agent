@@ -3,6 +3,11 @@ name: CI
 permissions:
   contents: read
 
+# 同一分支的重复推送取消旧运行，避免排队浪费 runner 分钟。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -15,13 +20,13 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -42,7 +47,18 @@ jobs:
         run: mypy app/
 
       - name: Run tests
-        run: pytest -v --cov=app --cov-report=term-missing
+        run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml --junitxml=report.xml
+
+      - name: Upload test artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-artifacts-py${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            report.xml
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Security audit (pip-audit)
         # 依赖漏洞扫描：检测 PyPI 已知 CVE，有漏洞即失败阻断合并。
@@ -55,19 +71,58 @@ jobs:
     timeout-minutes: 15
     needs: test
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Build Docker image
         run: docker build -t issue-agent .
+
+      # 只 build 不 run 的 CI 无法发现"镜像能构建但开机即坏"（例如非 root 用户
+      # 写不了数据目录）。这里真实启动容器、探活并以 appuser 身份验证数据目录可写。
+      - name: Smoke-test the container
+        run: |
+          set -euxo pipefail
+          CONTAINER=issue-agent-smoke
+          docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          # 无论后续哪一步失败都清理容器（失败时日志已在上面打印）。
+          trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$CONTAINER" \
+            -p 18000:8000 \
+            -e SESSION_DB_PATH=/app/data/sessions.db \
+            -e OPENAI_API_KEY=test-key \
+            issue-agent
+
+          # 轮询 /health，直到 status=ok；超时则打印容器日志并失败（不调用真实 LLM）。
+          ok=0
+          for attempt in $(seq 1 30); do
+            body=$(curl -fsS http://127.0.0.1:18000/health || true)
+            echo "attempt ${attempt}: ${body}"
+            if echo "$body" | grep -q '"status":"ok"'; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::container did not report status=ok within 60s"
+            docker logs "$CONTAINER" || true
+            exit 1
+          fi
+
+          # 数据目录可写性：非 root 的 appuser 必须能落库（回归防护）。
+          docker exec "$CONTAINER" python -c "import pathlib; p=pathlib.Path('/app/data/x'); p.write_text('ok'); print('data dir writable:', p.read_text())"
+          docker exec "$CONTAINER" sh -c "id -u; ls -ld /app/data"
+
+          docker logs "$CONTAINER" || true
+          # 容器由上面的 EXIT trap 统一清理。
 
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: lts/*
           cache: npm
@@ -80,7 +135,7 @@ jobs:
         run: npx playwright install chromium --with-deps
       - name: Run browser regression tests
         run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
         with:
           name: playwright-report
