@@ -33,6 +33,7 @@ from app.errors import CircuitBreakerOpenError
 from app.events import done_event, phase_event
 from app.main import app
 from app.models import AnalysisReport, ChatRequest, IssueData, SourceFile, StreamRequest
+from app.services import InvestigationGate
 from app.sessions import Session, SessionConflictError, SessionManager
 
 
@@ -296,7 +297,7 @@ async def test_stream_cancellation_marks_session_interrupted(monkeypatch) -> Non
         ProviderClients(None, None),
         manager,
         breaker,
-        asyncio.Semaphore(4),
+        InvestigationGate(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -327,7 +328,7 @@ async def test_stream_cancellation_survives_interrupt_persist_failure(monkeypatc
         ProviderClients(None, None),
         manager,
         breaker,
-        asyncio.Semaphore(4),
+        InvestigationGate(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -577,7 +578,7 @@ async def test_chat_stream_cancellation_marks_interrupted(monkeypatch) -> None:
         ProviderClients(None, None),
         manager,
         breaker,
-        asyncio.Semaphore(4),
+        InvestigationGate(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -611,7 +612,7 @@ async def test_chat_stream_cancellation_survives_persist_failure(monkeypatch) ->
         ProviderClients(None, None),
         manager,
         breaker,
-        asyncio.Semaphore(4),
+        InvestigationGate(4),
     )
     with pytest.raises(asyncio.CancelledError):
         async for _ in response.body_iterator:
@@ -645,7 +646,7 @@ async def test_chat_stream_generic_exception_yields_error_event(monkeypatch) -> 
         ProviderClients(None, None),
         manager,
         breaker,
-        asyncio.Semaphore(4),
+        InvestigationGate(4),
     )
     chunks = [chunk async for chunk in response.body_iterator]
 

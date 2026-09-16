@@ -33,6 +33,7 @@ from app.logging_config import setup_logging
 from app.provider import create_openai_client
 from app.rate_limit import RateLimitMiddleware
 from app.routes import analysis, batch, chat, sessions
+from app.services import InvestigationGate
 from app.sessions import SessionConflictError, SessionManager
 from app.task_queue import TaskQueue
 
@@ -68,7 +69,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # 调查并发闸门：跨请求共享，避免同一 key 在限流窗口内开出大量长任务，成本与
     # SQLite 写入失去上界（限流只按请求数计，一次 /stream 可能跑满 investigation_timeout）。
-    _app.state.investigation_slots = asyncio.Semaphore(settings.max_concurrent_investigations)
+    # 确定性闸门（计数 + 微锁）：不用定时器，避免高负载下把合法请求误判为「已满」
+    _app.state.investigation_slots = InvestigationGate(settings.max_concurrent_investigations)
 
     # 熔断器：跨请求共享，追踪 LLM provider 全局健康状态
     breaker = CircuitBreaker(

@@ -371,7 +371,9 @@ async def test_unauthenticated_startup_only_warns(monkeypatch, caplog) -> None:
 
     async with main_module.lifespan(main_module.app):
         assert main_module.app.state.investigation_slots is not None
-        assert isinstance(main_module.app.state.investigation_slots, asyncio.Semaphore)
+        from app.services import InvestigationGate
+
+        assert isinstance(main_module.app.state.investigation_slots, InvestigationGate)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -379,14 +381,34 @@ async def test_unauthenticated_startup_only_warns(monkeypatch, caplog) -> None:
 # ══════════════════════════════════════════════════════════════════
 
 
-async def test_acquire_investigation_slot_non_blocking() -> None:
-    from app.services import acquire_investigation_slot
+async def test_investigation_gate_is_non_blocking_and_releases() -> None:
+    from app.services import InvestigationGate, acquire_investigation_slot
 
-    slots = asyncio.Semaphore(1)
-    assert await acquire_investigation_slot(slots) is True
-    assert await acquire_investigation_slot(slots) is False, "闸门已满时必须立刻返回 False 而不是排队"
-    slots.release()
-    assert await acquire_investigation_slot(slots) is True
+    gate = InvestigationGate(1)
+    assert gate.limit == 1
+    assert await acquire_investigation_slot(gate) is True
+    assert gate.in_use == 1
+    # 关键：满载时必须立刻返回 False，而不是排队等待或依赖定时器
+    # （旧实现用 wait_for(timeout=0.05)，高负载机器上会把合法请求误判为「已满」）
+    assert await acquire_investigation_slot(gate) is False
+    await gate.release()
+    assert gate.in_use == 0
+    assert await acquire_investigation_slot(gate) is True
+
+
+def test_investigation_gate_rejects_invalid_limit() -> None:
+    from app.services import InvestigationGate
+
+    with pytest.raises(ValueError):
+        InvestigationGate(0)
+
+
+async def test_investigation_gate_release_without_acquire_is_safe() -> None:
+    from app.services import InvestigationGate
+
+    gate = InvestigationGate(2)
+    await gate.release()
+    assert gate.in_use == 0
 
 
 async def test_periodic_touch_refreshes_updated_at() -> None:
@@ -409,3 +431,113 @@ async def test_periodic_touch_accepts_none_session() -> None:
 
     async with periodic_touch(SessionManager(), None):
         pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# /chat 路由：直接调用（不依赖 app.state 与事件循环时序）
+# ══════════════════════════════════════════════════════════════════
+
+
+async def _completed_session(manager: SessionManager) -> str:
+    session = await manager.create("https://github.com/acme/widget/issues/1")
+    session.status = "completed"
+    session.phase = "completed"
+    await manager.save(session)
+    return session.session_id
+
+
+async def test_chat_route_existing_session_completes_and_releases_gate(monkeypatch) -> None:
+    """已有会话的成功路径：状态收尾 + 闸门释放（此前只在端点级测试里被间接覆盖）。"""
+    from app.deps import ProviderClients
+    from app.models import ChatRequest, ChatResponse
+    from app.routes import chat as chat_routes
+    from app.services import InvestigationGate
+
+    manager = SessionManager()
+    session_id = await _completed_session(manager)
+
+    async def fake_chat(self, session, message):  # noqa: ANN001
+        return ChatResponse(session_id=session.session_id, reply="ok", tools_used=[], report=None)
+
+    monkeypatch.setattr(IssueAgent, "chat", fake_chat)
+    gate = InvestigationGate(2)
+
+    result = await chat_routes.chat(
+        ChatRequest(session_id=session_id, message="hi"),
+        ProviderClients(None, None),
+        manager,
+        CircuitBreaker(threshold=5, recovery=30),
+        gate,
+    )
+
+    assert result.reply == "ok"
+    assert gate.in_use == 0, "闸门名额必须释放，否则后续请求会被误判为已满"
+    refreshed = await manager.get(session_id)
+    assert refreshed is not None
+    assert refreshed.status == "completed"
+
+
+async def test_chat_route_new_session_investigates_and_releases_gate(monkeypatch) -> None:
+    """新会话分支：占位 → 调查 → 组装 ChatResponse，并释放闸门。"""
+    from app.deps import ProviderClients
+    from app.models import AnalysisReport, ChatRequest
+    from app.routes import chat as chat_routes
+    from app.services import InvestigationGate
+
+    report = AnalysisReport(
+        summary="s",
+        root_cause="r",
+        confidence="low",
+        evidence=[],
+        proposed_changes=[],
+        tests=[],
+        risks=[],
+    )
+
+    async def fake_investigate(self, issue_url, *, session=None):  # noqa: ANN001
+        assert session is not None and session.status == "running"
+        return report
+
+    monkeypatch.setattr(IssueAgent, "investigate", fake_investigate)
+    manager = SessionManager()
+    gate = InvestigationGate(1)
+
+    response = await chat_routes.chat(
+        ChatRequest(issue_url="https://github.com/acme/widget/issues/2", message="look"),
+        ProviderClients(None, None),
+        manager,
+        CircuitBreaker(threshold=5, recovery=30),
+        gate,
+    )
+
+    assert response.session_id
+    assert response.report is report
+    assert gate.in_use == 0
+    stored = await manager.get(response.session_id)
+    assert stored is not None
+    assert stored.status == "completed"
+
+
+async def test_chat_route_rejects_when_gate_is_full() -> None:
+    """闸门满载时立刻 429，而不是排队等十几分钟。"""
+    from fastapi import HTTPException
+
+    from app.deps import ProviderClients
+    from app.models import ChatRequest
+    from app.routes import chat as chat_routes
+    from app.services import InvestigationGate
+
+    manager = SessionManager()
+    gate = InvestigationGate(1)
+    assert await gate.try_acquire() is True  # 占满
+
+    with pytest.raises(HTTPException) as excinfo:
+        await chat_routes.chat(
+            ChatRequest(issue_url="https://github.com/acme/widget/issues/3", message="look"),
+            ProviderClients(None, None),
+            manager,
+            CircuitBreaker(threshold=5, recovery=30),
+            gate,
+        )
+
+    assert excinfo.value.status_code == 429

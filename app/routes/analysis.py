@@ -67,7 +67,7 @@ async def analyze(
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await agent.aclose()
-        slots.release()
+        await slots.release()
 
 
 @router.post("/stream")
@@ -204,7 +204,7 @@ async def stream_analysis(
         finally:
             await agent.aclose()
             if slot_held:
-                slots.release()
+                await slots.release()
 
     return StreamingResponse(
         event_generator(),
