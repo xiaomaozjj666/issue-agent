@@ -627,7 +627,7 @@
       chatAbortController = null;
     }
     chatInProgress = false;
-    document.getElementById("progress").textContent = "";
+    setProgress("");
   }
 
   // restoreSession 请求追踪：避免快速连续切换会话时旧响应覆盖新视图
@@ -744,6 +744,14 @@
     const dialog = document.getElementById("session-dialog");
     dialog.showModal();
     input.select();
+  }
+
+  // 进度区写入的统一入口：可见文本走 #progress，播报走 sr-only 的 live region
+  // （只在内容变化时写入，避免每秒的计时刷新被反复播报）。
+  function setProgress(text) {
+    const el = document.getElementById("progress");
+    if (el) el.textContent = text;
+    if (IA.announceProgress) IA.announceProgress(text);
   }
 
   function openDeleteDialog(session) {
@@ -1014,7 +1022,7 @@
     document.getElementById("report").innerHTML = "";
     document.getElementById("input-bar").style.display = "none";
     IA.Runtime.setCancelVisible(false);
-    document.getElementById("progress").textContent = "";
+    setProgress("");
     document.querySelector(".conversation-label").textContent = t("conversation_label");
     if (showWelcome) {
       document.getElementById("issueUrl").value = "";
@@ -1509,7 +1517,7 @@
         failedSessionId ? function () { resumeAnalysis(failedSessionId); } : function () { analyze(); },
         failedSessionId ? "resume_analysis" : "retry_send",
       );
-      document.getElementById("progress").textContent = "";
+      setProgress("");
       IA.Runtime.setCancelVisible(false);
     } finally {
       stopAnalysisTimer();
@@ -1658,7 +1666,7 @@
           reportReadyNotified = sessionId;
           flashToast(t("report_ready_hint"));
         }
-        document.getElementById("progress").textContent = "";
+        setProgress("");
         addReportPreview(report);
         // E13: 用户开启"默认全屏"偏好时，报告生成后自动进入全屏模式
         if (localStorage.getItem("reportDefaultFullscreen") === "1") {
@@ -1682,14 +1690,14 @@
         stopAnalysisTimer();
         clearPhase();
         addMsg("error", evt.message || t("error_prefix").trim());
-        document.getElementById("progress").textContent = "";
+        setProgress("");
         loadSessions();
         break;
       case "cancelled":
         stopAnalysisTimer();
         clearPhase();
         addMsg("system", t("cancelled_message"));
-        document.getElementById("progress").textContent = "";
+        setProgress("");
         IA.Runtime.setCancelVisible(false);
         loadSessions();
         break;
@@ -1697,7 +1705,7 @@
         // 兜底：确保 done 事件一定停止计时器并清空 progress
         stopAnalysisTimer();
         clearPhase();
-        document.getElementById("progress").textContent = "";
+        setProgress("");
         IA.Runtime.setCancelVisible(false);
         loadSessions();
         break;
@@ -2828,27 +2836,29 @@
       if (chatSessionId !== sessionId) {
         clearInterval(watchdogTimer);
         // 会话已切换：重置进度文本，避免残留过期提示
-        progressEl.textContent = "";
+        setProgress("");
         lastEventTime = 0;
         return;
       }
       const elapsed = Date.now() - lastEventTime;
       if (elapsed > 90000) {
-        progressEl.textContent = t("connection_stalled");
+        setProgress(t("connection_stalled"));
         clearInterval(watchdogTimer);
       } else if (elapsed > 30000) {
-        progressEl.textContent = t("connection_slow");
+        setProgress(t("connection_slow"));
       }
     }, 5000);
     function resetWatchdog() {
       lastEventTime = Date.now();
       if (progressEl.textContent === t("connection_slow") || progressEl.textContent === t("connection_stalled")) {
-        progressEl.textContent = "";
+        setProgress("");
       }
     }
 
     // firstEventReceived 需在 try 块外声明，catch 块也要访问它判断是否清理 progressEl
     let firstEventReceived = false;
+    // 流式期间让辅助技术等回答完成：否则 polite 区域里的高频增量会被反复播报
+    if (IA.setTranscriptBusy) IA.setTranscriptBusy(true);
     try {
       const resp = await fetch("/chat/stream", {
         method: "POST",
@@ -2868,7 +2878,7 @@
         resetWatchdog();
         if (!firstEventReceived) {
           firstEventReceived = true;
-          progressEl.textContent = "";
+          setProgress("");
         }
         if (event.type === "delta") {
           appendDelta(event.content || "");
@@ -2938,7 +2948,7 @@
       // H1 守卫：会话已切换时不向新视图写入任何 UI 副作用
       if (chatSessionId !== sessionId) return;
       if (skeletonMsg.parentNode) skeletonMsg.remove();
-      if (!firstEventReceived) progressEl.textContent = "";
+      if (!firstEventReceived) setProgress("");
       if (stopped || e.name === "AbortError") {
         // 用户主动停止：保留已收到的部分内容
         if (assistantContent) {
@@ -2954,6 +2964,7 @@
         addErrorWithRetry(t("error_prefix") + e.message);
       }
     } finally {
+      if (IA.setTranscriptBusy) IA.setTranscriptBusy(false);
       if (watchdogTimer) clearInterval(watchdogTimer);
       // 刷新尚未渲染的剩余 delta
       if (pendingRender && chatSessionId === sessionId) {

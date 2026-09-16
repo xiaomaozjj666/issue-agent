@@ -122,6 +122,19 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
 - **触屏按钮小于最小可点区域**：手机视口下图标按钮实测 34×34，低于 iOS HIG /
   Android 建议的 44×44。触屏媒体查询下提升到 ≥44×44，并在移动端 e2e 用例中断言
   「可见图标按钮不得小于 44×44」。
+- **进度区每秒播报（屏幕阅读器不可用）**：`#progress` 既是可见进度区，又挂着
+  `role="status" aria-live="polite"`，而它每秒都会被「阶段 · 已用时」重写——辅助技术
+  用户会听到每秒一次的播报。现在可见区域不再声明 live，播报改由视觉隐藏的
+  `#progress-live` 承担，且只在内容真正变化时写入（阶段变化才播报，秒数刷新被去重挡掉）。
+- **流式回答逐字播报**：`#messages` 是 polite live region，而回答以最高 12fps 重渲染，
+  辅助技术会被高频增量淹没。现在流式期间给它加 `aria-busy="true"`、回答结束后移除，
+  由辅助技术在完成后一次性播报。
+
+- e2e 新增两条可及性回归：进度区不得声明 live（并用 MutationObserver 断言重复写入不触碰
+  DOM）、流式回复期间 `#messages` 必须处于 `aria-busy` 且结束后清除。
+- `playwright.config.js` 支持 `IA_BROWSER_CHANNEL` 环境变量：本机装不上 Playwright 自带
+  chromium 时，可用系统 Edge/Chrome 跑同一套件（README 已注明）。
+
 - **TypeScript 决策测试记录的是过期快照**：docstring 声称「无 package.json、
   第三方库走 CDN、4644 行 / 3 个文件」，实际是「有 package.json（仅 Playwright
   测试依赖、无构建脚本）、vendor 本地自带、约 8.1k 行 / 11 个文件」。改为用当前

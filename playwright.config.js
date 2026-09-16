@@ -1,6 +1,9 @@
 const { defineConfig, devices } = require("@playwright/test");
 
 const python = process.env.PYTHON || (process.platform === "win32" ? ".venv\\Scripts\\python.exe" : "python");
+// 默认用 Playwright 自带的 chromium；若本机因网络受限装不上它，可用系统浏览器跑同一套件：
+//   IA_BROWSER_CHANNEL=msedge npm run test:e2e   （或 chrome）
+const channel = process.env.IA_BROWSER_CHANNEL || "chromium";
 
 module.exports = defineConfig({
   testDir: "./e2e",
@@ -20,7 +23,7 @@ module.exports = defineConfig({
   projects: [
     {
       name: "desktop-chromium",
-      use: { ...devices["Desktop Chrome"], channel: "chromium", viewport: { width: 1440, height: 900 } },
+      use: { ...devices["Desktop Chrome"], channel, viewport: { width: 1440, height: 900 } },
       grepInvert: /@mobile/,
     },
     {
