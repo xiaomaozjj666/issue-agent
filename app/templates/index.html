@@ -64,7 +64,8 @@
     </div>
     <div id="messages" aria-live="polite" aria-label="Conversation messages" data-i18n-aria-label="messages_label"></div>
     <button id="jump-latest-btn" type="button" aria-hidden="true" aria-label="Jump to latest" data-i18n-aria-label="jump_to_latest" title="Jump to latest" data-i18n-title="jump_to_latest" tabindex="-1"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12.53 5.47a.75.75 0 0 1 0 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06L8 8.94l3.47-3.47a.75.75 0 0 1 1.06 0Zm0-4a.75.75 0 0 1 0 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06L8 4.94l3.47-3.47a.75.75 0 0 1 1.06 0Z"/></svg><span class="jump-latest-label" data-i18n="jump_to_latest">Jump to latest</span><span class="jump-latest-badge" aria-hidden="true" hidden></span></button>
-    <div id="progress" role="status" aria-live="polite"></div>
+    <div id="progress"></div>
+    <div id="progress-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="input-bar" style="display:none">
       <textarea id="chatInput" placeholder="Ask follow-up questions..." data-i18n-placeholder="input_placeholder" aria-label="Ask follow-up questions" data-i18n-aria-label="input_placeholder" autocomplete="off" rows="1"></textarea>
       <button id="chat-send-btn" aria-label="Send" data-i18n-aria-label="send_button" title="Enter to send, Shift+Enter for newline" data-i18n-title="send_button_hint"><span data-i18n="send_button">Send</span><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M1.29 1.17a1 1 0 0 1 1.05-.1l12 6a1 1 0 0 1 0 1.79l-12 6A1 1 0 0 1 .9 13.8l1.24-4.56 6.48-1.24-6.48-1.24L.9 2.2a1 1 0 0 1 .39-1.03Z"/></svg></button>

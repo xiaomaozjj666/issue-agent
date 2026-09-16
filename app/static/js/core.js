@@ -503,6 +503,28 @@
   // 否则用户只看到一句 "HTTP 403: Invalid API key" 而不知道去哪改。
   // 注意：必须在 document 上派发（app.js 在 document 上监听）；
   // CustomEvent 默认不冒泡，window.dispatchEvent 不会传到 document 监听器。
+  // 进度区的「显示」与「播报」必须分开：进度文本每秒刷新已用时间，如果整个区域挂着
+  // aria-live，屏幕阅读器会每秒播报一次（实测确认），辅助技术用户完全无法使用。
+  // 因此可见区域不再声明 live，只把「阶段变化」写进视觉隐藏的 live region。
+  let lastAnnouncedProgress = "";
+
+  function announceProgress(text) {
+    const value = String(text === undefined || text === null ? "" : text);
+    if (value === lastAnnouncedProgress) return;  // 同一内容不重复播报（每秒的计时即被此挡住）
+    lastAnnouncedProgress = value;
+    const live = document.getElementById("progress-live");
+    if (live) live.textContent = value;
+  }
+
+  // 流式回复：用 aria-busy 让辅助技术等回答完成后一次性播报，
+  // 而不是每 ~80ms（12fps 渲染节流）播报一次增量。
+  function setTranscriptBusy(busy) {
+    const transcript = document.getElementById("messages");
+    if (!transcript) return;
+    if (busy) transcript.setAttribute("aria-busy", "true");
+    else transcript.removeAttribute("aria-busy");
+  }
+
   function notifyUnauthorized(status) {
     if (typeof document.dispatchEvent !== "function") return;
     try {
@@ -868,6 +890,8 @@
     toolLabel,
     toolArgsSummary,
     notifyUnauthorized,
+    announceProgress,
+    setTranscriptBusy,
     translate,
     applyI18n,
     formatDuration,

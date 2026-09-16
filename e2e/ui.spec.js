@@ -786,3 +786,86 @@ test("creates a pull request from the report only after an explicit preview conf
   await expect(panel.locator('a[href="https://github.com/acme/widget/pull/42"]')).toHaveCount(1);
   expect(posted).toEqual(['{"confirm":true}']);
 });
+
+test("keeps the ticking progress timer out of the screen-reader live region", async ({ page }) => {
+  await mockCompletedSessions(page);
+  await page.goto("/");
+
+  // 可见进度区不得再声明 live：它每秒都会用「阶段 · 已用时」重写自己，
+  // 挂在 live region 上会让屏幕阅读器每秒播报一次（实测确认过）。
+  const progress = page.locator("#progress");
+  await expect(progress).not.toHaveAttribute("aria-live", "polite");
+  await expect(progress).not.toHaveAttribute("role", "status");
+
+  // 播报改由视觉隐藏的 live region 承担
+  const live = page.locator("#progress-live");
+  await expect(live).toHaveAttribute("aria-live", "polite");
+  await expect(live).toHaveAttribute("aria-atomic", "true");
+  const srOnly = await live.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { position: style.position, width: style.width, height: style.height };
+  });
+  expect(srOnly).toEqual({ position: "absolute", width: "1px", height: "1px" });
+
+  // 重复写入同一内容不得触碰 DOM —— 每秒的计时刷新正是被这条挡住的
+  const result = await page.evaluate(async () => {
+    const region = document.getElementById("progress-live");
+    let mutations = 0;
+    const observer = new MutationObserver(() => { mutations += 1; });
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+    const IA = window.IssueAgent;
+    IA.announceProgress("正在调查代码");
+    IA.announceProgress("正在调查代码");
+    IA.announceProgress("正在调查代码");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    observer.disconnect();
+    return { mutations, text: region.textContent };
+  });
+  expect(result.mutations).toBe(1);
+  expect(result.text).toBe("正在调查代码");
+});
+
+test("marks the transcript busy while a streamed reply is rendering", async ({ page }) => {
+  await mockCompletedSessions(page);
+  // 流式回答：先给一段增量，再给 done —— 期间 #messages 必须处于 aria-busy
+  await page.route("**/chat/stream", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        'data: {"type": "delta", "content": "第一段"}',
+        "",
+        'data: {"type": "done", "reply": "第一段", "tools_used": []}',
+        "",
+        "",
+      ].join("\n"),
+    }),
+  );
+  await page.goto("/");
+  await historyCard(page, 1).click();
+  await expect(page.locator("#input-bar")).toBeVisible();
+
+  const busyDuringStream = page.evaluate(() => {
+    const transcript = document.getElementById("messages");
+    return new Promise((resolve) => {
+      const seen = transcript.getAttribute("aria-busy");
+      const observer = new MutationObserver(() => {
+        if (transcript.getAttribute("aria-busy") === "true") {
+          observer.disconnect();
+          resolve(true);
+        }
+      });
+      observer.observe(transcript, { attributes: true, attributeFilter: ["aria-busy"] });
+      if (seen === "true") {
+        observer.disconnect();
+        resolve(true);
+      }
+      setTimeout(() => { observer.disconnect(); resolve(false); }, 5000);
+    });
+  });
+
+  await page.fill("#chatInput", "根因是什么？");
+  await page.locator("#chat-send-btn").click();
+  expect(await busyDuringStream).toBe(true);
+  await expect(page.locator("#messages")).not.toHaveAttribute("aria-busy", "true", { timeout: 8000 });
+});

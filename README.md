@@ -283,7 +283,7 @@ pip-audit --skip-editable                        # 依赖漏洞扫描（本地�
 # 浏览器回归（Playwright）
 npm ci                                           # 用 npm ci 而不是 install：不改写 lock 文件
 npx playwright install chromium
-npm run test:e2e
+npm run test:e2e                  # 装不上自带浏览器时：IA_BROWSER_CHANNEL=msedge npm run test:e2e（用系统 Edge/Chrome）
 
 # 调查质量评测（evals/）：黄金用例 + 离线打分
 python -m evals.run_eval --dir evals/cases

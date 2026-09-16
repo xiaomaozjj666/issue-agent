@@ -62,6 +62,8 @@
     const pct = Math.max(phaseProgress(), lastProgressPct);
     lastProgressPct = pct;
     const text = phase + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+    // 只把阶段文本交给 live region：秒数每秒都在变，交给它会变成每秒播报
+    if (IA.announceProgress) IA.announceProgress(phase);
     if (pct <= 0) {
       progressEl.textContent = text;
       return;
