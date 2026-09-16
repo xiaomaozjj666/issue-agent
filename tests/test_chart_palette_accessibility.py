@@ -141,3 +141,40 @@ def test_severity_markers_are_visible_on_their_own_cell(theme: str) -> None:
         assert _contrast(palette[key], _PAGE_BG[theme]) >= _MIN_CONTRAST, (
             f"{theme}: {key} 在页面背景上的对比度不足 3:1"
         )
+
+
+# 格底色的明度阶梯与相邻等级区分度：色相在色盲下会坍缩，明度是最后一道冗余编码。
+_CELL_ORDER = ("riskLow", "riskMedium", "riskHigh", "riskCritical")
+_CELL_MIN_STEP = 2.0
+_CELL_MIN_DELTA_E = {"PALETTE_DARK": 9.0, "PALETTE_LIGHT": 4.0}
+
+
+@pytest.mark.parametrize("theme", ["PALETTE_DARK", "PALETTE_LIGHT"])
+def test_risk_cells_form_a_monotonic_lightness_ladder(theme: str) -> None:
+    palette = _palette(theme)
+    lightness = [_lab(_rgb(palette[key]))[0] for key in _CELL_ORDER]
+
+    if theme == "PALETTE_DARK":
+        assert lightness == sorted(lightness), f"暗色主题的严重度色阶应逐级变亮：{lightness}"
+    else:
+        assert lightness == sorted(lightness, reverse=True), f"浅色主题的严重度色阶应逐级加深：{lightness}"
+
+    steps = [abs(lightness[i + 1] - lightness[i]) for i in range(len(lightness) - 1)]
+    assert min(steps) >= _CELL_MIN_STEP, (
+        f"{theme} 相邻严重度的明度差过小（{steps}）——色相在色盲/灰度下不可靠，"
+        "明度阶梯是读出等级的最后一道冗余编码。"
+    )
+
+
+@pytest.mark.parametrize("theme", ["PALETTE_DARK", "PALETTE_LIGHT"])
+def test_adjacent_severity_cells_stay_distinguishable_under_color_blindness(theme: str) -> None:
+    palette = _palette(theme)
+    for left, right in itertools.pairwise(_CELL_ORDER):
+        worst = min(
+            _delta_e(_simulate(_rgb(palette[left]), kind), _simulate(_rgb(palette[right]), kind))
+            for kind in ("deuteranopia", "protanopia")
+        )
+        assert worst >= _CELL_MIN_DELTA_E[theme], (
+            f"{theme}: {left}/{right} 在色盲模拟下仅差 {worst:.1f}"
+            f"（要求 ≥ {_CELL_MIN_DELTA_E[theme]}），相邻严重度的格底色将难以区分。"
+        )

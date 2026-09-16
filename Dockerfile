@@ -1,11 +1,20 @@
 # ---- build stage ----
 FROM python:3.12-slim AS builder
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY app/ app/
+# 依赖按 uv.lock 精确安装（而不是让 pip 现场解析 pyproject 的版本区间）：
+# 锁文件此前只提交、无人消费，镜像里装到的版本会随上游漂移。
+# 用与生成该锁相同的 uv 版本导出固定版本列表，再交给 pip 安装，
+# 这样 CI 的 pip-audit 与 Docker 构建看到的是同一套版本。
+RUN pip install --no-cache-dir "uv==0.12.3" \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.lock \
+    && pip install --no-cache-dir --no-compile -r /tmp/requirements.lock \
+    && pip uninstall -y uv
+# 项目本体用 --no-deps 安装：依赖已由锁文件装好，避免 pip 再次解析版本区间。
 # 非 editable 安装：镜像里不应保留指向构建阶段源码树的 .pth 链接，
 # 运行阶段只保留已安装的包与下面显式 COPY 的 app/。
-RUN pip install --no-cache-dir --no-compile .
+RUN pip install --no-cache-dir --no-compile --no-deps .
 
 # ---- runtime stage ----
 FROM python:3.12-slim

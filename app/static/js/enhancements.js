@@ -369,6 +369,7 @@
 
   /* ───────────────────────── 后端健康灯 ───────────────────────── */
   let healthTimer = null;
+  let healthVisibilityBound = false;
   async function pollHealth() {
     const dot = el("health-dot");
     const btn = el("health-btn");
@@ -872,7 +873,16 @@
     if (hBtn) hBtn.addEventListener("click", pollHealth);
     pollHealth();
     if (healthTimer) clearInterval(healthTimer);
-    healthTimer = setInterval(pollHealth, 15000);
+    // 后台标签页不必轮询（省电、省请求）；回到前台立即补一次，避免状态显示成过期的
+    healthTimer = setInterval(function () {
+      if (!document.hidden) pollHealth();
+    }, 15000);
+    if (!healthVisibilityBound) {
+      healthVisibilityBound = true;
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) pollHealth();
+      });
+    }
     // 报告内搜索 / 图表无障碍：报告内容变化或主布局打开报告时挂载。
     // report-open 类在 #main 上，不在 #report-panel 上。
     const reportPanel = el("report-panel");

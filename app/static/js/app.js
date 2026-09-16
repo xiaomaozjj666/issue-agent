@@ -286,7 +286,7 @@
       }
       const emptyKey = showArchived ? "history_empty_archive" : "history_empty_active";
       if (showArchived) {
-        list.innerHTML = `<div class="history-empty">${t(emptyKey)}</div>`;
+        list.innerHTML = `<div class="history-empty">${IA.escapeHtml(t(emptyKey))}</div>`;
       } else {
         // 空状态 CTA：引导用户开始第一次分析
         list.innerHTML =
