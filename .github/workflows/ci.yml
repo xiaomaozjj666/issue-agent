@@ -54,6 +54,13 @@ jobs:
           # pip-audit 会审计环境中的全部包；升级到修复版本避免 CI 误报。
           pip install --upgrade "setuptools>=83.0.0"
 
+      - name: Verify uv.lock is in sync
+        # uv.lock 已提交但 CI/Docker 都用 pip 安装，锁文件容易悄悄漂移而无人发现。
+        # 这里只做一致性校验（不改变安装方式），并用生成该锁的 uv 版本固定校验器行为。
+        run: |
+          python -m pip install --quiet "uv==0.12.3"
+          uv lock --check
+
       - name: Lint with ruff
         run: ruff check app/ tests/
 

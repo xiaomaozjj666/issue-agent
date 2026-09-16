@@ -718,8 +718,7 @@
       const text = lastUser.textContent || "";
       // #10 修复：不再 removeChild 旧回答（失败即永久丢失，且逼得用户重看一遍）
       // 改为标记"已被新回答取代"并淡化，旧内容仍可阅读/复制；失败时它还在。
-      last.classList.add("superseded");
-      last.style.opacity = "0.45";
+      last.classList.add("superseded");  // 淡化样式见 enhancements.css（悬停/聚焦恢复可读）
       const oldBtn = last.querySelector(".regenerate-btn");
       if (oldBtn) oldBtn.remove();
       window.__iaRegenerate = true;
