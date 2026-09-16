@@ -42,17 +42,47 @@ SESSION_ALREADY_RUNNING = (
 _TOUCH_INTERVAL_SECONDS = 15.0
 
 
-async def acquire_investigation_slot(slots: asyncio.Semaphore, *, timeout: float = 0.05) -> bool:
-    """Reserve one investigation slot, or return False immediately when the gate is full.
+class InvestigationGate:
+    """调查并发闸门：计数 + 微锁，``try_acquire`` 绝不排队等待。
 
-    A short timeout keeps the request from queueing behind a long investigation (the
-    caller turns ``False`` into an actionable 429 / error event instead).
+    早期实现用 ``asyncio.wait_for(sem.acquire(), timeout=0.05)`` 模拟非阻塞，但在高负载
+    机器上（CI 并行跑多个矩阵任务）50ms 可能不足以完成一次 acquire，导致**合法请求被
+    误判为「闸门已满」**并返回 429。这里改用计数器 + 一把只在极短临界区内持有的锁：
+    判定与占位是原子的，且不依赖任何定时器/事件循环时序。
     """
-    try:
-        await asyncio.wait_for(slots.acquire(), timeout=timeout)
-    except TimeoutError:
-        return False
-    return True
+
+    def __init__(self, limit: int) -> None:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        self._limit = limit
+        self._in_use = 0
+        self._lock = asyncio.Lock()
+
+    @property
+    def in_use(self) -> int:
+        return self._in_use
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    async def try_acquire(self) -> bool:
+        """Reserve a slot, or return False immediately when the gate is full."""
+        async with self._lock:
+            if self._in_use >= self._limit:
+                return False
+            self._in_use += 1
+            return True
+
+    async def release(self) -> None:
+        async with self._lock:
+            if self._in_use > 0:
+                self._in_use -= 1
+
+
+async def acquire_investigation_slot(gate: InvestigationGate) -> bool:
+    """Reserve one investigation slot; ``False`` means "gate is full, try later"."""
+    return await gate.try_acquire()
 
 
 @asynccontextmanager
