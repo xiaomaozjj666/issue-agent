@@ -721,3 +721,57 @@ test("distinguishes empty search results from the first-run empty state", async 
   await expect(page.locator("#history-search")).toHaveValue("");
   await expect(historyCard(page, 1)).toBeVisible();
 });
+
+test("creates a pull request from the report only after an explicit preview confirm", async ({ page }) => {
+  await mockCompletedSessions(page);
+  const posted = [];
+  await page.route(/\/session\/session-1\/proposal$/, (route) =>
+    route.fulfill({
+      json: {
+        branch: "issue-agent/fix-parser",
+        title: "fix: encode paths",
+        body: "Closes #1",
+        write_mode: true,
+        changes: [
+          {
+            path: "src/a #1.py",
+            message: "fix: encode",
+            proposed_lines: 2,
+            proposed_bytes: 24,
+            preview: "-  return raw;\n+  return encode(raw);",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(/\/session\/session-1\/apply-fix$/, (route) => {
+    posted.push(route.request().postData());
+    return route.fulfill({
+      json: { pr_url: "https://github.com/acme/widget/pull/42", branch: "issue-agent/fix-parser" },
+    });
+  });
+
+  await page.goto("/");
+  await historyCard(page, 1).click();
+  await page.getByRole("button", { name: "查看完整报告" }).click();
+
+  // 面板由 pr-panel.js 通过 MutationObserver 注入到补丁章节之后
+  const panel = page.locator(".pr-panel");
+  await expect(panel).toBeVisible({ timeout: 10_000 });
+
+  // 未确认前不得有任何写请求
+  expect(posted).toHaveLength(0);
+
+  await panel.getByRole("button", { name: "创建 PR" }).click();
+  // 人工确认必须看得到「到底要写什么」：分支、文件与内容预览
+  await expect(panel).toContainText("确认创建分支与 PR？");
+  await expect(panel).toContainText("issue-agent/fix-parser");
+  await expect(panel).toContainText("src/a #1.py");
+  await expect(panel).toContainText("return encode(raw)");
+  expect(posted).toHaveLength(0);
+
+  await panel.getByRole("button", { name: "确认创建" }).click();
+  await expect(panel).toContainText("已创建 PR #42");
+  await expect(panel.locator('a[href="https://github.com/acme/widget/pull/42"]')).toHaveCount(1);
+  expect(posted).toEqual(['{"confirm":true}']);
+});
