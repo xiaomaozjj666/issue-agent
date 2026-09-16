@@ -274,10 +274,14 @@ wiki/                  项目文档
 ## 测试
 
 ```bash
-ruff check .
+# 与 CI 完全一致（本地全绿 = CI 全绿；下方命令即 ci.yml 的四个作业内容）
+ruff check app/ tests/
 mypy app/
-pytest -v --cov=app --cov-report=term-missing
-npm install
+pytest -v --cov=app --cov-report=term-missing   # 覆盖率门槛见 pyproject（3.11 因追踪器差异单独放宽，见 ci.yml 注释）
+pip-audit --skip-editable                        # 依赖漏洞扫描（本地可编辑安装包跳过）
+
+# 浏览器回归（Playwright）
+npm ci                                           # 用 npm ci 而不是 install：不改写 lock 文件
 npx playwright install chromium
 npm run test:e2e
 

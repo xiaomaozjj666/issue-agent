@@ -197,7 +197,7 @@ test("renders responsive decision charts without overlaps or console errors", as
   });
   expect(lightChartColors).toEqual({
     evidenceRoot: "#0969da",
-    riskMarker: "#bc6b00",
+    riskMarker: "#8250df",
     riskLow: "#dafbe1",
     riskHigh: "#ffebc8",
     riskCritical: "#ffebe9",
@@ -382,7 +382,7 @@ test("renders responsive decision charts without overlaps or console errors", as
   })).toEqual({
     // 证据链根节点使用强调深蓝（strengthStrong），不再是普通 primary 蓝
     evidenceRoot: "#2f81f7",
-    riskMarker: "#f0883e",
+    riskMarker: "#bc8cff",
     riskLow: "#1f4d32",
     riskCritical: "#642b37",
     riskCriticalHover: "#873e4b",
@@ -634,6 +634,17 @@ test("@mobile keeps history and report flows inside the viewport", async ({ page
   expect(width.reportBody).toBeLessThanOrEqual(width.viewport);
   expect(width.reportBodyScroll).toBe(width.reportBodyClient);
   expect(width.evidenceCard).toBeLessThanOrEqual(width.viewport);
+
+  // 触屏最小可点区域：可见的图标按钮必须 ≥ 44×44（此前是 34×34，手机上难以稳定点中）
+  const undersized = await page.evaluate(() =>
+    Array.from(document.querySelectorAll(".brand-actions .icon-button, #back-button, .mobile-history-toggle"))
+      .map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { id: el.id || String(el.className), w: Math.round(rect.width), h: Math.round(rect.height) };
+      })
+      .filter((item) => item.w > 0 && item.h > 0 && (item.w < 44 || item.h < 44)),
+  );
+  expect(undersized).toEqual([]);
 });
 
 test("sends the stored API key with every API request when present", async ({ page }) => {

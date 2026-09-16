@@ -20,10 +20,10 @@
 
   const PALETTE_DARK = {
     primary: "#58a6ff",
-    success: "#3fb950",
-    danger: "#f85149",
-    warning: "#d29922",
-    muted: "#8b949e",
+    success: "#7ee787",
+    danger: "#ff7b72",
+    warning: "#bf8700",
+    muted: "#6e7681",
     docs: "#bc8cff",
     text: "#e6edf3",
     textDim: "#8b949e",
@@ -42,7 +42,7 @@
     riskMediumHover: "#725b26",
     riskHighHover: "#8a4d2b",
     riskCriticalHover: "#873e4b",
-    riskMarkerHigh: "#f0883e",
+    riskMarkerHigh: "#bc8cff",
     riskGridBorder: "#161b22",
     riskMarkerBorder: "#f0f6fc",
     // 证据强度色阶（dark）：同一色系的明暗表达强弱，语义统一
@@ -53,9 +53,9 @@
 
   const PALETTE_LIGHT = {
     primary: "#0969da",
-    success: "#1a7f37",
+    success: "#0f5323",
     danger: "#cf222e",
-    warning: "#9a6700",
+    warning: "#7d4e00",
     muted: "#6e7781",
     docs: "#8250df",
     text: "#1f2328",
@@ -73,7 +73,7 @@
     riskMediumHover: "#fae17d",
     riskHighHover: "#ffc680",
     riskCriticalHover: "#ffcecb",
-    riskMarkerHigh: "#bc6b00",
+    riskMarkerHigh: "#8250df",
     riskGridBorder: "#ffffff",
     riskMarkerBorder: "#ffffff",
     // 证据强度色阶（light）
