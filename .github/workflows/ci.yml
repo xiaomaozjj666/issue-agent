@@ -20,7 +20,21 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # 覆盖率门槛按解释器分级：Python 3.12+ 的覆盖率追踪走 sys.monitoring（PEP 669），
+        # 计数精确；3.11 仍用 sys.settrace，对「在 async 上下文管理器里创建并取消后台任务
+        # 之后的同协程行」会丢归属——同一个提交、同一批 569 个测试（0 失败）下，
+        # 3.11 报 96.8%、3.13/3.14 报 97.5%。注意这不是真实缺口：直接调用 /chat 路由的
+        # 测试在 3.11 上同样通过，而它断言 `reply == "ok"`，只有执行了那些「未覆盖」的
+        # 行才可能成立。因此 3.11 用 96.5 的下限，其余解释器保持 97。
+        include:
+          - python-version: "3.11"
+            cov-fail-under: "96.5"
+          - python-version: "3.12"
+            cov-fail-under: "97"
+          - python-version: "3.13"
+            cov-fail-under: "97"
+          - python-version: "3.14"
+            cov-fail-under: "97"
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -47,7 +61,8 @@ jobs:
         run: mypy app/
 
       - name: Run tests
-        run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml --junitxml=report.xml
+        # --cov-fail-under 覆盖 pyproject 里的全局门槛，按解释器取矩阵值（见上方注释）
+        run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=${{ matrix.cov-fail-under }}
 
       - name: Upload test artifacts
         if: ${{ !cancelled() }}
