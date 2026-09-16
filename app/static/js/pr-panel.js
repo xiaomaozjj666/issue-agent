@@ -390,7 +390,7 @@
     box.setAttribute("aria-label", t("pr_confirm_title"));
 
     box.appendChild(captureElement("h5", "pr-confirm-title", t("pr_confirm_title")));
-    box.appendChild(captureMessage("p", "pr-confirm-text", t("pr_confirm_body", {
+    box.appendChild(captureMessage("pr-confirm-text", t("pr_confirm_body", {
       repo: repoLabel(),
       branch: proposal && proposal.branch ? String(proposal.branch) : "",
       count: String(changes.length),
