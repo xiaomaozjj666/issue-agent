@@ -402,8 +402,8 @@
         integrity="sha384-o5uz97et3bErHvpKfD4Jz4n0JfhJDWABFuF4NP+iEEDxE1VwMWJ19QGR0lqFZnr6"
         onerror="this.remove();window.__echartsFailed=true;"></script>
 
-<script id="report-data" type="application/json">${IA.escapeHtml(jsonStr)}</script>
-<script id="session-data" type="application/json">${IA.escapeHtml(sessionJson)}</script>
+<script id="report-data" type="application/json">${jsonStr.replace(/</g, "\\u003c")}</script>
+<script id="session-data" type="application/json">${sessionJson.replace(/</g, "\\u003c")}</script>
 
 <script>
 (function(){

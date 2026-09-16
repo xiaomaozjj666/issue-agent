@@ -262,6 +262,15 @@
         }
       }
     }
+    // 30s 轮询耗尽仍未收敛（例如仍卡在 search_code 这类长工具调用里）：
+    // 旧实现此前已把按钮 display:none，这里再不恢复，用户就既不能再次取消、
+    // 也无法发起新分析，只能刷新页面 —— 必须把按钮还回来并说明服务端仍在收尾。
+    const stuckButton = document.getElementById("cancel-analysis");
+    if (stuckButton) {
+      stuckButton.style.display = "inline-flex";
+      stuckButton.disabled = false;
+      stuckButton.textContent = t("cancel_button");
+    }
     document.getElementById("progress").textContent = t("cancellation_requested");
   }
 

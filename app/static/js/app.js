@@ -754,7 +754,9 @@
     confirmButton.textContent = t("dialog_delete_forever");
     confirmButton.className = "danger";
     document.getElementById("session-dialog").showModal();
-    confirmButton.focus();
+    // 破坏性操作的初始焦点给「取消」：旧实现直接聚焦红色「永久删除」，
+    // 回车或触控连击会立刻删掉会话。
+    document.getElementById("dialog-cancel-btn").focus();
   }
 
   function closeSessionDialog() {

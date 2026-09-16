@@ -49,20 +49,41 @@
     return 0;
   }
 
+  // 进度只增不减：tool_call(50%) 之后回到 exploring(15%) 会让条形来回倒缩，
+  // 观感像「卡住又回退」，所以对估算值做单调钳制。
+  let lastProgressPct = 0;
+
+  // 统一的进度渲染：进度条 DOM 只建一次，之后仅更新时间文本与宽度。
+  // 旧实现每次阶段/工具调用都用 textContent 覆盖整个 #progress，把条形节点整块删掉，
+  // 于是进度条刚出现就被抹掉（用户只看到文字在闪，条形时有时无）。
+  function renderProgress(phase, elapsed) {
+    const progressEl = document.getElementById("progress");
+    if (!progressEl) return;
+    const pct = Math.max(phaseProgress(), lastProgressPct);
+    lastProgressPct = pct;
+    const text = phase + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+    if (pct <= 0) {
+      progressEl.textContent = text;
+      return;
+    }
+    const textEl = progressEl.querySelector(".progress-text");
+    const fillEl = progressEl.querySelector(".progress-bar-fill");
+    if (textEl && fillEl) {
+      textEl.textContent = text;
+      fillEl.style.width = pct + "%";
+      return;
+    }
+    progressEl.innerHTML = '<span class="progress-text">' + IA.escapeHtml(text) + "</span>" +
+      '<span class="progress-bar-track"><span class="progress-bar-fill" style="width:' + pct + '%"></span></span>';
+  }
+
   function startAnalysisTimer() {
     stopAnalysisTimer();
     analysisStartTime = Date.now();
+    lastProgressPct = 0;
     analysisTimerId = window.setInterval(function () {
       const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
-      const phase = currentPhaseText || t("fetching");
-      const pct = phaseProgress();
-      const progressEl = document.getElementById("progress");
-      if (pct > 0) {
-        progressEl.innerHTML = `<span class="progress-text">${IA.escapeHtml(phase)} · ${IA.escapeHtml(t("elapsed_time", { seconds: formatElapsed(elapsed) }))}</span>` +
-          `<span class="progress-bar-track"><span class="progress-bar-fill" style="width:${pct}%"></span></span>`;
-      } else {
-        progressEl.textContent = phase + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
-      }
+      renderProgress(currentPhaseText || t("fetching"), elapsed);
     }, 1000);
   }
 
@@ -79,8 +100,7 @@
     currentPhaseKey = progressKey || "";
     if (analysisTimerId !== null) {
       const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
-      document.getElementById("progress").textContent =
-        currentPhaseText + " · " + t("elapsed_time", { seconds: formatElapsed(elapsed) });
+      renderProgress(currentPhaseText, elapsed);
     } else {
       document.getElementById("progress").textContent = currentPhaseText;
     }
