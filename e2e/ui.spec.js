@@ -205,13 +205,13 @@ test("renders responsive decision charts without overlaps or console errors", as
   });
   expect(lightChartColors).toEqual({
     evidenceRoot: "#0969da",
-    riskMarker: "#8250df",
-    riskLow: "#dafbe1",
-    riskHigh: "#fbd3ab",
-    riskCritical: "#ffc4c0",
+    riskMarker: "#a24610",
+    riskLow: "#caf7ca",
+    riskHigh: "#fecfaa",
+    riskCritical: "#ffe2e0",
     riskSeriesType: "heatmap",
     riskSeriesCount: 2,
-    riskCriticalHover: "#ffb3ae",
+    riskCriticalHover: "#fecdcd",
   });
 
   // 报告状态色使用轻量底色而非高饱和实心色块。
@@ -340,7 +340,7 @@ test("renders responsive decision charts without overlaps or console errors", as
       hoverColor: chart.getOption().series[0].data[11].emphasis.itemStyle.color,
     };
   });
-  expect(hoveredCell).toEqual({ seriesCount: 2, hoverColor: "#ffb3ae" });
+  expect(hoveredCell).toEqual({ seriesCount: 2, hoverColor: "#fecdcd" });
   await riskCanvas.click({ position: { x: 24, y: 24 } });
   await expect(page.locator(".motion-spark-burst--chart")).toHaveCount(0);
   await expect(page.locator(".motion-ripple")).toHaveCount(0);
@@ -390,10 +390,10 @@ test("renders responsive decision charts without overlaps or console errors", as
   })).toEqual({
     // 证据链根节点使用强调深蓝（strengthStrong），不再是普通 primary 蓝
     evidenceRoot: "#2f81f7",
-    riskMarker: "#bc8cff",
-    riskLow: "#173525",
-    riskCritical: "#8e2a48",
-    riskCriticalHover: "#a83a58",
+    riskMarker: "#c46212",
+    riskLow: "#122117",
+    riskCritical: "#3c0614",
+    riskCriticalHover: "#58091a",
   });
   await page.keyboard.press("Tab");
   await expect(page.locator(".chart-modal-close")).toBeFocused();

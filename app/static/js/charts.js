@@ -20,13 +20,13 @@
 
   const PALETTE_DARK = {
     primary: "#58a6ff",
-    success: "#7ee787",
-    danger: "#ff7b72",
-    warning: "#bf8700",
-    muted: "#6e7681",
+    success: "#3fb950",  // primer fgColor/success (dark)
+    danger: "#f85149",  // primer fgColor/danger (dark)
+    warning: "#f0ca6a",  // primer yellow/9 —— 同时是「中」等级标记色
+    muted: "#92a1b5",  // primer gray/6 —— 同时是「未知」等级标记色
     docs: "#bc8cff",
-    text: "#e6edf3",
-    textDim: "#8b949e",
+    text: "#f0f6fc",  // primer fgColor/default (dark)
+    textDim: "#9198a1",  // primer fgColor/muted (dark)
     line: "#30363d",
     tooltipBg: "#161b22",
     tooltipBorder: "#30363d",
@@ -34,15 +34,15 @@
     splitArea: ["rgba(88,166,255,0.035)", "rgba(88,166,255,0.07)"],
     // Opaque semantic surfaces stay legible on #0d1117; low-alpha fills
     // collapse into indistinguishable gray/brown on dark canvases.
-    riskLow: "#173525",
-    riskMedium: "#4a3c12",
-    riskHigh: "#693b23",
-    riskCritical: "#8e2a48",
-    riskLowHover: "#1f4a33",
-    riskMediumHover: "#634f18",
-    riskHighHover: "#8a4d2b",
-    riskCriticalHover: "#a83a58",
-    riskMarkerHigh: "#bc8cff",
+    riskLow: "#122117",  // primer green/0
+    riskMedium: "#5a3702",  // primer yellow/2
+    riskHigh: "#311708",  // primer orange/0
+    riskCritical: "#3c0614",  // primer red/0
+    riskLowHover: "#182f1f",  // primer green/1
+    riskMediumHover: "#6d4403",  // primer yellow/3
+    riskHighHover: "#43200a",  // primer orange/1
+    riskCriticalHover: "#58091a",  // primer red/1
+    riskMarkerHigh: "#c46212",  // primer orange/5 —— 「高」等级标记色
     riskGridBorder: "#161b22",
     riskMarkerBorder: "#f0f6fc",
     // 证据强度色阶（dark）：同一色系的明暗表达强弱，语义统一
@@ -53,27 +53,27 @@
 
   const PALETTE_LIGHT = {
     primary: "#0969da",
-    success: "#0f5323",
-    danger: "#cf222e",
-    warning: "#7d4e00",
-    muted: "#6e7781",
+    success: "#1a7f37",  // primer fgColor/success (light)
+    danger: "#d1242f",  // primer fgColor/danger (light)
+    warning: "#805900",  // primer yellow/6 —— 同时是「中」等级标记色
+    muted: "#647182",  // primer gray/5 —— 同时是「未知」等级标记色
     docs: "#8250df",
     text: "#1f2328",
-    textDim: "#656d76",
+    textDim: "#59636e",  // primer fgColor/muted (light)
     line: "#d0d7de",
     tooltipBg: "#ffffff",
     tooltipBorder: "#d0d7de",
     bg: "#ffffff",
     splitArea: ["rgba(9,105,218,0.03)", "rgba(9,105,218,0.065)"],
-    riskLow: "#dafbe1",
-    riskMedium: "#f6ecc4",
-    riskHigh: "#fbd3ab",
-    riskCritical: "#ffc4c0",
-    riskLowHover: "#aceebb",
-    riskMediumHover: "#f0dfa0",
-    riskHighHover: "#ffbe8f",
-    riskCriticalHover: "#ffb3ae",
-    riskMarkerHigh: "#8250df",
+    riskLow: "#caf7ca",  // primer green/0
+    riskMedium: "#ffec9e",  // primer yellow/0
+    riskHigh: "#fecfaa",  // primer orange/1
+    riskCritical: "#ffe2e0",  // primer red/0
+    riskLowHover: "#9ceda0",  // primer green/1
+    riskMediumHover: "#ffd642",  // primer yellow/1
+    riskHighHover: "#fbaf74",  // primer orange/2
+    riskCriticalHover: "#fecdcd",  // primer red/1
+    riskMarkerHigh: "#a24610",  // primer orange/6 —— 「高」等级标记色
     riskGridBorder: "#ffffff",
     riskMarkerBorder: "#ffffff",
     // 证据强度色阶（light）
