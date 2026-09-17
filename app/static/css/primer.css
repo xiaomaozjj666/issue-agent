@@ -2637,6 +2637,31 @@ a:hover {
   line-height: 1.5;
 }
 
+/* 图表图例：说明「颜色代表什么」，与 caption 同层级、同字号 */
+.report-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.report-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.report-chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: var(--radius-pill);
+  flex: 0 0 auto;
+}
+
 /* 只有全屏报告有足够宽度并排；侧栏/分屏报告始终单列。 */
 #report-panel.fullscreen .report-charts-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));

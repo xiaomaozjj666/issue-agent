@@ -1887,6 +1887,7 @@
           `<div id="report-risk-matrix-section" class="report-chart report-chart-half">` +
           `<div class="report-chart-title">${IA.escapeHtml(t("chart_risk_matrix"))}</div>` +
           `<div id="report-risk-matrix-chart" class="report-chart-canvas report-chart-canvas-tall" role="img" aria-label="${IA.escapeHtml(t("chart_risk_matrix"))}"></div>` +
+          `<div class="report-chart-legend" id="report-risk-matrix-legend"></div>` +
           `<div class="report-chart-caption">${IA.escapeHtml(t("chart_risk_matrix_caption"))}</div>` +
           `</div>`,
         );

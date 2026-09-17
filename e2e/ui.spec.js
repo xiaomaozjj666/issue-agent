@@ -214,6 +214,32 @@ test("renders responsive decision charts without overlaps or console errors", as
     riskCriticalHover: "#fecdcd",
   });
 
+  // 严重度图例：标记颜色代表严重度而格底色代表风险等级，图例必须把这件事说清楚，
+  // 且颜色与矩阵实际使用的标记色一致（同一语义同一个颜色）。
+  const legend = await page.evaluate(() => {
+    const items = Array.from(document.querySelectorAll("#report-risk-matrix-legend .report-chart-legend-item"));
+    const chart = window.echarts.getInstanceByDom(document.getElementById("report-risk-matrix-chart"));
+    const toRgb = (value) => {
+      const probe = document.createElement("span");
+      probe.style.color = value;
+      document.body.appendChild(probe);
+      const computed = getComputedStyle(probe).color;
+      probe.remove();
+      return computed;
+    };
+    return {
+      labels: items.map((item) => item.textContent.trim()),
+      dotColors: items.map((item) => getComputedStyle(item.querySelector(".report-chart-legend-dot")).backgroundColor),
+      markerColor: toRgb(chart.getOption().series[1].itemStyle.color),
+      dotSize: items.length ? getComputedStyle(items[0].querySelector(".report-chart-legend-dot")).width : null,
+    };
+  });
+  expect(legend.labels).toEqual(["严重", "高", "中", "低"]);
+  expect(legend.dotColors).toHaveLength(4);
+  expect(new Set(legend.dotColors).size).toBe(4);  // 四色互不相同，否则图例没有意义
+  expect(legend.dotColors[1]).toBe(legend.markerColor);  // 「高」与矩阵标记同色
+  expect(legend.dotSize).toBe("8px");
+
   // 报告状态色使用轻量底色而非高饱和实心色块。
   const semanticColors = await page.evaluate(() => {
     function colors(selector) {

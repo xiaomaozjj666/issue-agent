@@ -423,7 +423,7 @@
       xAxis: {
         type: "value",
         minInterval: 1,
-        axisLabel: { color: palette.textDim, fontSize: 11 },
+        axisLabel: { color: palette.textDim, fontSize: 12 },
         splitLine: { lineStyle: { color: palette.line, opacity: 0.22 } },
       },
       yAxis: {
@@ -590,7 +590,7 @@
       xAxis: {
         type: "value",
         minInterval: 1,
-        axisLabel: { color: palette.textDim, fontSize: 11 },
+        axisLabel: { color: palette.textDim, fontSize: 12 },
         splitLine: { lineStyle: { color: palette.line, opacity: 0.22 } },
       },
       yAxis: {
@@ -828,14 +828,14 @@
         xAxis: {
           type: "value",
           splitLine: { lineStyle: { color: palette.line, opacity: 0.2, type: "dashed" } },
-          axisLabel: { color: palette.textDim, fontSize: 11 },
+          axisLabel: { color: palette.textDim, fontSize: 12 },
         },
         yAxis: {
           type: "category",
           data: rows.map(function (r) { return r.name; }),
           axisLine: { show: false },
           axisTick: { show: false },
-          axisLabel: { color: palette.text, fontSize: 11, width: isMobile() ? 88 : 128, overflow: "truncate" },
+          axisLabel: { color: palette.text, fontSize: 12, width: isMobile() ? 88 : 128, overflow: "truncate" },
         },
         toolbox: toolbox(palette, container),
         series: [{
@@ -909,6 +909,22 @@
   // ── 区块5：风险矩阵 ──────────────────────────────────────
   // severity × likelihood 二维网格：把本问题标在「严重度×发生可能性」上，
   // 背景单元格按组合风险着色（绿→黄→橙→红）。直接回答「该多紧急」。
+  // 严重度图例：标记颜色代表严重度，而格底色代表风险等级 —— 两者含义不同，
+  // 没有图例时用户只能猜。颜色直接取自调色板 / riskMarkerColor，永不脱节。
+  const RISK_LEGEND_SEVERITIES = ["critical", "high", "medium", "low"];
+
+  function renderRiskLegend(palette) {
+    const host = document.getElementById("report-risk-matrix-legend");
+    if (!host) return;
+    host.innerHTML = RISK_LEGEND_SEVERITIES.map(function (severity) {
+      const color = riskMarkerColor(severity, palette);
+      return '<span class="report-chart-legend-item">' +
+        '<span class="report-chart-legend-dot" style="background:' + color + ';border-color:' + color + ';"></span>' +
+        '<span>' + IA.escapeHtml(enumLabel("severity", severity)) + '</span>' +
+        '</span>';
+    }).join("");
+  }
+
   function renderRiskMatrix(container, report, sessionData) {
     if (!container) return null;
     if (!isAvailable()) {
@@ -1003,7 +1019,7 @@
         data: likeLevels.map(function (l) { return enumLabel("likelihood", l); }),
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { show: false },
-        axisLabel: { color: palette.textDim, fontSize: 11 },
+        axisLabel: { color: palette.textDim, fontSize: 12 },
         splitLine: { show: false },
       },
       yAxis: {
@@ -1015,7 +1031,7 @@
         data: sevLevels.map(function (s) { return enumLabel("severity", s); }),
         axisLine: { lineStyle: { color: palette.line } },
         axisTick: { show: false },
-        axisLabel: { color: palette.textDim, fontSize: 11 },
+        axisLabel: { color: palette.textDim, fontSize: 12 },
         splitLine: { show: false },
       },
       series: [
@@ -1065,6 +1081,7 @@
     chart.on("click", function () { IA.jumpToSection("report-impact"); });
     chart.on("mouseover", function () { container.style.cursor = "pointer"; });
     chart.on("mouseout", function () { container.style.cursor = ""; });
+    renderRiskLegend(palette);
     return chart;
   }
 
