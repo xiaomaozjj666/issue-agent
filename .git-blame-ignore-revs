@@ -1,0 +1,5 @@
+# 纯格式化 / 机械改动：git blame 时忽略，避免污染责任人信息。
+# 用法：git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# ruff format 统一 22 个文件（无行为变化，pytest 578 passed 验证）
+adf7366

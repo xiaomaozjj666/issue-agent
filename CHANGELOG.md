@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **axe 审计覆盖导出的 HTML 报告**：e2e 用例现在会调用 `IA.Export.selfContainedHtml`
+  生成导出文件、离线（阻断 CDN）渲染后跑同一套 axe 断言，导出的报告不再有审计盲区。
+- `scripts/capture_screenshots.cjs`：用路由 mock 复现三张文档截图，配色/布局变更后重跑即可。
+- `.git-blame-ignore-revs`：把纯格式化提交排除在 `git blame` 之外
+  （`git config blame.ignoreRevsFile .git-blame-ignore-revs`）。
+
+
 - `.github/dependabot.yml` — pip / npm / github-actions 三个生态的每周依赖更新，
   按生态分组并限制并发 PR 数量。
 - `CHANGELOG.md` — 本文件。
@@ -26,7 +33,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   才调用 pply-fix；写模式关闭时按钮置灰并给出可行动说明。面板用 MutationObserver
   观察报告容器注入，不改动 pp.js 的渲染流程；插值全部走 	extContent（无 innerHTML）。
 
+
+- **axe-core 自动化可及性审计**（`axe-core` 为 devDependency + 一条 e2e 用例）：在 6 个界面
+  （首页、设置抽屉、命令面板、帮助浮层、报告浅色、报告深色）上断言**零违规**，审计以
+  `prefers-reduced-motion` 运行，避免入场动画的 `opacity:0` 造成 button-name 误报。
+  上面 5 类问题全部是这条用例在 CI 上前置发现并修掉的。
+
+- **TypeScript 决策测试记录的是过期快照**：docstring 声称「无 package.json、
+  第三方库走 CDN、4644 行 / 3 个文件」，实际是「有 package.json（仅 Playwright
+  测试依赖、无构建脚本）、vendor 本地自带、约 8.1k 行 / 11 个文件」。改为用当前
+  文件系统事实做可计算断言，并在「构建链已就绪」时失败提醒重新决策。
+
 ### Fixed
+
+- **导出的独立 HTML 报告缺少地标（axe landmark-one-main / region）**：导出页的标题、
+  元信息与报告主体都是 `<body>` 直接子元素，屏幕阅读器无法按地标跳转。现用 `<main>`
+  包裹，导出文件在 axe 下同样达到零违规。
+- 文档截图与当前配色不一致（此前为 2026-08-21 手工截取）：已重新生成
+  `docs/screenshots/{home,report,charts}-dark.png`，并给出可复现脚本。
+
 
 - **Docker 镜像内数据目录不可写（严重）**：`/app/data` 此前不存在且归 root 所有，
   非 root 的 `appuser` 首次落库会 `PermissionError`（`SESSION_DB_PATH` 默认
@@ -169,18 +194,6 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
   `role="main"`、`#sidebar` 补 `role="complementary"` + 可访问名；装饰性 `<header>`
   降级为 `<div>`（避免 banner 地标嵌套）。顺带修掉两处遗留的 `</header>` 闭合标签。
 
-### Added
-
-- **axe-core 自动化可及性审计**（`axe-core` 为 devDependency + 一条 e2e 用例）：在 6 个界面
-  （首页、设置抽屉、命令面板、帮助浮层、报告浅色、报告深色）上断言**零违规**，审计以
-  `prefers-reduced-motion` 运行，避免入场动画的 `opacity:0` 造成 button-name 误报。
-  上面 5 类问题全部是这条用例在 CI 上前置发现并修掉的。
-
-- **TypeScript 决策测试记录的是过期快照**：docstring 声称「无 package.json、
-  第三方库走 CDN、4644 行 / 3 个文件」，实际是「有 package.json（仅 Playwright
-  测试依赖、无构建脚本）、vendor 本地自带、约 8.1k 行 / 11 个文件」。改为用当前
-  文件系统事实做可计算断言，并在「构建链已就绪」时失败提醒重新决策。
-
 ### Changed
 
 - **类型检查与格式检查覆盖到测试与脚本**：mypy app/ tests/ scripts/ evals/ 现在全清
@@ -193,7 +206,6 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
 - 排查记录：ruff check --fix 的 B010 会把 setattr(obj, "m", v) 自动改回直接赋值——
   改造中「改完又变回去」正是这个原因，改用显式类型忽略注释后稳定。
 
-### Changed
 
 - Docker 构建改为按 `uv.lock` 精确安装依赖（`uv export --frozen` 导出固定版本后交给
   pip 安装，项目本体 `--no-deps`）：锁文件此前提交却无人消费，镜像里装到的版本会随上游
@@ -217,7 +229,6 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
 
 - 本机 .env 的 SESSION_STALE_AFTER_SECONDS 同步为 300，与代码默认值、
   .env.example、wiki 三方一致（原为 1800，会让横死会话多挂 25 分钟）。
-
 ## [0.6.0] - 2026-09
 
 ### Added

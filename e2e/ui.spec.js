@@ -962,4 +962,28 @@ test("passes an automated accessibility audit on the main views", async ({ page 
   await page.click("#theme-toggle-btn");
   await page.waitForTimeout(500);
   await audit("报告面板（深色）");
+
+  // 导出的独立 HTML 报告：用户会单独打开这个文件，也必须通过同一套审计
+  const exportHtml = await page.evaluate((data) => {
+    const session = {
+      session_id: "s1", owner: "acme", repo: "widget", issue_number: 1,
+      metrics: {}, messages: [], events: [], report: data,
+    };
+    return window.IssueAgent.Export.selfContainedHtml(data, session);
+  }, report);
+  const exportPage = await page.context().newPage();
+  await exportPage.route("https://cdn.jsdelivr.net/**", (route) => route.abort());  // 离线审计，不依赖 CDN
+  await exportPage.setContent(exportHtml);
+  await exportPage.addScriptTag({ path: AXE_PATH });
+  const exportViolations = await exportPage.evaluate(async () => {
+    const result = await window.axe.run(document, { resultTypes: ["violations"] });
+    return result.violations.map((item) => ({
+      id: item.id,
+      impact: item.impact,
+      help: item.help,
+      targets: item.nodes.slice(0, 3).map((node) => node.target.join(" ")),
+    }));
+  });
+  expect(exportViolations, `导出的 HTML 报告存在可及性违规：${JSON.stringify(exportViolations, null, 2)}`).toEqual([]);
+  await exportPage.close();
 });
