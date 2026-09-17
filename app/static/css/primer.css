@@ -18,7 +18,9 @@
   --fg: #e6edf3;
   --fg-strong: #f0f6fc;
   --muted: #8b949e;
-  --faint: #6e7681;
+  /* #6e7681 在侧栏底色(#161b22)上只有 3.7:1（AA 需 4.5:1）；它用于分组标题、
+     时间戳等小字。提到 #7d8590 后为 4.6:1，同时仍比 textDim 更弱。 */
+  --faint: #7d8590;
 
   /* 分割线 */
   --border: #30363d;
@@ -116,9 +118,11 @@
 
   --fg: #1f2328;
   --fg-strong: #1f2328;
-  --muted: #656d76;
+  /* 文本色阶：muted 需比 faint 更强，且两者在卡片底色(#f6f8fa)上都要过 AA；
+     原 muted #656d76 比 faint 还深（层级颠倒），faint 在卡片上只有 4.30:1。 */
+  --muted: #57606a;
   /* 原先 #8c959f 在白底上只有 2.9:1（低于 AA 4.5:1）；faint 用于时间戳/占位/说明等小字 */
-  --faint: #6e7781;
+  --faint: #68707b;
 
   --border: #d0d7de;
   --border-muted: #d8dee4;
@@ -779,6 +783,15 @@ a:hover {
   font-size: var(--text-xs);
 }
 
+/* 选中 / 悬停 / 键盘聚焦的会话行带 accent 叠色，底色变亮后 --faint 的对比度会掉到
+   4.2:1（暗色）与 4.0:1（浅色），低于 AA 的 4.5:1 —— 这三种状态下时间戳改用 textDim。
+   （axe 审计实测：未选中行 5.07:1 ✓，选中行 4.22:1 ✗） */
+.session-row:hover .session-time,
+.session-row.active .session-time,
+.session-row:focus-within .session-time {
+  color: var(--textDim);
+}
+
 .session-actions {
   position: absolute;
   top: 8px;
@@ -1143,6 +1156,7 @@ a:hover {
 }
 
 .conversation-label {
+  margin: 0;
   overflow: hidden;
   color: var(--fg-strong);
   font-size: var(--text-md);
@@ -1883,7 +1897,9 @@ a:hover {
 }
 
 .timeline-title {
-  color: var(--faint);
+  /* 卡片底色（--card）比页面底色更亮，faint 在其上只有 4.3:1（ax 实测）；
+     textDim 在浅/深两种主题下都 ≥ 4.9:1。 */
+  color: var(--textDim);
   font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
@@ -2129,6 +2145,7 @@ a:hover {
   margin-top: 0;
 }
 
+#report h3,
 #report h4 {
   margin: var(--space-5) 0 var(--space-2);
   color: var(--fg-strong);
@@ -2675,6 +2692,7 @@ a:hover {
   margin-top: var(--space-3);
 }
 
+.report-section h3,
 .report-section h4 {
   margin-top: 0;
   display: flex;
@@ -2683,6 +2701,7 @@ a:hover {
   transition: color var(--dur-fast) var(--ease-standard);
 }
 
+.report-section h3::before,
 .report-section h4::before {
   content: "";
   display: inline-block;
@@ -2694,11 +2713,13 @@ a:hover {
 }
 
 /* ReactBits 微交互：章节标题 hover 时装饰条增长 + 颜色加深，引导阅读节奏 */
+.report-section h3:hover::before,
 .report-section h4:hover::before {
   height: 20px;
   background: var(--accent-emphasis);
 }
 
+.report-section h3:hover,
 .report-section h4:hover {
   color: var(--accent);
 }

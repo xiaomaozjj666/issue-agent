@@ -1090,11 +1090,11 @@
     hero.innerHTML =
       `<div class="hero-inner">` +
       // 标题区
-      `<header class="hero-head">` +
+      `<div class="hero-head">` +
       `<span class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>${IA.escapeHtml(t("hero_eyebrow_text"))}</span>` +
-      `<h1 class="hero-title">${IA.escapeHtml(t("hero_title"))}</h1>` +
+      `<h2 class="hero-title">${IA.escapeHtml(t("hero_title"))}</h2>` +
       `<p class="hero-subtitle">${IA.escapeHtml(t("hero_subtitle"))}</p>` +
-      `</header>` +
+      `</div>` +
       // 三步流程卡片
       `<section class="hero-steps">${stepsHtml}</section>` +
       // 示例案例区
@@ -1250,7 +1250,7 @@
         : "";
     card.innerHTML =
       `<div class="report-preview-label">${IA.escapeHtml(t("analysis_complete_label"))}</div>` +
-      `<h3 class="report-preview-title">${IA.escapeHtml(data.summary)}</h3>` +
+      `<h2 class="report-preview-title">${IA.escapeHtml(data.summary)}</h2>` +
       `<p class="report-preview-root"><strong>${IA.escapeHtml(t("report_root_cause"))}</strong><br>${IA.escapeHtml(data.root_cause)}</p>` +
       `<div class="report-preview-footer"><span class="badge ${IA.safeClass(data.confidence)}">${IA.escapeHtml(enumLabel("confidence", data.confidence))}</span>${reviewChip}` +
       `<button class="report-preview-button" type="button">${IA.escapeHtml(t("open_full_report"))}</button></div>`;
@@ -1803,7 +1803,7 @@
 
     function pushSection(id, title, bodyHtml) {
       toc.push(`<li><a href="#${id}">${IA.escapeHtml(title)}</a></li>`);
-      return `<section class="report-section" id="${id}"><h4>${IA.escapeHtml(title)}</h4>${bodyHtml}</section>`;
+      return `<section class="report-section" id="${id}"><h3>${IA.escapeHtml(title)}</h3>${bodyHtml}</section>`;
     }
 
     // 1. 核心结论卡（金字塔顶端：结论前置）
