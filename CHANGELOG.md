@@ -46,6 +46,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **配色回归 GitHub 官方色板（同时保持色盲可区分）**：此前为破解红绿色盲下的色相坍缩，
+  「高」等级标记改用了紫色（`#bc8cff` / `#8250df`），偏离了本项目的 GitHub 配色基调。
+  现在改为**全部取值来自 `@primer/primitives` 11.10.0 的官方语义色与官方色阶**
+  （2026-09-16 取包核对）：
+  · critical 用官方 `fgColor/danger`（暗 `#f85149` / 浅 `#d1242f`）
+  · low 用官方 `fgColor/success`（暗 `#3fb950` / 浅 `#1a7f37`）
+  · high 用官方色阶 `orange/5`（暗 `#c46212`）/ `orange/6`（浅 `#a24610`）
+  · medium 用官方色阶 `yellow/9`（暗 `#f0ca6a`）/ `yellow/6`（浅 `#805900`）
+  · unknown 用官方灰阶（暗 `#92a1b5` / 浅 `#647182`）
+  · 四类风险格底色改用官方低档色阶（暗 `green/0`、`yellow/2`、`orange/0`、`red/0`；
+    浅 `green/0`、`yellow/0`、`orange/1`、`red/0`），hover 取相邻档
+  在这个「只能用官方取值」的约束下，色盲最差 ΔE 仍从 3.6 / 4.5 提升到 **13.7 / 12.8**，
+  且标记与所在格底色、页面背景的对比度均 ≥ 3:1，四个风险等级格底色两两 ΔE ≥ 16.9 / 20.9。
+  同时把 UI 文本色对齐官方：`--muted` → `fgColor/muted`（暗 `#9198a1` / 浅 `#59636e`）、
+  浅色 `--faint` → 官方 `gray/5`（`#647182`）。
+  测试同步升级：`tests/test_chart_palette_accessibility.py` 新增
+  「调色板取值必须全部来自官方色板」的断言（逐条登记 token 名），并把原先的「明度阶梯」
+  断言换成「格底色两两 ΔE 下限」—— 实测 Primer 同一色系 0-2 档明度几乎相同
+  （暗 L*≈10-11、浅 L*≈92-93），在只用官方取值的前提下无法构成单调阶梯。
+
+
 - **导出的独立 HTML 报告缺少地标（axe landmark-one-main / region）**：导出页的标题、
   元信息与报告主体都是 `<body>` 直接子元素，屏幕阅读器无法按地标跳转。现用 `<main>`
   包裹，导出文件在 axe 下同样达到零违规。
