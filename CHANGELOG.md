@@ -148,6 +148,32 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
   `theme_light`/`theme_dark` 键，初始文本与当前主题一致。
 - **历史空态文案未转义**：与相邻分支的 `escapeHtml` 处理保持一致。
 
+- **命令面板的「操作」条目渲染成空白行（axe critical）**：渲染代码读 `it.label`，而操作
+  条目的标签存在 `it.data.label` 上 —— 7 个操作全是只有图标的空按钮，用户看到的是空白
+  行（会话条目不受影响）。同时该面板把 `role="dialog"` 放在内层 surface 上，导致内容被
+  判定为不在地标内；分组标题/副标题/页脚用 `opacity` 降级，把对比度一并压到 AA 以下。
+  现已：读取正确的标签、把对话框语义移到外层容器、用 `--muted` 取代 `opacity`。
+- **4 个对话框表面没有可访问名（axe aria-dialog-name, serious）**：设置抽屉、命令面板、
+  帮助浮层、对比浮层都带 `role="dialog"` 却没有 name/labelledby —— 屏幕阅读器只会播报
+  「对话框」。现均补上 `aria-label`（沿用各自的标题文案）。
+- **侧栏与时间线小字对比度不足（axe color-contrast, serious）**：暗色 `--faint` 在侧栏底色上
+  只有 3.7:1；选中/悬停的会话行带 accent 叠色，其中时间戳掉到 4.22:1；浅色主题 `--muted`
+  比 `--faint` 还深（层级颠倒），且 `--faint` 在卡片底色上只有 4.30:1。现：暗色 `--faint`
+  → `#7d8590`（4.6:1）、选中行时间戳改用 `--textDim`（13.3:1）、浅色 `--muted` → `#57606a`
+  （6.6:1）与 `--faint` → `#68707b`（卡片上 4.7:1），层级与对比度同时达标。
+- **标题层级与地标（axe heading-order / landmark / page-has-heading-one）**：报告章节从
+  `h4` 改为 `h3`（不再从面板的 h2 跳级）；hero 标语由 `h1` 降为 `h2`，每屏唯一的 `h1`
+  交给会话标题（详情视图里 hero 会被移除，原先那里没有任何可见 h1）；`#main` 补
+  `role="main"`、`#sidebar` 补 `role="complementary"` + 可访问名；装饰性 `<header>`
+  降级为 `<div>`（避免 banner 地标嵌套）。顺带修掉两处遗留的 `</header>` 闭合标签。
+
+### Added
+
+- **axe-core 自动化可及性审计**（`axe-core` 为 devDependency + 一条 e2e 用例）：在 6 个界面
+  （首页、设置抽屉、命令面板、帮助浮层、报告浅色、报告深色）上断言**零违规**，审计以
+  `prefers-reduced-motion` 运行，避免入场动画的 `opacity:0` 造成 button-name 误报。
+  上面 5 类问题全部是这条用例在 CI 上前置发现并修掉的。
+
 - **TypeScript 决策测试记录的是过期快照**：docstring 声称「无 package.json、
   第三方库走 CDN、4644 行 / 3 个文件」，实际是「有 package.json（仅 Playwright
   测试依赖、无构建脚本）、vendor 本地自带、约 8.1k 行 / 11 个文件」。改为用当前

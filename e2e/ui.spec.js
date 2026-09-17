@@ -1,5 +1,10 @@
 const { test, expect } = require("@playwright/test");
 const fs = require("node:fs/promises");
+const path = require("node:path");
+
+// axe-core 的可及性审计（devDependency）：解析包根目录后取 axe.min.js，
+// 这样无论包的 exports 字段如何限制子路径都能拿到文件。
+const AXE_PATH = path.join(path.dirname(require.resolve("axe-core/package.json")), "axe.min.js");
 
 const report = {
   summary: "修复特殊路径中的解析错误",
@@ -92,7 +97,10 @@ test("renders responsive decision charts without overlaps or console errors", as
 
   await page.goto("/");
   expect(optionalVendorRequests, "首页不应提前加载图表或代码高亮库").toEqual([]);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveAccessibleName("Issue 溯源・自动生成修复补丁");
+  // 每屏唯一的 h1 是会话标题（详情视图里 hero 会被移除，而 axe 的
+  // page-has-heading-one 要求那时仍有可见 h1）；hero 标语作为有名称的 h2。
+  await expect(page.getByRole("heading", { level: 2, name: "Issue 溯源・自动生成修复补丁" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
   // 去 AI 味（2026-08）：hero 不再挂载聚光/视差/磁吸等 JS 装饰动效——
   // 悬停时无 spotlight 状态、无 --spot-o 变量、CTA 无 inline transform
   //（保留 CSS 的克制 hover 上浮反馈）。
@@ -898,4 +906,60 @@ test("activates report drill-down targets from the keyboard", async ({ page }) =
   await changeAgain.focus();
   await page.keyboard.press(" ");
   await expect(changeAgain).toBeFocused();
+});
+
+test("passes an automated accessibility audit on the main views", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ds-theme", "light"));
+  // 以「减少动效」运行审计：命令面板等组件的入场动画会短暂处于 opacity:0，
+  // 那会让 axe 把按钮文字判定为不可见（button-name 误报）。
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockCompletedSessions(page);
+  await page.goto("/");
+
+  async function audit(label) {
+    await page.addScriptTag({ path: AXE_PATH });
+    const violations = await page.evaluate(async () => {
+      const result = await window.axe.run(document, { resultTypes: ["violations"] });
+      return result.violations.map((item) => ({
+        id: item.id,
+        impact: item.impact,
+        help: item.help,
+        targets: item.nodes.slice(0, 3).map((node) => node.target.join(" ")),
+      }));
+    });
+    expect(violations, `${label} 存在可及性违规：${JSON.stringify(violations, null, 2)}`).toEqual([]);
+  }
+
+  // 首页（浅色）
+  await audit("首页");
+
+  // 设置抽屉（地标/标题/表单标签都在这里）
+  await page.click("#settings-btn");
+  await page.waitForTimeout(400);
+  await audit("设置面板");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+
+  // 命令面板（Ctrl/⌘+K）与帮助浮层：都是真实的对话框表面
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(400);
+  await audit("命令面板");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("?");
+  await page.waitForTimeout(400);
+  await audit("帮助浮层");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+
+  // 报告面板（含图表、补丁、时间线）
+  await historyCard(page, 1).click();
+  await page.getByRole("button", { name: "查看完整报告" }).click();
+  await expect(page.getByRole("complementary", { name: "分析报告" })).toBeVisible();
+  await audit("报告面板（浅色）");
+
+  // 深色主题下同一份报告
+  await page.click("#theme-toggle-btn");
+  await page.waitForTimeout(500);
+  await audit("报告面板（深色）");
 });

@@ -87,10 +87,11 @@
   flex: 1; background: transparent; border: 0; outline: 0; color: var(--fg-strong);
   font-size: 16px;
 }
-.palette-input::placeholder { color: var(--fg); opacity: .5; }
+.palette-input::placeholder { color: var(--muted); opacity: 1; }
 .palette-results { overflow-y: auto; padding: 8px; }
 .palette-group { margin-bottom: 6px; }
-.palette-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .55; padding: 8px 10px 4px; }
+/* 用 muted 明确降级，而不是 opacity：opacity 会连同对比度一起降低 */
+.palette-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 8px 10px 4px; }
 .palette-item {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   background: transparent; border: 0; color: var(--fg); padding: 10px 12px;
@@ -104,9 +105,9 @@
 .palette-item-icon svg { width: 18px; height: 18px; }
 .palette-item-text { display: flex; flex-direction: column; min-width: 0; }
 .palette-item-label { font-size: 14px; color: var(--fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.palette-item-sub { font-size: 12px; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.palette-empty { padding: 28px; text-align: center; opacity: .6; font-size: 14px; }
-.palette-footer { padding: 10px 16px; border-top: 1px solid var(--canvas-subtle); font-size: 12px; opacity: .6; }
+.palette-item-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette-empty { padding: 28px; text-align: center; color: var(--muted); font-size: 14px; }
+.palette-footer { padding: 10px 16px; border-top: 1px solid var(--canvas-subtle); font-size: 12px; color: var(--muted); }
 
 /* ── 帮助浮层 ── */
 .overlay-surface { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(440px, 92vw); }

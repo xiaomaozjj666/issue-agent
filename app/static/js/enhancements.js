@@ -73,11 +73,11 @@
     panel.setAttribute("aria-label", t("settings_title"));
     panel.innerHTML =
       '<div class="drawer-backdrop" data-close></div>' +
-      '<div class="drawer-surface" role="dialog" aria-modal="true">' +
-        '<header class="drawer-head">' +
+      '<div class="drawer-surface" role="dialog" aria-modal="true" aria-label="' + esc(t("settings_title")) + '">' +
+        '<div class="drawer-head">' +
           '<h2>' + esc(t("settings_title")) + '</h2>' +
           '<button class="drawer-close" type="button" data-close aria-label="' + esc(t("settings_close")) + '">×</button>' +
-        '</header>' +
+        '</div>' +
         '<div class="drawer-body">' +
           '<label class="drawer-field"><span>' + esc(t("settings_language")) + '</span>' +
             '<select id="set-language"><option value="zh">' + esc(t("settings_lang_zh")) + '</option><option value="en">' + esc(t("settings_lang_en")) + '</option></select></label>' +
@@ -182,9 +182,13 @@
     p.id = "command-palette";
     p.setAttribute("aria-hidden", "true");
     p.setAttribute("aria-label", t("palette_placeholder"));
+    // 对话框语义放在外层容器：内层 surface 只负责样式，
+    // 否则「role=dialog 里套内容」会让 axe 的 region 规则认为内容不在任何地标内。
+    p.setAttribute("role", "dialog");
+    p.setAttribute("aria-modal", "true");
     p.innerHTML =
       '<div class="palette-spotlight" aria-hidden="true"></div>' +
-      '<div class="palette-surface" role="dialog" aria-modal="true">' +
+      '<div class="palette-surface">' +
         '<div class="palette-search">' + svg("search") +
           '<input id="palette-input" class="palette-input" type="text" autocomplete="off" placeholder="' + esc(t("palette_placeholder")) + '">' +
         '</div>' +
@@ -262,9 +266,12 @@
       }
       const icon = it.type === "action" ? (svg(it.data.icon) || "") : (svg("report") || "");
       const sub = it.type === "session" ? esc(it.title || "") : "";
+      // 操作条目的标签在 it.data.label 上（会话条目才在 it.label 上）：只读 it.label 会让
+      // 「操作」分组渲染成只有图标的空白行 —— axe 的 button-name(critical) 正是这么发现的。
+      const label = it.type === "action" ? ((it.data && it.data.label) || "") : (it.label || "");
       html += '<button type="button" class="palette-item" data-idx="' + (idx++) + '" style="--i:' + idx + '">' +
         '<span class="palette-item-icon" aria-hidden="true">' + icon + '</span>' +
-        '<span class="palette-item-text"><span class="palette-item-label">' + esc(it.label) + '</span>' + (sub ? '<span class="palette-item-sub">' + sub + '</span>' : '') + '</span>' +
+        '<span class="palette-item-text"><span class="palette-item-label">' + esc(label) + '</span>' + (sub ? '<span class="palette-item-sub">' + sub + '</span>' : '') + '</span>' +
         '</button>';
     });
     if (lastType) html += "</div>";
@@ -338,8 +345,8 @@
     o.setAttribute("aria-hidden", "true");
     o.innerHTML =
       '<div class="overlay-backdrop" data-close></div>' +
-      '<div class="overlay-surface" role="dialog" aria-modal="true">' +
-        '<header class="overlay-head"><h2>' + esc(t("help_title")) + '</h2><button class="drawer-close" type="button" data-close aria-label="' + esc(t("help_close")) + '">×</button></header>' +
+      '<div class="overlay-surface" role="dialog" aria-modal="true" aria-label="' + esc(t("help_title")) + '">' +
+        '<div class="overlay-head"><h2>' + esc(t("help_title")) + '</h2><button class="drawer-close" type="button" data-close aria-label="' + esc(t("help_close")) + '">×</button></div>' +
         '<ul class="shortcut-list">' +
           shortcutRow("Ctrl/⌘ + K", t("shortcut_search")) +
           shortcutRow("Ctrl/⌘ + Enter", t("shortcut_send")) +
@@ -682,8 +689,8 @@
     o.setAttribute("aria-hidden", "true");
     o.innerHTML =
       '<div class="overlay-backdrop" data-close></div>' +
-      '<div class="overlay-surface compare-surface" role="dialog" aria-modal="true">' +
-        '<header class="overlay-head"><h2>' + esc(t("compare_title")) + '</h2><button class="drawer-close" type="button" data-close aria-label="' + esc(t("compare_close")) + '">×</button></header>' +
+      '<div class="overlay-surface compare-surface" role="dialog" aria-modal="true" aria-label="' + esc(t("compare_title")) + '">' +
+        '<div class="overlay-head"><h2>' + esc(t("compare_title")) + '</h2><button class="drawer-close" type="button" data-close aria-label="' + esc(t("compare_close")) + '">×</button></div>' +
         '<div id="compare-body" class="compare-body"></div>' +
       '</div>';
     document.body.appendChild(o);
