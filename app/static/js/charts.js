@@ -43,7 +43,7 @@
     riskHighHover: "#43200a",  // primer orange/1
     riskCriticalHover: "#58091a",  // primer red/1
     riskMarkerHigh: "#c46212",  // primer orange/5 —— 「高」等级标记色
-    riskGridBorder: "#161b22",
+    riskGridBorder: "#2a2b2d",  // primer gray/1 —— 分隔深色格底，避免糊成一片
     riskMarkerBorder: "#f0f6fc",
     // 证据强度色阶（dark）：同一色系的明暗表达强弱，语义统一
     strengthStrong: "#2f81f7",
@@ -684,8 +684,12 @@
   // ── 区块4：波及范围 ──────────────────────────────────────
   // 受影响模块/文件 treemap：以 impact.blast_radius 为主，补丁改动文件为补充；
   // 叶子大小 = 该文件改动行数（来自补丁）或 1，颜色按严重度。直接回答「有多严重」。
+  //
+  // 配色统一到 riskMarkerColor：同一严重度在报告的任何图里都是同一个颜色。
+  // （此前 high 在风险矩阵是橙色、在波及范围是黄色，low 一处绿色一处灰色，
+  //   用户得为每张图重新学一遍映射。）
   function severityColor(severity, palette) {
-    return ({ critical: palette.danger, high: palette.warning, medium: palette.primary, low: palette.muted })[severity] || palette.muted;
+    return riskMarkerColor(severity, palette);
   }
 
   function riskMarkerColor(severity, palette) {
@@ -1028,13 +1032,13 @@
           // 涟漪标记（effectScatter）：定位点持续脉冲扩散，"问题在这里"一眼锁定。
           // 减弱动效偏好下降级为普通散点，视觉语义保留。
           type: prefersReducedMotion() ? "scatter" : "effectScatter",
-          symbolSize: 18,
+          symbolSize: 20,
           rippleEffect: { period: 3.2, scale: 2.6, brushType: "stroke" },
           data: [{ value: [issueX, issueY], severity: sev, likelihood: like }],
           itemStyle: {
             color: markerColor,
             borderColor: palette.riskMarkerBorder || palette.bg || "#fff",
-            borderWidth: 2.5,
+            borderWidth: 3,
             // 柔和外发光替代硬描边：醒目但不过度突兀
             shadowBlur: 10,
             shadowColor: "rgba(0,0,0,0.28)",

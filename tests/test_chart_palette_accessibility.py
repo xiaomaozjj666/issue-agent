@@ -216,3 +216,29 @@ def test_risk_cells_stay_distinguishable(theme: str) -> None:
         f"{theme}: {worst_pair[0]}/{worst_pair[1]} 的格底色仅差 {worst:.1f}（要求 ≥ {_MIN_CELL_DELTA_E}），"
         "相邻风险等级的底纹将难以区分。"
     )
+
+
+def test_severity_mapping_is_single_source_of_truth() -> None:
+    """同一严重度在报告的任何图里必须是同一个颜色。
+
+    历史缺陷：high 在风险矩阵用 riskMarkerHigh（橙）、在波及范围用 warning（黄）；
+    low 一处 success（绿）一处 muted（灰）。用户不得不为每张图重新学一遍映射。
+    这里直接解析 charts.js：``severityColor`` 必须委托给 ``riskMarkerColor``。
+    """
+    source = _CHARTS_JS.read_text(encoding="utf-8")
+
+    severity_body = re.search(r"function severityColor\(severity, palette\) \{(.*?)\n  \}", source, re.S)
+    assert severity_body, "未找到 severityColor 定义"
+    assert "riskMarkerColor(severity, palette)" in severity_body.group(1), (
+        "severityColor 必须委托给 riskMarkerColor，否则同一严重度会在不同图里显示成不同颜色。"
+    )
+
+    marker_body = re.search(r"function riskMarkerColor\(severity, palette\) \{(.*?)\n  \}", source, re.S)
+    assert marker_body, "未找到 riskMarkerColor 定义"
+    mapping = dict(re.findall(r"(\w+): palette\.(\w+)", marker_body.group(1)))
+    assert mapping == {
+        "critical": "danger",
+        "high": "riskMarkerHigh",
+        "medium": "warning",
+        "low": "success",
+    }, f"严重度配色映射被改动：{mapping} —— 请同步 _PRIMER_VALUES 与文档说明。"
