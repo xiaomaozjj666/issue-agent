@@ -240,6 +240,28 @@ test("renders responsive decision charts without overlaps or console errors", as
   expect(legend.dotColors[1]).toBe(legend.markerColor);  // 「高」与矩阵标记同色
   expect(legend.dotSize).toBe("8px");
 
+  // 波及范围柱状图的数值标签必须表达该柱自己的量（行数或 —），
+  // 不能出现「严重/高/中/低」这类严重度词（此前无补丁数据的柱就错标成了「高」）。
+  const barLabels = await page.evaluate(() => {
+    const chart = window.echarts.getInstanceByDom(document.getElementById("report-blast-radius-chart"));
+    if (!chart) return [];
+    return chart.getOption().series[0].data.map((item) => String(item.name === undefined ? "" : item.name));
+  });
+  const barFormatter = await page.evaluate(() => {
+    const chart = window.echarts.getInstanceByDom(document.getElementById("report-blast-radius-chart"));
+    if (!chart) return [];
+    const series = window.echarts.getInstanceByDom(document.getElementById("report-blast-radius-chart")).getOption().series[0];
+    const formatter = series.label && series.label.formatter;
+    if (typeof formatter !== "function") return [];
+    const rows = series.data;
+    return rows.map((row) => String(formatter({ data: row })));
+  });
+  expect(barLabels.length).toBeGreaterThan(0);
+  expect(barFormatter.length).toBe(barLabels.length);
+  for (const text of barFormatter) {
+    expect(text === "—" || /行$/.test(text), `数值标签含义不正确：${text}`).toBe(true);
+  }
+
   // 报告状态色使用轻量底色而非高饱和实心色块。
   const semanticColors = await page.evaluate(() => {
     function colors(selector) {

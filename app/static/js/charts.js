@@ -856,9 +856,10 @@
             color: palette.text,
             fontSize: 12,
             formatter: function (p) {
-              return p.data.changed
-                ? t("chart_changed_lines", { count: p.data.changed })
-                : enumLabel("severity", sev);
+              // 数值标签必须表达「这根柱自己的量」：此前无补丁数据的柱会显示报告严重度
+              // （如「高」），既与坐标轴（改动行数）无关，也和柱体颜色重复表达同一件事。
+              // 无数据时用「—」，避免把没有量纲的词当成数值。
+              return p.data.changed ? t("chart_changed_lines", { count: p.data.changed }) : "—";
             },
           },
           emphasis: { focus: "self", blurScope: "coordinateSystem", itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } },
