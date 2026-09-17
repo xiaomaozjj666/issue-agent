@@ -49,6 +49,8 @@ flowchart LR
 
 <img src="docs/screenshots/charts-dark.png" alt="报告交互图表" width="960">
 
+> 截图由 `node scripts/capture_screenshots.cjs` 生成（路由 mock、无外部依赖），配色或布局变更后请重跑刷新。
+
 ## 功能特性
 
 - 🔍 **有界工具调用循环** — 模型在受限循环中自主探索：目录树浏览、全仓库代码搜索、按行号读取源码、Git 提交历史、分支列表、指定提交下的文件快照；支持并行执行独立只读工具并自动去重重复调用
