@@ -96,9 +96,7 @@ def test_three_aligned_evidence_allow_high_confidence() -> None:
         evidence=evidence,
         root_cause="login_handler mishandles password_hash",
     )
-    file_cache = {
-        "src/auth.py": "def login_handler(password_hash):\n    return password_hash\n# password_hash\n"
-    }
+    file_cache = {"src/auth.py": "def login_handler(password_hash):\n    return password_hash\n# password_hash\n"}
     validated = EvidenceValidator().validate(
         report,
         files_read=["src/auth.py"],

@@ -1010,7 +1010,7 @@ async def test_investigation_preloads_issue_referenced_files(
     assert "phase" in types
     # 预读成功路径输出带 auto 标记的 tool_call/tool_result 事件
     preload_calls = [e for e in events if e.type == "tool_call" and e.data and e.data.get("args", {}).get("auto")]
-    assert any(e.data["args"]["path"] == "src/parser.py" for e in preload_calls)
+    assert any(e.data and e.data["args"]["path"] == "src/parser.py" for e in preload_calls)
     assert "src/parser.py" in session.files_read
     # src/lexer.py 读取失败：不进入缓存
     assert "src/lexer.py" not in session.files_read
@@ -1131,7 +1131,7 @@ async def test_investigation_stream_passes_reasoning_events_through(fake_client,
     events = [event async for event in agent.investigate_stream("https://github.com/acme/widget/issues/1")]
 
     reasoning = [e for e in events if e.type == "reasoning"]
-    assert reasoning and "Analyzing the parser" in reasoning[0].data["delta"]
+    assert reasoning and reasoning[0].data and "Analyzing the parser" in reasoning[0].data["delta"]
 
 
 async def test_investigation_raises_when_report_stream_produces_nothing(
@@ -1401,7 +1401,7 @@ def test_trim_session_messages_skips_all_tool_turn() -> None:
     from app.agent import _trim_session_messages
 
     # 唯一的 turn 全是工具调用（无 user、无纯文本 assistant）：过滤后为空 → 跳过
-    messages = [
+    messages: list[dict] = [
         {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "f", "arguments": "{}"}}]},
         {"role": "tool", "content": "result", "tool_call_id": "1"},
     ]
@@ -2189,7 +2189,7 @@ async def test_migration_once_double_check_guard(tmp_path, monkeypatch) -> None:
     assert len(calls) == 1  # 全表扫描迁移只执行一次
 
     # 标志置位后再调用：直接短路返回，不再进入锁
-    assert await db_module._migrate_report_enrichment_once(conn) is None
+    await db_module._migrate_report_enrichment_once(conn)  # 返回值恒为 None，只验证副作用
     assert len(calls) == 1
     await conn.close()
 
@@ -2335,7 +2335,8 @@ async def test_task_queue_run_task_survives_aclose_failure(monkeypatch) -> None:
     await queue._run_task("b1", "t1")
 
     assert batch.tasks[0].status == "failed"
-    assert "investigation failed" in batch.tasks[0].error
+    task_error = batch.tasks[0].error or ""
+    assert "investigation failed" in task_error
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2361,7 +2362,7 @@ async def test_mark_stream_interrupted_schedules_detached_persist_on_cancel() ->
             raise asyncio.CancelledError
         await original_save(session_)
 
-    manager.save = cancelling_save
+    manager.save = cancelling_save  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
 
     with pytest.raises(asyncio.CancelledError):
         await mark_stream_interrupted(manager, session.session_id, started_at=time.monotonic())
@@ -2372,7 +2373,7 @@ async def test_mark_stream_interrupted_schedules_detached_persist_on_cancel() ->
     assert refreshed is not None
     assert refreshed.status == "failed"
     assert refreshed.phase == "interrupted"
-    manager.save = original_save
+    manager.save = original_save  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
 
 
 async def test_persist_interrupted_detached_skips_non_running_sessions() -> None:
@@ -2421,15 +2422,15 @@ async def test_persist_interrupted_detached_swallows_conflict_and_errors() -> No
     async def conflicting_save(session_: Session) -> None:
         raise SessionConflictError("conflict")
 
-    manager.save = conflicting_save
+    manager.save = conflicting_save  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
     await _persist_interrupted_detached(manager, session.session_id, time.monotonic())  # 不抛错
 
     async def exploding_get(session_id: str):
         raise RuntimeError("db exploded")
 
-    manager.get = exploding_get
+    manager.get = exploding_get  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
     await _persist_interrupted_detached(manager, session.session_id, time.monotonic())  # 不抛错
-    manager.save = original_save
+    manager.save = original_save  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
 
 
 # ══════════════════════════════════════════════════════════════════

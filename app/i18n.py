@@ -130,8 +130,8 @@ STRINGS = {
             "请仅输出一个符合 AnalysisReport schema 的顶层 JSON 对象。"
             '禁止输出工具调用参数（如 {"action": "read_file", ...}），禁止输出空内容，禁止输出文本说明。'
             '若证据不足，可将 confidence 设为 "low"，evidence 设为空数组，但仍需输出完整的 AnalysisReport 结构。'
-            '可选字段 confidence_rationale/hypotheses/impact/reproduction/fix_rationale 若未生成可省略，'
-            '但已生成的字段需保持结构完整。'
+            "可选字段 confidence_rationale/hypotheses/impact/reproduction/fix_rationale 若未生成可省略，"
+            "但已生成的字段需保持结构完整。"
         ),
         "depth_limit": "已达到调查深度上限，无法继续深入。",
         "no_investigation": "调查尚未完成，暂无结论可供参考。",
@@ -1255,13 +1255,13 @@ _FRONTEND_STRINGS = {
         "hint_phase_exploring": "Investigating the code — usually 2–5 minutes depending on repo size. You can cancel anytime.",
         "hint_phase_report": "Generating the report — usually 1–2 minutes.",
         "hint_tool_running": "Running {tool}. Searches on large repos can take 1–3 minutes — no action needed.",
-        "analysis_failed_retry": "The analysis did not finish. The server may still be working — click \"Resume analysis\" to continue.",
-        "archive_toast": "Archived. Restore it anytime from \"Archived\" in the sidebar.",
+        "analysis_failed_retry": 'The analysis did not finish. The server may still be working — click "Resume analysis" to continue.',
+        "archive_toast": 'Archived. Restore it anytime from "Archived" in the sidebar.',
         "delete_toast": "Session deleted.",
-        "empty_input_hint": "Paste a GitHub issue URL first, then press Enter or click \"New analysis\".",
+        "empty_input_hint": 'Paste a GitHub issue URL first, then press Enter or click "New analysis".',
         "copy_report_json": "Copy report JSON",
         "downloaded_file": "Downloaded {filename}",
-        "report_ready_hint": "Report ready — tap \"View report\".",
+        "report_ready_hint": 'Report ready — tap "View report".',
         "tool_read_file": "Read file",
         "tool_search_code": "Search code",
         "tool_grep_content": "Content search",

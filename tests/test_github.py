@@ -623,9 +623,7 @@ _ISSUE = IssueData(
 
 def _client_with(handler, *, write=False) -> GitHubClient:
     github = GitHubClient(write_enabled=write)
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     return github
 
 
@@ -771,7 +769,9 @@ async def test_get_branch_sha_rejects_invalid_sha() -> None:
 
 async def test_cache_ttl_disabled_misses() -> None:
     """cache_ttl<=0 时 _cache_get 永远 miss、_cache_set 永远不写。"""
-    github = _client_with(lambda _: httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="}),)
+    github = _client_with(
+        lambda _: httpx.Response(200, json={"encoding": "base64", "content": "cHJpbnQoMSk="}),
+    )
     github._cache_ttl = 0.0
     cached = await github._cache_get("k")
     assert cached is None
@@ -803,8 +803,14 @@ async def test_cache_expired_entry_is_evicted_on_get() -> None:
 async def test_tree_empty_repo_raises() -> None:
     """409 空仓库被映射为可读 GitHubError。"""
     issue = IssueData(
-        owner="acme", repo="widget", number=1, title="", body="", labels=[],
-        comments=[], default_branch="main",
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
     )
     github = _client_with(lambda _: httpx.Response(409, json={"message": "Git Repository is empty"}))
     async with github:
@@ -814,8 +820,14 @@ async def test_tree_empty_repo_raises() -> None:
 
 async def test_tree_over_max_entries_raises() -> None:
     issue = IssueData(
-        owner="acme", repo="widget", number=1, title="", body="", labels=[],
-        comments=[], default_branch="main",
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
     )
     paths = [{"path": f"src/f{i}.py", "type": "blob"} for i in range(5)]
     github = GitHubClient(max_tree_entries=3)
@@ -823,9 +835,7 @@ async def test_tree_over_max_entries_raises() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"tree": paths})
 
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     async with github:
         with pytest.raises(GitHubError, match="more than"):
             await github.get_tree(issue)
@@ -833,8 +843,14 @@ async def test_tree_over_max_entries_raises() -> None:
 
 async def test_get_file_binary_and_bad_encoding_raise_skipped() -> None:
     issue = IssueData(
-        owner="acme", repo="widget", number=1, title="", body="", labels=[],
-        comments=[], default_branch="main",
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
     )
     # 二进制（含 NUL）
     github = _client_with(lambda _: httpx.Response(200, json={"encoding": "base64", "content": "AAEA"}))
@@ -855,8 +871,14 @@ async def test_get_file_binary_and_bad_encoding_raise_skipped() -> None:
 
 async def test_get_file_at_commit_cache_hit_and_validation() -> None:
     issue = IssueData(
-        owner="acme", repo="widget", number=1, title="", body="", labels=[],
-        comments=[], default_branch="main",
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
     )
     calls = {"n": 0}
 
@@ -879,8 +901,14 @@ async def test_get_file_at_commit_cache_hit_and_validation() -> None:
 
 async def test_search_code_empty_or_long_query_raise() -> None:
     issue = IssueData(
-        owner="acme", repo="widget", number=1, title="", body="", labels=[],
-        comments=[], default_branch="main",
+        owner="acme",
+        repo="widget",
+        number=1,
+        title="",
+        body="",
+        labels=[],
+        comments=[],
+        default_branch="main",
     )
     github = _client_with(lambda _: httpx.Response(200, json={"items": []}))
     async with github:
@@ -945,9 +973,7 @@ async def test_get_issue_pull_request_url_rejected() -> None:
             return httpx.Response(200, json={"commit": {"sha": "abc"}})
         if url.endswith("/repos/acme/widget") or url.endswith("/repos/acme/widget/"):
             return httpx.Response(200, json={"default_branch": "main"})
-        return httpx.Response(
-            200, json={"title": "t", "body": "", "labels": [], "pull_request": {"url": "x"}}
-        )
+        return httpx.Response(200, json={"title": "t", "body": "", "labels": [], "pull_request": {"url": "x"}})
 
     await github._client.aclose()
     github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))

@@ -62,10 +62,12 @@ jobs:
           uv lock --check
 
       - name: Lint with ruff
-        run: ruff check app/ tests/
+        run: |
+          ruff check app/ tests/ scripts/ evals/
+          ruff format --check app/ tests/ scripts/ evals/
 
       - name: Type-check application
-        run: mypy app/
+        run: mypy app/ tests/ scripts/ evals/
 
       - name: Run tests
         # --cov-fail-under 覆盖 pyproject 里的全局门槛，按解释器取矩阵值（见上方注释）

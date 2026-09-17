@@ -62,7 +62,8 @@ eport_stream_outcome，流式调用在**消费完成后**补报真实结果（�
   响应对象时就记了成功，中途断流/超时对熔断器完全不可见）。
 - **请求体 model 缺少校验**：现在受字符集与长度约束
   （[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}）。
-- **写路径缺少服务端不变量**：alidate_pr_proposal 拒绝受保护路径
+- **写路径缺少服务端不变量**：
+alidate_pr_proposal 拒绝受保护路径
   （.github/**、.git/**、Dockerfile、.env*、锁文件、*.pem/*.key、CODEOWNERS）
   与受保护分支（main/master/develop/release/hotfix/rc/gh-pages），并新增 apply-fix 审计日志
   （仓库/分支/文件数/提案内容哈希）。
@@ -81,7 +82,8 @@ eport_stream_outcome，流式调用在**消费完成后**补报真实结果（�
   不会再多跑完当前网络步骤并继续计费。
 - **进度条填充不可见**：.progress-bar-fill 引用从未定义的 --blue，实测背景为
   
-gba(0,0,0,0)，进度条只剩灰槽。改用 ar(--accent)。
+gba(0,0,0,0)，进度条只剩灰槽。改用 
+ar(--accent)。
 - **浅色主题下「续跑提示卡」深底灰字**：--surface-2 同样未定义且兜底是深色，对比度约
   2.5:1；改用主题感知的 --canvas-subtle / --border，实测 4.93:1（浅）/ 5.62:1（深）。
 - **进度条每次阶段变化被整块重建**（刚出现就被抹掉、	ool_call 后还会倒缩）：改为常驻
@@ -178,6 +180,18 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
   第三方库走 CDN、4644 行 / 3 个文件」，实际是「有 package.json（仅 Playwright
   测试依赖、无构建脚本）、vendor 本地自带、约 8.1k 行 / 11 个文件」。改为用当前
   文件系统事实做可计算断言，并在「构建链已就绪」时失败提醒重新决策。
+
+### Changed
+
+- **类型检查与格式检查覆盖到测试与脚本**：mypy app/ tests/ scripts/ evals/ 现在全清
+  （此前只检查 app/；测试侧 31 处类型问题按真实类型修掉，而不是用 ignore 掩盖——
+  自造请求替身改用真实的 ApplyFixRequest、消息字面量补 list[dict] 标注、Optional
+  先断言再索引、工厂 kwargs 用 Any、SimpleNamespace 替身显式 cast；仅「刻意替换方法
+  模拟故障」的 7 处保留带原因说明的 type: ignore）。
+- ruff format 统一了 22 个文件，CI 同时固化 ruff check、ruff format --check 与 mypy 三项，
+  范围扩到 app/ tests/ scripts/ evals/。
+- 排查记录：ruff check --fix 的 B010 会把 setattr(obj, "m", v) 自动改回直接赋值——
+  改造中「改完又变回去」正是这个原因，改用显式类型忽略注释后稳定。
 
 ### Changed
 

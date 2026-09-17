@@ -29,15 +29,51 @@ _CJK = re.compile(r"[一-鿿]")
 _CONFIG_EXT = (".yml", ".yaml", ".toml", ".ini", ".cfg", ".env", ".conf", ".properties")
 
 # 历史报告回填时用于推断严重度的信号。新报告应由 LLM 直接产出，不受此影响。
-_SENSITIVE_MODULES = frozenset({
-    "auth", "authentication", "authorize", "authorization",
-    "security", "secure", "crypto", "cryptography", "encrypt", "encryption",
-    "password", "credential", "credentials", "token", "tokens", "jwt", "oauth",
-    "session", "sessions", "permission", "permissions", "acl", "rbac",
-    "payment", "payments", "billing", "checkout", "wallet", "wallets",
-    "user", "users", "account", "accounts", "identity",
-    "secret", "secrets", "vault", "key", "keys", "certificate", "certificates",
-})
+_SENSITIVE_MODULES = frozenset(
+    {
+        "auth",
+        "authentication",
+        "authorize",
+        "authorization",
+        "security",
+        "secure",
+        "crypto",
+        "cryptography",
+        "encrypt",
+        "encryption",
+        "password",
+        "credential",
+        "credentials",
+        "token",
+        "tokens",
+        "jwt",
+        "oauth",
+        "session",
+        "sessions",
+        "permission",
+        "permissions",
+        "acl",
+        "rbac",
+        "payment",
+        "payments",
+        "billing",
+        "checkout",
+        "wallet",
+        "wallets",
+        "user",
+        "users",
+        "account",
+        "accounts",
+        "identity",
+        "secret",
+        "secrets",
+        "vault",
+        "key",
+        "keys",
+        "certificate",
+        "certificates",
+    }
+)
 _SENSITIVE_PATCH_RE = re.compile(
     r"\b(auth|token|password|credential|secret|encrypt|hash|salt|jwt|oauth|"
     r"permission|session|csrf|xss|sql injection|injection|escape|sanitize)\b",
@@ -46,10 +82,31 @@ _SENSITIVE_PATCH_RE = re.compile(
 
 # 路径中常见的无意义顶层目录，提取模块名时跳过
 _GENERIC_ROOTS = {
-    "src", "lib", "libs", "app", "apps", "pkg", "pkgs", "package", "packages",
-    "tests", "test", "testing", "docs", "doc", "documentation",
-    "bin", "scripts", "tools", "tool", "examples", "example", "demo", "demos",
-    "benchmark", "benchmarks",
+    "src",
+    "lib",
+    "libs",
+    "app",
+    "apps",
+    "pkg",
+    "pkgs",
+    "package",
+    "packages",
+    "tests",
+    "test",
+    "testing",
+    "docs",
+    "doc",
+    "documentation",
+    "bin",
+    "scripts",
+    "tools",
+    "tool",
+    "examples",
+    "example",
+    "demo",
+    "demos",
+    "benchmark",
+    "benchmarks",
 }
 
 
@@ -80,9 +137,7 @@ def _module_of(path: str) -> str:
 
 
 def detect_lang(rep: dict) -> str:
-    text = " ".join(
-        [rep.get("summary", ""), rep.get("root_cause", ""), rep.get("confidence_rationale", "")]
-    )
+    text = " ".join([rep.get("summary", ""), rep.get("root_cause", ""), rep.get("confidence_rationale", "")])
     return "zh" if _CJK.search(text) else "en"
 
 
@@ -275,22 +330,15 @@ def enrich_report(rep: dict) -> dict:
         rc = (rep.get("root_cause", "") or "")[:60]
         n_ch = len(proposed)
         if lang == "zh":
-            rep["fix_rationale"] = (
-                f"针对根因「{rc}…」提出 {n_ch} 处修改，从根上消除问题成因。"
-            )
+            rep["fix_rationale"] = f"针对根因「{rc}…」提出 {n_ch} 处修改，从根上消除问题成因。"
         else:
             rep["fix_rationale"] = (
-                f"Targeting the root cause ('{rc}...'), {n_ch} change(s) are proposed "
-                f"to remove the underlying cause."
+                f"Targeting the root cause ('{rc}...'), {n_ch} change(s) are proposed to remove the underlying cause."
             )
 
     # ── hypotheses: accepted root cause only (no fabricated rejections) ──
     if "hypotheses" not in rep or not rep.get("hypotheses"):
-        reason0 = (
-            evidence[0].get("reason", "")
-            if evidence and isinstance(evidence[0], dict)
-            else ""
-        )
+        reason0 = evidence[0].get("reason", "") if evidence and isinstance(evidence[0], dict) else ""
         rep["hypotheses"] = [
             {
                 "statement": rep.get("root_cause", ""),

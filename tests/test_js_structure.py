@@ -31,8 +31,8 @@ _CSS_PATH = Path(__file__).resolve().parent.parent / "app" / "static" / "css" / 
 # app.js 经 IA 命名空间 + 本地 const 别名委托调用（与 enumLabel 同一模式），
 # 顶层函数 75 → 46、总行数 4234 → 3323。与 analyze/restoreSession 共享闭包
 # 状态的续跑/流式逻辑仍保留在 app.js 内。
-_APP_JS_MAX_FUNCTIONS = 51   # 当前 46，容差 +5
-_APP_JS_MAX_LINES = 3423     # 当前 3323，容差 +100
+_APP_JS_MAX_FUNCTIONS = 51  # 当前 46，容差 +5
+_APP_JS_MAX_LINES = 3423  # 当前 3323，容差 +100
 
 
 def _count_top_level_functions(text: str) -> int:
@@ -56,8 +56,7 @@ def test_app_js_line_count_within_budget() -> None:
     text = _APP_JS.read_text(encoding="utf-8")
     lines = text.count("\n") + 1
     assert lines <= _APP_JS_MAX_LINES, (
-        f"app.js 总行数 {lines} 超过预算 {_APP_JS_MAX_LINES}。"
-        "新增功能应考虑拆分到独立模块文件。"
+        f"app.js 总行数 {lines} 超过预算 {_APP_JS_MAX_LINES}。新增功能应考虑拆分到独立模块文件。"
     )
 
 
@@ -80,14 +79,16 @@ def test_app_js_has_no_bare_window_globals() -> None:
     bare_exports = re.findall(r"window\.(\w+)\s*=", text)
     # __echartsFailed/__markedFailed/__domPurifyFailed/__hljsFailed 由 HTML onerror 设置
     allowed = {
-        "IssueAgent", "addEventListener", "removeEventListener",
-        "__echartsFailed", "__markedFailed", "__domPurifyFailed", "__hljsFailed",
+        "IssueAgent",
+        "addEventListener",
+        "removeEventListener",
+        "__echartsFailed",
+        "__markedFailed",
+        "__domPurifyFailed",
+        "__hljsFailed",
     }
     forbidden = [name for name in bare_exports if name not in allowed]
-    assert not forbidden, (
-        f"app.js 引入了禁止的 window 裸全局导出：{forbidden}。"
-        "应通过 IA 命名空间暴露公共接口。"
-    )
+    assert not forbidden, f"app.js 引入了禁止的 window 裸全局导出：{forbidden}。应通过 IA 命名空间暴露公共接口。"
 
 
 # ── 滚动跟随模块（ScrollFollow）结构约束 ─────────────────────────────
@@ -157,8 +158,7 @@ def test_charts_have_stagger_animation_and_reduced_motion_fallback() -> None:
     assert "prefersReducedMotion" in text, "缺少 prefers-reduced-motion 检测"
     # 所有入场 setOption 都必须经 withAnim 包装（禁止退回裸 setOption 丢动画配置）。
     # 例外：ResizeObserver 的增量更新（animationDurationUpdate）不带入场动画语义。
-    bare_setoption = [m for m in re.findall(r"setOption\(\{([^}]*)", text)
-                      if "animationDurationUpdate" not in m]
+    bare_setoption = [m for m in re.findall(r"setOption\(\{([^}]*)", text) if "animationDurationUpdate" not in m]
     assert not bare_setoption, f"发现 {len(bare_setoption)} 处未包装 withAnim 的 setOption"
 
 

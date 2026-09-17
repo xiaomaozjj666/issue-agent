@@ -179,9 +179,7 @@ async def _migrate_report_enrichment(conn: aiosqlite.Connection) -> None:
             )
 
 
-async def _migrate_report_enrichment_once(
-    conn: aiosqlite.Connection, db_key: str | None = None
-) -> None:
+async def _migrate_report_enrichment_once(conn: aiosqlite.Connection, db_key: str | None = None) -> None:
     """Run _migrate_report_enrichment at most once per database file per process.
 
     The full-table scan is expensive and was previously called once per pooled

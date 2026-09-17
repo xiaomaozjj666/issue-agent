@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from typing import cast
 
 import pytest
 
@@ -97,8 +98,9 @@ def test_enrich_report_derives_english_patch_fields_and_is_idempotent() -> None:
     }
     assert "with patch and tests" in enriched["confidence_rationale"]
     assert "1 change(s)" in enriched["fix_rationale"]
-    assert enriched["hypotheses"][0]["status"] == "accepted"
-    assert enriched["hypotheses"][0]["rationale"] == "Formats bytes directly."
+    hypotheses = cast("list[dict[str, str]]", enriched["hypotheses"])
+    assert hypotheses[0]["status"] == "accepted"
+    assert hypotheses[0]["rationale"] == "Formats bytes directly."
 
     snapshot = copy.deepcopy(enriched)
     assert report_backfill.enrich_report(enriched) == snapshot

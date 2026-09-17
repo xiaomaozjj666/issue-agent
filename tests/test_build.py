@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,7 @@ def test_build_id_is_stable_and_tracks_runtime_and_web_changes(tmp_path: Path) -
 
 
 @pytest.fixture(autouse=True)
-def _reset_dynamic_cache() -> None:
+def _reset_dynamic_cache() -> Iterator[None]:
     """每个测试前后清空 get_build_id 的动态缓存，避免跨测试污染。"""
     yield
     build_module._cache_fingerprint = None

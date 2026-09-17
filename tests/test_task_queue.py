@@ -175,7 +175,13 @@ class TestTaskQueue:
 
         monkeypatch.setattr("app.task_queue.IssueAgent", FakeAgent)
         queue = TaskQueue(settings, breaker, max_concurrent=2, max_queue_size=10)
-        batch = queue.submit(["https://github.com/foo/bar/issues/1", "https://github.com/foo/bar/issues/2", "https://github.com/foo/bar/issues/3"])
+        batch = queue.submit(
+            [
+                "https://github.com/foo/bar/issues/1",
+                "https://github.com/foo/bar/issues/2",
+                "https://github.com/foo/bar/issues/3",
+            ]
+        )
 
         await queue.start()
         try:
