@@ -46,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **风险矩阵缺图例（颜色含义靠猜）**：标记颜色代表严重度、格底色代表风险等级，两者含义
+  不同却没有说明。现在矩阵卡片内加了严重度图例（严重/高/中/低四色点），颜色直接由
+  `riskMarkerColor` 生成，与标记永不脱节；e2e 断言图例四项齐全、四色互异，且「高」的色点
+  必须与矩阵实际标记色一致。
+- **图表坐标轴标签偏小**：横/纵轴标签由 11px 提升到 12px（图上最小的字），响应式不重叠
+  用例同步验证。
+
+
 - **同一严重度在不同图里显示成不同颜色**：`high` 在风险矩阵用 `riskMarkerHigh`（橙）、
   在波及范围/treemap 用 `warning`（黄）；`low` 一处 `success`（绿）一处 `muted`（灰）；
   `medium` 一处 `warning`（黄）一处 `primary`（蓝）—— 用户得为每张图重新学一遍映射。
