@@ -94,7 +94,7 @@ async def test_purge_old_cleans_up_locks_dict(tmp_path) -> None:
     # 强制旧时间戳
     stale_ts = "2020-01-01T00:00:00+00:00"
     store = manager._store
-    async with store._conn() as db:  # type: ignore[attr-defined]
+    async with store._conn() as db:  # type: ignore[union-attr]
         await db.execute(
             "UPDATE sessions SET updated_at=? WHERE session_id=?",
             (stale_ts, old_session.session_id),
@@ -110,9 +110,7 @@ async def test_purge_old_cleans_up_locks_dict(tmp_path) -> None:
 # ── agent.py: 空 tool_call ID 合成 ────────────────────────────
 
 
-async def test_chat_stream_synthesizes_empty_tool_call_ids(
-    make_agent, fake_client, monkeypatch, make_issue
-) -> None:
+async def test_chat_stream_synthesizes_empty_tool_call_ids(make_agent, fake_client, monkeypatch, make_issue) -> None:
     """空 tool_call ID 应生成合成 ID（call_0），不丢弃工具调用。"""
     from tests.conftest import _FakeStreamChunk
     from tests.test_agent import _MockGitHub
@@ -167,7 +165,6 @@ async def test_investigate_does_not_hold_lock_during_execution(make_agent, monke
     )
     session.lock = asyncio.Lock()
 
-
     async def mock_stream(*args, **kwargs):
         # investigate 执行期间检查锁是否被持有
         not session.lock.locked()
@@ -178,6 +175,7 @@ async def test_investigate_does_not_hold_lock_during_execution(make_agent, monke
     agent.investigate_stream = mock_stream  # type: ignore[assignment]
 
     from app.agent import ModelResponseError
+
     with pytest.raises(ModelResponseError):
         await agent.investigate("https://github.com/a/b/issues/1", session=session)
 
@@ -206,6 +204,7 @@ async def test_investigate_releases_lock_after_completion(make_agent, monkeypatc
     agent.investigate_stream = mock_stream  # type: ignore[assignment]
 
     from app.agent import ModelResponseError
+
     with pytest.raises(ModelResponseError):
         await agent.investigate("https://github.com/a/b/issues/1", session=session)
 
@@ -228,9 +227,7 @@ async def test_fork_aclose_does_not_close_shared_client() -> None:
         return httpx.Response(200, json={"tree": []})
 
     await github._client.aclose()
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
 
     forked = github.fork()
     # fork 的 aclose 不应关闭共享客户端
@@ -262,9 +259,7 @@ async def test_fork_context_manager_exit_does_not_close_shared_client() -> None:
         return httpx.Response(200, json={"tree": [{"path": "a.py", "type": "blob"}]})
 
     await github._client.aclose()
-    github._client = httpx.AsyncClient(
-        base_url="https://api.github.com", transport=httpx.MockTransport(handler)
-    )
+    github._client = httpx.AsyncClient(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
 
     forked = github.fork()
     async with forked:
@@ -541,7 +536,7 @@ async def test_chat_stream_marks_session_failed_on_error_event(tmp_path) -> None
         import app.routes.chat as chat_mod
 
         original_builder = chat_mod.build_issue_agent
-        chat_mod.build_issue_agent = lambda *args, **kwargs: MockAgent()
+        chat_mod.build_issue_agent = lambda *args, **kwargs: MockAgent()  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
 
         ChatRequest(session_id=session.session_id, message="test")
 
@@ -557,7 +552,7 @@ async def test_chat_stream_marks_session_failed_on_error_event(tmp_path) -> None
         assert restored.status == "failed", f"error 事件后应为 failed，实际 {restored.status}"
         assert restored.phase == "failed"
 
-        chat_mod.build_issue_agent = original_builder
+        chat_mod.build_issue_agent = original_builder  # type: ignore[method-assign,assignment]  # 刻意的猴子补丁：直接替换方法以模拟故障
     finally:
         app.state.session_manager = None
         if hasattr(app.state, "circuit_breaker"):

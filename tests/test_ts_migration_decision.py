@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _JS_DIR = _PROJECT_ROOT / "app" / "static" / "js"
@@ -37,7 +38,18 @@ _FILE_BASELINE = 10
 _BUILD_SCRIPT_HINTS = ("build", "bundle", "tsc", "vite", "webpack", "rollup", "esbuild")
 
 
-def _frontend_facts() -> dict[str, object]:
+class _Facts(TypedDict):
+    """前端形态事实：精确类型让断言可以做数值比较（此前是 dict[str, object]）。"""
+
+    files: int
+    lines: int
+    has_package_json: bool
+    has_build_script: bool
+    has_tsconfig: bool
+    vendor_local: bool
+
+
+def _frontend_facts() -> _Facts:
     """用当前文件系统事实描述前端形态（供断言，不写死快照）。"""
     js_files = sorted(_JS_DIR.glob("*.js"))
     lines = sum(len(path.read_text(encoding="utf-8").splitlines()) for path in js_files)

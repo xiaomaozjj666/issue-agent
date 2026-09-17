@@ -497,11 +497,6 @@ def _proposal() -> dict:
     }
 
 
-class _ConfirmRequest:
-    def __init__(self) -> None:
-        self.confirm = True
-
-
 async def _apply_fix_fixture(tmp_path, manager=None):
     """构造一个带校验通过提案的 completed 会话，返回 (manager, settings, session_id)。"""
     from app.config import Settings as AppSettings
@@ -570,7 +565,7 @@ async def test_apply_fix_does_not_delete_branch_when_pr_was_created(monkeypatch,
     with pytest.raises(HTTPException) as exc_info:
         await apply_fix(
             session_id=session_id,
-            request=_ConfirmRequest(),
+            request=ApplyFixRequest(confirm=True),
             settings=settings,
             session_mgr=manager,
         )
@@ -620,7 +615,7 @@ async def test_apply_fix_rolls_back_branch_on_generic_failure(monkeypatch, tmp_p
     with pytest.raises(HTTPException) as exc_info:
         await apply_fix(
             session_id=session_id,
-            request=_ConfirmRequest(),
+            request=ApplyFixRequest(confirm=True),
             settings=settings,
             session_mgr=manager,
         )
@@ -766,9 +761,7 @@ async def test_chat_archived_session_returns_409() -> None:
             await manager.save(session)
             transport = httpx_client.ASGITransport(app=app)
             async with httpx_client.AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.post(
-                    "/chat", json={"session_id": session.session_id, "message": "hi"}
-                )
+                response = await client.post("/chat", json={"session_id": session.session_id, "message": "hi"})
             assert response.status_code == 409
             assert "Restore" in response.json()["detail"]
         finally:
@@ -832,7 +825,7 @@ def test_import_rejects_missing_issue_url() -> None:
 def test_batch_submit_invalid_url_returns_422() -> None:
     from app.task_queue import TaskQueue
 
-    queue = TaskQueue(get_settings(), None, max_concurrent=1, max_queue_size=10)
+    queue = TaskQueue(get_settings(), CircuitBreaker(threshold=5, recovery=30), max_concurrent=1, max_queue_size=10)
     app.state.task_queue = queue
     client = TestClient(app)
     response = client.post("/batch", json={"issue_urls": ["not-a-url"]})
@@ -843,7 +836,7 @@ def test_batch_submit_invalid_url_returns_422() -> None:
 def test_batch_status_unknown_returns_404() -> None:
     from app.task_queue import TaskQueue
 
-    queue = TaskQueue(get_settings(), None, max_concurrent=1, max_queue_size=10)
+    queue = TaskQueue(get_settings(), CircuitBreaker(threshold=5, recovery=30), max_concurrent=1, max_queue_size=10)
     app.state.task_queue = queue
     client = TestClient(app)
     response = client.get("/batch/does-not-exist")
@@ -880,9 +873,7 @@ def _post_analyze_with_error(monkeypatch, exc, expected_status):
     app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
     app.dependency_overrides[get_circuit_breaker] = lambda: CircuitBreaker(threshold=5, recovery=30)
     try:
-        response = TestClient(app).post(
-            "/analyze", json={"issue_url": "https://github.com/acme/widget/issues/1"}
-        )
+        response = TestClient(app).post("/analyze", json={"issue_url": "https://github.com/acme/widget/issues/1"})
     finally:
         app.dependency_overrides.clear()
         monkeypatch.setattr(AgentClass, "investigate", original)
@@ -1134,9 +1125,7 @@ async def test_chat_stream_yields_deltas_and_marks_completed(monkeypatch) -> Non
     session = await manager.create("https://github.com/acme/widget/issues/1")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         try:
-            response = await client.post(
-                "/chat/stream", json={"session_id": session.session_id, "message": "hi"}
-            )
+            response = await client.post("/chat/stream", json={"session_id": session.session_id, "message": "hi"})
             text = response.text
             assert "hello " in text and "world" in text
             assert '"type": "done"' in text
@@ -1162,9 +1151,7 @@ async def test_chat_stream_error_event_marks_failed(monkeypatch) -> None:
     session = await manager.create("https://github.com/acme/widget/issues/1")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         try:
-            response = await client.post(
-                "/chat/stream", json={"session_id": session.session_id, "message": "hi"}
-            )
+            response = await client.post("/chat/stream", json={"session_id": session.session_id, "message": "hi"})
             assert "model crashed" in response.text
             detail = await client.get(f"/session/{session.session_id}")
             assert detail.json()["status"] == "failed"
@@ -1182,9 +1169,7 @@ async def test_chat_stream_archived_session_returns_409() -> None:
     await manager.save(session)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         try:
-            response = await client.post(
-                "/chat/stream", json={"session_id": session.session_id, "message": "hi"}
-            )
+            response = await client.post("/chat/stream", json={"session_id": session.session_id, "message": "hi"})
         finally:
             app.dependency_overrides.pop(gsm, None)
     assert response.status_code == 409

@@ -112,9 +112,7 @@ class CircuitBreaker:
                     )
             elif self._state == State.HALF_OPEN and self._probe_in_flight:
                 # 已有探针在执行，其他请求继续 fast-fail
-                raise CircuitBreakerOpenError(
-                    "LLM provider circuit is half-open; waiting for probe result"
-                )
+                raise CircuitBreakerOpenError("LLM provider circuit is half-open; waiting for probe result")
 
         # Execute the call *outside* the lock so concurrent requests
         # don't serialize on the API call itself.

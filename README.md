@@ -275,8 +275,9 @@ wiki/                  项目文档
 
 ```bash
 # 与 CI 完全一致（本地全绿 = CI 全绿；下方命令即 ci.yml 的四个作业内容）
-ruff check app/ tests/
-mypy app/
+ruff check app/ tests/ scripts/ evals/
+ruff format --check app/ tests/ scripts/ evals/   # 格式唯一来源，CI 会拦下未格式化的改动
+mypy app/ tests/ scripts/ evals/
 pytest -v --cov=app --cov-report=term-missing   # 覆盖率门槛见 pyproject（3.11 因追踪器差异单独放宽，见 ci.yml 注释）
 pip-audit --skip-editable                        # 依赖漏洞扫描（本地可编辑安装包跳过）
 

@@ -103,15 +103,11 @@ class AnalysisReport(BaseModel):
     evidence_audit: EvidenceAudit = Field(default_factory=EvidenceAudit)
     review_audit: ReviewAudit = Field(default_factory=ReviewAudit)
     # ── 增强字段：让报告更具说服力、图表更具信息量（全部可选，向后兼容旧报告）──
-    confidence_rationale: str = Field(
-        default="", description="Explanation of confidence level"
-    )
+    confidence_rationale: str = Field(default="", description="Explanation of confidence level")
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     impact: Impact | None = Field(default=None, description="Severity, likelihood, blast radius")
     reproduction: Reproduction | None = Field(default=None, description="Reproduction steps")
-    fix_rationale: str = Field(
-        default="", description="Reason for choosing this fix"
-    )
+    fix_rationale: str = Field(default="", description="Reason for choosing this fix")
 
 
 class ReviewOutcome(BaseModel):

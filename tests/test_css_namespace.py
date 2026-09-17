@@ -18,9 +18,9 @@ _CSS = Path(__file__).resolve().parent.parent / "app" / "static" / "css" / "prim
 
 # 允许的无前缀独立类（选择器以 .name 开头且 name 不含 -）
 _BARE_CLASS_WHITELIST: set[str] = {
-    "hljs",   # highlight.js 库约定，不可改名
+    "hljs",  # highlight.js 库约定，不可改名
     "badge",  # 项目稳定约定的通用徽章，与 .review-chip 共用样式
-    "msg",    # 对话消息气泡，历史稳定命名
+    "msg",  # 对话消息气泡，历史稳定命名
     "toast",  # 全局浮层提示，历史稳定命名
 }
 

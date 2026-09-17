@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from app.config import Settings
 from app.events import AgentEvent
 from app.models import AnalysisReport, CodeReference, ReviewAudit
+from app.routes.sessions import ApplyFixRequest
 from app.services import (
     apply_fix,
     finish_cancelled_session,
@@ -296,7 +297,7 @@ async def _session_with_proposal(tmp_path) -> tuple[SessionManager, str]:
 async def test_apply_fix_requires_write_mode(tmp_path) -> None:
     manager, session_id = await _session_with_proposal(tmp_path)
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix(session_id, SimpleRequest(True), settings=_SETTINGS_RO, session_mgr=manager)
+        await apply_fix(session_id, ApplyFixRequest(confirm=True), settings=_SETTINGS_RO, session_mgr=manager)
     assert exc_info.value.status_code == 403
     await manager.close()
 
@@ -304,7 +305,7 @@ async def test_apply_fix_requires_write_mode(tmp_path) -> None:
 async def test_apply_fix_unknown_session_returns_404(tmp_path) -> None:
     manager, _ = await _session_with_proposal(tmp_path)
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix("missing", SimpleRequest(True), settings=_SETTINGS, session_mgr=manager)
+        await apply_fix("missing", ApplyFixRequest(confirm=True), settings=_SETTINGS, session_mgr=manager)
     assert exc_info.value.status_code == 404
     await manager.close()
 
@@ -315,7 +316,7 @@ async def test_apply_fix_without_proposal_returns_404(tmp_path) -> None:
     session.status = "completed"
     await manager.save(session)
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix(session.session_id, SimpleRequest(True), settings=_SETTINGS, session_mgr=manager)
+        await apply_fix(session.session_id, ApplyFixRequest(confirm=True), settings=_SETTINGS, session_mgr=manager)
     assert exc_info.value.status_code == 404
     await manager.close()
 
@@ -323,7 +324,7 @@ async def test_apply_fix_without_proposal_returns_404(tmp_path) -> None:
 async def test_apply_fix_without_confirm_returns_400(tmp_path) -> None:
     manager, session_id = await _session_with_proposal(tmp_path)
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix(session_id, SimpleRequest(False), settings=_SETTINGS, session_mgr=manager)
+        await apply_fix(session_id, ApplyFixRequest(confirm=False), settings=_SETTINGS, session_mgr=manager)
     assert exc_info.value.status_code == 400
     await manager.close()
 
@@ -335,7 +336,7 @@ async def test_apply_fix_running_session_returns_409(tmp_path) -> None:
     session.status = "running"
     await manager.save(session)
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix(session_id, SimpleRequest(True), settings=_SETTINGS, session_mgr=manager)
+        await apply_fix(session_id, ApplyFixRequest(confirm=True), settings=_SETTINGS, session_mgr=manager)
     assert exc_info.value.status_code == 409
     await manager.close()
 
@@ -349,7 +350,7 @@ async def test_apply_fix_invalid_stored_proposal_returns_409(tmp_path, monkeypat
 
     monkeypatch.setattr("app.services.validate_pr_proposal", reject)
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix(session_id, SimpleRequest(True), settings=_SETTINGS, session_mgr=manager)
+        await apply_fix(session_id, ApplyFixRequest(confirm=True), settings=_SETTINGS, session_mgr=manager)
     assert exc_info.value.status_code == 409
     assert "invalid" in exc_info.value.detail
     await manager.close()
@@ -371,11 +372,6 @@ async def test_apply_fix_incomplete_session_returns_409(tmp_path) -> None:
     )
     # session.issue 为 None → 409
     with pytest.raises(HTTPException) as exc_info:
-        await apply_fix(session.session_id, SimpleRequest(True), settings=_SETTINGS, session_mgr=manager)
+        await apply_fix(session.session_id, ApplyFixRequest(confirm=True), settings=_SETTINGS, session_mgr=manager)
     assert exc_info.value.status_code == 409
     await manager.close()
-
-
-class SimpleRequest:
-    def __init__(self, confirm: bool) -> None:
-        self.confirm = confirm

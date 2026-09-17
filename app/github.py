@@ -427,6 +427,7 @@ class GitHubClient:
                 f"Use https://github.com/{owner}/{repo}/pull/{number} to view the PR, "
                 f"or pick an issue from https://github.com/{owner}/{repo}/issues."
             )
+
         async def fetch_comments() -> list[str]:
             # 分页拉取全部评论：热门 issue 常有上百条评论，首屏 30 条会丢失关键上下文。
             # per_page=100（GitHub API 最大值）减少请求次数，上限 200 条避免极端仓库拖垮分析。

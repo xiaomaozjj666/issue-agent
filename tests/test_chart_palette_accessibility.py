@@ -116,8 +116,7 @@ def test_severity_markers_stay_distinguishable_under_color_blindness(theme: str)
     worst = (999.0, "", "")
     for kind in ("normal", "deuteranopia", "protanopia"):
         simulated = {
-            key: (_rgb(value) if kind == "normal" else _simulate(_rgb(value), kind))
-            for key, value in colors.items()
+            key: (_rgb(value) if kind == "normal" else _simulate(_rgb(value), kind)) for key, value in colors.items()
         }
         for left, right in itertools.combinations(sorted(simulated), 2):
             delta = _delta_e(simulated[left], simulated[right])
@@ -138,9 +137,7 @@ def test_severity_markers_are_visible_on_their_own_cell(theme: str) -> None:
         assert _contrast(palette[key], palette[cell_key]) >= _MIN_CONTRAST, (
             f"{theme}: {key} 在 {cell_key} 格底色上的对比度不足 3:1"
         )
-        assert _contrast(palette[key], _PAGE_BG[theme]) >= _MIN_CONTRAST, (
-            f"{theme}: {key} 在页面背景上的对比度不足 3:1"
-        )
+        assert _contrast(palette[key], _PAGE_BG[theme]) >= _MIN_CONTRAST, f"{theme}: {key} 在页面背景上的对比度不足 3:1"
 
 
 # 格底色的明度阶梯与相邻等级区分度：色相在色盲下会坍缩，明度是最后一道冗余编码。
@@ -161,8 +158,7 @@ def test_risk_cells_form_a_monotonic_lightness_ladder(theme: str) -> None:
 
     steps = [abs(lightness[i + 1] - lightness[i]) for i in range(len(lightness) - 1)]
     assert min(steps) >= _CELL_MIN_STEP, (
-        f"{theme} 相邻严重度的明度差过小（{steps}）——色相在色盲/灰度下不可靠，"
-        "明度阶梯是读出等级的最后一道冗余编码。"
+        f"{theme} 相邻严重度的明度差过小（{steps}）——色相在色盲/灰度下不可靠，明度阶梯是读出等级的最后一道冗余编码。"
     )
 
 

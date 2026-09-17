@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +21,7 @@ import pytest
 from app.agent import IssueAgent, ModelResponseError
 from app.circuit_breaker import CircuitBreaker, State, is_retryable_failure
 from app.provider import iter_stream_with_breaker
-from app.sessions import SessionConflictError, SessionManager
+from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import ToolExecutor, _is_protected_write_path, validate_pr_proposal
 
 
@@ -215,7 +216,7 @@ def test_cost_budget_stops_run_when_exceeded(make_agent) -> None:
     session = SimpleNamespace(metrics={"input_tokens": 10_000, "output_tokens": 10_000})
 
     with pytest.raises(ModelResponseError) as excinfo:
-        agent._enforce_cost_budget(session)  # noqa: SLF001 — 直接验证闸门逻辑
+        agent._enforce_cost_budget(cast("Session", session))  # noqa: SLF001 — 只提供 metrics 的替身
 
     assert "budget" in str(excinfo.value)
 
@@ -225,7 +226,7 @@ def test_cost_budget_disabled_by_default(make_agent) -> None:
     session = SimpleNamespace(metrics={"input_tokens": 10_000_000, "output_tokens": 10_000_000})
 
     # 0 = 不限制：闸门不介入（成本估算由报告/收尾路径单独写入 metrics）
-    agent._enforce_cost_budget(session)  # noqa: SLF001
+    agent._enforce_cost_budget(cast("Session", session))  # noqa: SLF001
 
     assert "estimated_cost_usd" not in session.metrics
 

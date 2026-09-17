@@ -8,6 +8,7 @@ Provides two storage backends:
 it selects the backend based on the configured ``db_path`` and manages
 per-session asyncio locks for in-process mutual exclusion.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -277,10 +278,12 @@ class SqliteStore:
         async with self._conn() as db:
             # Merge DB metrics into memory: update_metrics writes directly to DB
             # bypassing save(), so DB may hold keys the in-memory session lacks.
-            row = await (await db.execute(
-                "SELECT metrics_json FROM sessions WHERE session_id=?",
-                (session.session_id,),
-            )).fetchone()
+            row = await (
+                await db.execute(
+                    "SELECT metrics_json FROM sessions WHERE session_id=?",
+                    (session.session_id,),
+                )
+            ).fetchone()
             if row and row["metrics_json"]:
                 try:
                     db_metrics = json.loads(row["metrics_json"])
@@ -486,9 +489,7 @@ class SqliteStore:
             # 只搜 issue_url / display_title / issue 标题（json_extract 只取标题字段），
             # 避免对整个 issue_json（含 body/comments 大文本）做 LIKE 全表扫描。
             # 与 MemoryStore._session_search_text 的语义保持一致；DB 由 retention purge 兜底有界。
-            clauses.append(
-                "(issue_url LIKE ? OR display_title LIKE ? OR json_extract(issue_json, '$.title') LIKE ?)"
-            )
+            clauses.append("(issue_url LIKE ? OR display_title LIKE ? OR json_extract(issue_json, '$.title') LIKE ?)")
             params.extend([pattern, pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.extend([limit, offset])

@@ -285,9 +285,7 @@ async def import_session(request: Request, manager: SessionMgr) -> SessionSummar
     events = body.get("events")
     if isinstance(events, list):
         max_events = 5000
-        valid_events = [
-            event for event in events[:max_events] if isinstance(event, dict) and event.get("type")
-        ]
+        valid_events = [event for event in events[:max_events] if isinstance(event, dict) and event.get("type")]
         if valid_events:
             await manager.append_events(new_session.session_id, valid_events)
 

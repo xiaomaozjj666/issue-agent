@@ -475,7 +475,7 @@ def test_build_report_messages_skips_tool_history_and_keeps_system_issue_and_fil
     executor._file_cache["src/parser.py"] = "def parse():\n    return None\n"
     executor.files_read.append("src/parser.py")
 
-    messages = [
+    messages: list[dict] = [
         {"role": "system", "content": "SYSTEM_PROMPT"},
         {"role": "user", "content": "ISSUE_CONTEXT"},
         {"role": "assistant", "content": "thinking", "tool_calls": [{"id": "c1"}]},
@@ -699,14 +699,10 @@ async def test_chat_rollback_survives_message_trim(
     with pytest.raises(RuntimeError, match="No more mock responses"):
         await agent.chat(session, "看一下 parser 代码")
     assert len(session.messages) <= before_len
-    assert all(
-        m.get("content") != "看一下 parser 代码" for m in session.messages
-    ), "trim 场景下不得残留本次 user 消息"
+    assert all(m.get("content") != "看一下 parser 代码" for m in session.messages), "trim 场景下不得残留本次 user 消息"
 
 
-async def test_chat_stream_rollback_survives_message_trim(
-    make_agent, fake_client, monkeypatch, make_issue
-) -> None:
+async def test_chat_stream_rollback_survives_message_trim(make_agent, fake_client, monkeypatch, make_issue) -> None:
     """chat_stream 版本：trim 触发后失败回滚仍完整。"""
     monkeypatch.setattr("app.agent.GitHubClient", _MockGitHub)
     from tests.conftest import _FakeStreamChunk
@@ -730,9 +726,7 @@ async def test_chat_stream_rollback_survives_message_trim(
         events.append(event)
     assert events[-1]["type"] == "error"
     assert len(session.messages) <= before_len
-    assert all(
-        m.get("content") != "看一下 parser 代码" for m in session.messages
-    ), "trim 场景下不得残留本次 user 消息"
+    assert all(m.get("content") != "看一下 parser 代码" for m in session.messages), "trim 场景下不得残留本次 user 消息"
 
 
 async def test_chat_stream_yields_delta_and_done(make_agent, fake_client, monkeypatch, make_issue) -> None:
@@ -935,7 +929,7 @@ def test_trim_session_messages_keeps_latest_complete_turn() -> None:
 
 
 def test_trim_session_messages_compacts_oversized_tool_turn() -> None:
-    messages = [
+    messages: list[dict] = [
         {"role": "user", "content": "inspect"},
         {
             "role": "assistant",

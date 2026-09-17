@@ -30,12 +30,8 @@ from app.tools import validate_pr_proposal
 logger = logging.getLogger(__name__)
 
 # 并发闸门打满 / 同一会话重复发起时的用户可见消息（error 事件正文，前端原样展示）。
-BUSY_INVESTIGATIONS = (
-    "Too many investigations are already running. Please retry in a moment."
-)
-SESSION_ALREADY_RUNNING = (
-    "This session already has a running investigation. Wait for it to finish, or cancel it first."
-)
+BUSY_INVESTIGATIONS = "Too many investigations are already running. Please retry in a moment."
+SESSION_ALREADY_RUNNING = "This session already has a running investigation. Wait for it to finish, or cancel it first."
 
 # 活跃心跳间隔：必须显著小于 session_stale_after_seconds（默认 300s），
 # 否则后台 stale recovery 会把正在跑的调查误判成孤儿并抢走终态（返回 409）。
@@ -258,9 +254,7 @@ async def finish_cancelled_session(
         logger.warning("SessionConflictError while finalizing cancelled session %s", session_id)
 
 
-async def _persist_interrupted_detached(
-    manager: SessionManager, session_id: str, started_at: float
-) -> None:
+async def _persist_interrupted_detached(manager: SessionManager, session_id: str, started_at: float) -> None:
     """脱离取消作用域的后台任务：确保 interrupted 终态一定落库。
 
     ``mark_stream_interrupted`` 在客户端断开（外层任务被取消）的上下文中调用，

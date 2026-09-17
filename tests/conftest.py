@@ -5,6 +5,8 @@ from types import SimpleNamespace
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("SESSION_DB_PATH", ":memory:")
 
+from typing import Any
+
 import pytest
 
 from app.agent import IssueAgent
@@ -122,7 +124,7 @@ def make_settings() -> Settings:
 
 @pytest.fixture
 def make_agent():
-    def _factory(*, settings_kwargs: dict | None = None, **kwargs: object) -> IssueAgent:
+    def _factory(*, settings_kwargs: dict | None = None, **kwargs: Any) -> IssueAgent:
         base_kwargs = {
             "openai_api_key": "test-key",
             "max_agent_iterations": 5,

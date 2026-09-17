@@ -93,9 +93,7 @@ def main() -> int:
 
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    rows = con.execute(
-        "SELECT session_id, report_json FROM sessions WHERE report_json IS NOT NULL"
-    ).fetchall()
+    rows = con.execute("SELECT session_id, report_json FROM sessions WHERE report_json IS NOT NULL").fetchall()
 
     total = len(rows)
     changed = 0
