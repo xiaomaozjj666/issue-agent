@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/FastAPI-API-009688" alt="FastAPI" />
   <img src="https://img.shields.io/badge/DeepSeek-LLM-4D6BFE" alt="DeepSeek" />
   <img src="https://img.shields.io/badge/Docker-ready-2496ED" alt="Docker" />
-  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-brightgreen" alt="CI" />
+  <a href="https://github.com/xiaomaozjj666/issue-agent/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/issue-agent/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
@@ -276,7 +276,7 @@ wiki/                  项目文档
 ## 测试
 
 ```bash
-# 与 CI 完全一致（本地全绿 = CI 全绿；下方命令即 ci.yml 的四个作业内容）
+# 与 CI 完全一致（本地全绿 = CI 全绿；下方命令即 ci.yml test 作业的检查内容）
 ruff check app/ tests/ scripts/ evals/
 ruff format --check app/ tests/ scripts/ evals/   # 格式唯一来源，CI 会拦下未格式化的改动
 mypy app/ tests/ scripts/ evals/
