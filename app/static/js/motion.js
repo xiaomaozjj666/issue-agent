@@ -71,7 +71,7 @@
 
   // 扫描容器内的数字指标卡片，自动触发滚动
   // 仅对纯数字 value 的卡片启用，文本类指标（置信度/审查状态）保持原样。
-  // 保留此动效：指标数字滚动是 Dashboard 常见的"数据感"微交互（非 模板装饰），
+  // 保留此动效：指标数字滚动是 Dashboard 常见的"数据感"微交互（属功能性反馈，非装饰性动效），
   // 用 IntersectionObserver 在卡片可见时才触发，避免视口外浪费帧。
   function applyCounters(container) {
     if (!container || prefersReducedMotion()) return;
