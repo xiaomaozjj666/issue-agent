@@ -34,7 +34,7 @@ Repository = "https://github.com/xiaomaozjj666/issue-agent"
 
 [project.optional-dependencies]
 dev = [
-  "mypy>=2.3.1,<3",
+  "mypy>=2.4.0,<3",
   "pip-audit>=2.10.1,<3",
   "pytest>=9.1.1,<10",
   "pytest-asyncio>=1.4,<2",
