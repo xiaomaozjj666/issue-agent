@@ -1,7 +1,8 @@
 version: 2
 updates:
-  # Python 依赖（pyproject.toml）。dev 组单独成组，避免测试工具更新淹没运行时依赖。
-  - package-ecosystem: pip
+  # Python 依赖（uv 生态，原生更新 uv.lock；2026-09 起 Dependabot 支持）。
+  # dev 组单独成组，避免测试工具更新淹没运行时依赖。
+  - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
