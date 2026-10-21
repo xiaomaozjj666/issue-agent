@@ -2,6 +2,7 @@ import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -95,10 +96,10 @@ def test_monitor_state_skips_unreadable_directory(tmp_path: Path, monkeypatch: p
     (app_dir / "locked").mkdir()
     real_scandir = os.scandir
 
-    def fake_scandir(path: object) -> object:
+    def fake_scandir(path: Any) -> Any:
         if Path(str(path)).name == "locked":
             raise PermissionError("denied")
-        return real_scandir(path)  # type: ignore[arg-type]
+        return real_scandir(path)
 
     monkeypatch.setattr(build_module.os, "scandir", fake_scandir)
     paths, _fingerprint, _fresh = build_module._monitor_state(app_dir)
@@ -142,8 +143,8 @@ def test_monitor_state_skips_file_whose_stat_fails(tmp_path: Path, monkeypatch: 
         def __enter__(self) -> "_Scandir":
             return self
 
-        def __exit__(self, *exc: object) -> bool:
-            return False
+        def __exit__(self, *exc: object) -> None:
+            return None
 
     monkeypatch.setattr(
         build_module.os,
