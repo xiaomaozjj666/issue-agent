@@ -58,9 +58,15 @@ jobs:
 
       - name: Verify uv.lock is in sync
         # uv.lock 已提交但 CI/Docker 都用 pip 安装，锁文件容易悄悄漂移而无人发现。
-        # 这里只做一致性校验（不改变安装方式），并用生成该锁的 uv 版本固定校验器行为。
+        # 这里只做一致性校验（不改变安装方式）。
+        #
+        # 版本钉法：既要在提交的 uv.lock 上 `uv lock --check` 通过，又不能带已知公告
+        # —— pip-audit 审计的是整个环境，构建工具也会被算进去。
+        # 0.12.3 曾因 PYSEC-2026-4321 / GHSA-hq85-5cpj-mr62（内置 CA 信任了中间 CA
+        # 私钥已泄露的 emSign 根，2026-10-20 发布，fixed 0.13.4）让审计整段变红。
+        # 升版前先本地验证：`uv lock --check` 在 0.13.4 上仍通过（实测 74 包、exit 0）。
         run: |
-          python -m pip install --quiet "uv==0.12.3"
+          python -m pip install --quiet "uv==0.13.4"
           uv lock --check
 
       - name: Lint with ruff

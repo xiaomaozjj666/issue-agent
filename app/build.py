@@ -68,7 +68,9 @@ def _monitor_state(base: Path) -> tuple[list[Path], str, bool]:
                     if entry.is_dir(follow_symlinks=False):
                         stack.append(Path(entry.path))
                         continue
-                    if not entry.is_file(follow_symlinks=False):
+                    # 文件跟随符号链接（与旧实现 Path.is_file() 一致），
+                    # 目录不跟随，避免软链成环导致无限递归。
+                    if not entry.is_file(follow_symlinks=True):
                         continue
                 except OSError:
                     continue

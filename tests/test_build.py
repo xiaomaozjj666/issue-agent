@@ -1,3 +1,5 @@
+import os
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -66,3 +68,108 @@ def test_get_build_id_refreshes_when_static_asset_changes(tmp_path: Path, monkey
     after = get_build_id()
     assert after != before, "静态资源内容变化后 get_build_id 必须返回新值"
     assert get_build_id() == after
+
+
+def test_monitor_state_flags_recently_modified_files_as_fresh(tmp_path: Path) -> None:
+    """刚写过的文件必须被判为 fresh，否则指纹缓存会漏掉同 tick 的等长改写。"""
+    app_dir = tmp_path / "app"
+    static_dir = app_dir / "static"
+    static_dir.mkdir(parents=True)
+    asset = static_dir / "app.js"
+    asset.write_text("window.v = 1;\n", encoding="utf-8")
+
+    _paths, _fingerprint, fresh = build_module._monitor_state(app_dir)
+    assert fresh is True, "新建文件的 mtime 就在当下，应判为 fresh"
+
+    old_ns = time.time_ns() - 60 * 10**9
+    os.utime(asset, ns=(old_ns, old_ns))
+    _paths, _fingerprint, fresh = build_module._monitor_state(app_dir)
+    assert fresh is False, "把 mtime 推回一分钟后不应再判为 fresh"
+
+
+def test_monitor_state_skips_unreadable_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """某个子目录不可读时跳过它，而不是让整个构建身份计算抛错。"""
+    app_dir = tmp_path / "app"
+    (app_dir / "static").mkdir(parents=True)
+    (app_dir / "static" / "ok.js").write_text("ok\n", encoding="utf-8")
+    (app_dir / "locked").mkdir()
+    real_scandir = os.scandir
+
+    def fake_scandir(path: object) -> object:
+        if Path(str(path)).name == "locked":
+            raise PermissionError("denied")
+        return real_scandir(path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(build_module.os, "scandir", fake_scandir)
+    paths, _fingerprint, _fresh = build_module._monitor_state(app_dir)
+    assert [p.name for p in paths] == ["ok.js"]
+
+
+def test_monitor_state_skips_file_whose_stat_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """单个文件的 stat 失败只跳过该文件（删到一半的构建产物等）。"""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    good = app_dir / "ok.py"
+    bad = app_dir / "bad.py"
+    good.write_text("ok\n", encoding="utf-8")
+    bad.write_text("bad\n", encoding="utf-8")
+
+    class _Entry:
+        def __init__(self, path: Path, *, broken: bool) -> None:
+            self.name = path.name
+            self.path = str(path)
+            self._path = path
+            self._broken = broken
+
+        def is_dir(self, follow_symlinks: bool = True) -> bool:
+            return False
+
+        def is_file(self, follow_symlinks: bool = True) -> bool:
+            return True
+
+        def stat(self) -> os.stat_result:
+            if self._broken:
+                raise OSError("stat failed")
+            return self._path.stat()
+
+    class _Scandir:
+        def __init__(self, entries: list[_Entry]) -> None:
+            self._entries = entries
+
+        def __iter__(self):
+            return iter(self._entries)
+
+        def __enter__(self) -> "_Scandir":
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        build_module.os,
+        "scandir",
+        lambda _p: _Scandir([_Entry(good, broken=False), _Entry(bad, broken=True)]),
+    )
+    paths, _fingerprint, _fresh = build_module._monitor_state(app_dir)
+    assert [p.name for p in paths] == ["ok.py"]
+
+
+def test_calculate_build_id_skips_unreadable_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """文件在扫描后、读取前消失时只跳过它，不影响其它文件参与计算。"""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    keep = app_dir / "keep.py"
+    gone = app_dir / "gone.py"
+    keep.write_text("keep\n", encoding="utf-8")
+    gone.write_text("gone\n", encoding="utf-8")
+    paths, _fingerprint, _fresh = build_module._monitor_state(app_dir)
+    real_read = Path.read_bytes
+
+    def fake_read(self: Path) -> bytes:
+        if self.name == "gone.py":
+            raise OSError("vanished")
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fake_read)
+    digest = build_module._hash_paths(paths, app_dir)
+    assert digest == build_module._hash_paths([keep], app_dir), "跳过读不到的文件后应与只算剩余文件一致"
