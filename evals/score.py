@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -70,3 +71,33 @@ def score_report(case: dict[str, Any], report: AnalysisReport) -> dict[str, Any]
             "review_status": report.review_audit.status,
         },
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Score a saved report against a golden case, entirely offline (no network, no LLM)."""
+    parser = argparse.ArgumentParser(
+        description="Score a saved AnalysisReport JSON against an eval case",
+    )
+    parser.add_argument("--case", type=Path, help="Path to the eval case JSON")
+    parser.add_argument("--report", type=Path, help="Path to a saved AnalysisReport JSON")
+    args = parser.parse_args(argv)
+
+    if args.case is None and args.report is None:
+        print("Usage: python -m evals.score --case <case.json> --report <report.json>")
+        print("\nAvailable cases:")
+        for path in sorted((Path(__file__).resolve().parent / "cases").glob("*.json")):
+            case = load_case(path)
+            print(f"  {case.get('id') or path.stem}  {case['issue_url']}")
+        return 0
+    if args.case is None or args.report is None:
+        parser.error("--case and --report must be provided together")
+
+    case = load_case(args.case)
+    report = AnalysisReport.model_validate_json(args.report.read_text(encoding="utf-8"))
+    result = score_report(case, report)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

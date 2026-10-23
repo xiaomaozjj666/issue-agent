@@ -7,7 +7,7 @@ COPY app/ app/
 # 锁文件此前只提交、无人消费，镜像里装到的版本会随上游漂移。
 # 用与生成该锁相同的 uv 版本导出固定版本列表，再交给 pip 安装，
 # 这样 CI 的 pip-audit 与 Docker 构建看到的是同一套版本。
-RUN pip install --no-cache-dir "uv==0.12.3" \
+RUN pip install --no-cache-dir "uv==0.13.4" \
     && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.lock \
     && pip install --no-cache-dir --no-compile -r /tmp/requirements.lock \
     && pip uninstall -y uv

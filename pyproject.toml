@@ -90,7 +90,7 @@ skip_covered = true
 precision = 1
 
 [tool.setuptools.package-data]
-app = ["py.typed", "templates/*.html", "static/css/*.css", "static/js/*.js"]
+app = ["py.typed", "templates/*.html", "static/css/*.css", "static/js/*.js", "static/vendor/*.js"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
