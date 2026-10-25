@@ -290,6 +290,81 @@ data: {"type": "done", "data": {}}
 
 ---
 
+### `GET /session/{session_id}/export`
+
+导出会话完整数据（事件流 + 报告），用于备份或迁移。
+
+**Response 200:**
+```json
+{
+  "format": "issue-agent-session",
+  "version": 1,
+  "exported_at": "2026-01-15T10:30:00Z",
+  "session": { "session_id": "…", "issue_url": "…", "…": "…" },
+  "events": [ "…" ]
+}
+```
+
+---
+
+### `POST /session/import`
+
+导入会话 JSON（`/export` 的产物），创建新会话——生成新 `session_id`，保留原始数据。
+
+**Request:** `/export` 响应体原样回传（受 `MAX_SESSION_IMPORT_BYTES` 大小限制，超限返回 413）。
+
+**Response 200:** 新会话的 `SessionSummary`
+
+---
+
+## 批量分析
+
+### `POST /batch`
+
+提交多个 Issue 批量调查，返回批次句柄供轮询。单批最多 100 个 URL。
+
+**Request:**
+```json
+{
+  "issue_urls": [
+    "https://github.com/acme/widget/issues/42",
+    "https://github.com/acme/widget/issues/43"
+  ]
+}
+```
+
+**Response 200:**
+```json
+{
+  "batch_id": "b1b2c3d4e5f6",
+  "status": "running",
+  "progress": { "total": 2, "completed": 0, "failed": 0 },
+  "tasks": [
+    { "task_id": "t1", "issue_url": "…42", "status": "pending", "has_report": false }
+  ]
+}
+```
+
+URL 非法或超限返回 422。
+
+### `GET /batch/{batch_id}`
+
+查询批次进度。响应结构同 `POST /batch`；批次不存在返回 404。进程重启后已持久化的批次仍可查询。
+
+---
+
+## 语言资源
+
+### `GET /i18n`
+
+返回指定语言的全部前端字符串，供应用内语言切换热更新（无需刷新/重启）。
+
+**Query Parameters:** `lang` — `zh`（默认）或 `en`。
+
+**Response 200:** 以字符串键为索引的扁平 JSON 对象。
+
+---
+
 ## PR 提案 (Write Mode)
 
 ### `GET /session/{session_id}/proposal`

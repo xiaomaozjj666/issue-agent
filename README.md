@@ -194,6 +194,8 @@ python -m uvicorn app.main:app --port 9123 --reload
 | `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | 连续重复工具轮次上限，触发即停止探索 |
 | `TOOL_TIMEOUT` | `60` | 单工具执行超时（秒） |
 | `INVESTIGATION_TIMEOUT` | `600` | 单次调查最大墙钟时间（秒） |
+| `MAX_CONCURRENT_INVESTIGATIONS` | `3` | 同时进行的调查上限（`/stream` 与新会话 `/chat` 共用） |
+| `MAX_SESSION_ESTIMATED_COST_USD` | `0` | 单次调查估算成本上限（美元），`0` 不限制，超限在迭代间隙中止 |
 | `INDEPENDENT_REVIEW` | `true` | 是否运行独立评审 |
 | `REVIEW_MODEL` | 同调查模型 | 独立评审模型（可选） |
 | `LANGUAGE` | `zh` | 响应语言（`zh` / `en`） |

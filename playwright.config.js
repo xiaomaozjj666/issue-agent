@@ -28,7 +28,10 @@ module.exports = defineConfig({
     },
     {
       name: "mobile-chromium",
-      use: { ...devices["Pixel 5"], channel: "chromium" },
+      // 与 desktop 一致跟随 IA_BROWSER_CHANNEL（README 的系统浏览器回退
+      // 对两个项目都成立；此前此处写死 "chromium"，本机无 Playwright
+      // chromium 时 mobile 项目必挂）
+      use: { ...devices["Pixel 5"], channel },
       grep: /@mobile/,
     },
   ],

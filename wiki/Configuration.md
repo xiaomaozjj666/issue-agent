@@ -98,6 +98,8 @@
 | `SESSION_RETENTION_DAYS` | `30` | 1–365 | 自动清理已完成会话的天数 |
 | `MAX_PR_FILES` | `20` | 1–50 | PR 提案最大文件数 |
 | `MAX_PR_TOTAL_BYTES` | `1000000` | 4096–10000000 | PR 提案最大总字节数 |
+| `MAX_CONCURRENT_INVESTIGATIONS` | `3` | 1–32 | 同时进行的调查上限（/stream 与新会话 /chat）。限流按"请求数/窗口"计，一次 /stream 只算 1 次请求却可能跑 10 分钟，需并发闸门兜住成本与资源 |
+| `MAX_SESSION_ESTIMATED_COST_USD` | `0` | 0–1000 | 单次调查的估算成本上限（美元）；`0` = 不限制，超限时在迭代间隙中止并返回 error 事件 |
 | `BATCH_MAX_CONCURRENT` | `2` | 1–8 | 批量调查 worker 数 |
 | `BATCH_MAX_QUEUE_SIZE` | `100` | 1–500 | 批量待处理任务上限 |
 | `BATCH_MAX_HISTORY` | `100` | 10–10000 | 内存中保留的已完成批次上限 |

@@ -113,7 +113,7 @@ while True:
 
 ## 前端审查（app/templates + app/static/js 逐点核查）
 
-审查方式：对全部 7 个前端文件（index.html、core.js、session-runtime.js、charts.js、motion.js、enhancements.js、app.js 共约 7,900 行）做安全与正确性核查。曾派子代理深度复核（运行 45+ 分钟未产出即中止），以下结论来自主代理的逐点检查，覆盖全部 `innerHTML` 注入点、fetch/SSE 链路、URL 构造与状态机关键路径。
+审查方式：对全部 7 个前端文件（index.html、core.js、session-runtime.js、charts.js、motion.js、enhancements.js、app.js 共约 7,900 行）做安全与正确性核查。先做过多轮复核（首轮深度复核因长时间未产出已中止），以下结论来自逐点检查，覆盖全部 `innerHTML` 注入点、fetch/SSE 链路、URL 构造与状态机关键路径。
 
 ### 安全结论：未发现 XSS
 

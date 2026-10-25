@@ -24,14 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 调查并发闸门 MAX_CONCURRENT_INVESTIGATIONS（默认 3）与单次调查成本上限
   MAX_SESSION_ESTIMATED_COST_USD（默认 0 = 不限）：限流只按请求数计，而一次
   /stream 可能跑满 INVESTIGATION_TIMEOUT，需要并发闸门兜住 token 成本与写入压力。
-- GET /health 新增 uth_enabled / write_mode，前端与运维脚本据此判断实例安全姿态。
+- GET /health 新增 auth_enabled / write_mode，前端与运维脚本据此判断实例安全姿态。
 - GET /session/{id}/proposal 新增 write_mode、proposed_bytes 与 preview
   （每个待写入文件前 20 行）：人工确认必须看得到“到底要写什么”，而不是只有行数摘要。
-- **「创建 PR」界面（pp/static/js/pr-panel.js）**：后端 /session/{id}/proposal 与
-  pply-fix 早已就绪，但前端从未实现，用户只能下载 .patch 手工建分支。现在报告补丁
+- **「创建 PR」界面（app/static/js/pr-panel.js）**：后端 /session/{id}/proposal 与
+  apply-fix 早已就绪，但前端从未实现，用户只能下载 .patch 手工建分支。现在报告补丁
   章节内会出现创建入口：先展示提案（分支/标题/正文/逐文件内容预览）供人工确认，确认后
-  才调用 pply-fix；写模式关闭时按钮置灰并给出可行动说明。面板用 MutationObserver
-  观察报告容器注入，不改动 pp.js 的渲染流程；插值全部走 	extContent（无 innerHTML）。
+  才调用 apply-fix；写模式关闭时按钮置灰并给出可行动说明。面板用 MutationObserver
+  观察报告容器注入，不改动 app.js 的渲染流程；插值全部走 textContent（无 innerHTML）。
 
 
 - **axe-core 自动化可及性审计**（`axe-core` 为 devDependency + 一条 e2e 用例）：在 6 个界面
@@ -46,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CHANGELOG 自身 7 处控制字符污染**：0.6.0 段落里 5 个 `\x07`(BEL) 与 2 个
+  `\t`(TAB) 把 `auth_enabled`→`uth_enabled`、`app/`→`pp/`、`apply-fix`→`pply-fix`、
+  `app.js`→`pp.js`、`tool_call`→`ool_call`、`textContent`→`extContent`，
+  GitHub 渲染时不可见且丢失关键路径信息。全部按上下文还原为原字符。
+- **e2e mobile 项目写死 chromium channel**：`playwright.config.js` 的 mobile
+  project 不吃 `IA_BROWSER_CHANNEL` 回退，本机按 README 用系统 Edge 跑 e2e
+  时 mobile 项目必挂（desktop 全过、mobile 0 通过）。现与 desktop 一致跟随
+  环境变量，README 的回退说明对两个项目都成立。
 - **波及范围柱状图的数值标签含义错误**：坐标轴是「改动行数」，但无补丁数据的柱会显示
   报告严重度（如「高」）——既与坐标轴无关，又和柱体颜色重复表达同一件事。现在数值标签
   一律表达该柱自己的量：有数据时「N 行」，无数据时「—」；e2e 断言标签不得出现严重度词。
@@ -157,7 +165,7 @@ gba(0,0,0,0)，进度条只剩灰槽。改用
 ar(--accent)。
 - **浅色主题下「续跑提示卡」深底灰字**：--surface-2 同样未定义且兜底是深色，对比度约
   2.5:1；改用主题感知的 --canvas-subtle / --border，实测 4.93:1（浅）/ 5.62:1（深）。
-- **进度条每次阶段变化被整块重建**（刚出现就被抹掉、	ool_call 后还会倒缩）：改为常驻
+- **进度条每次阶段变化被整块重建**（刚出现就被抹掉、tool_call 后还会倒缩）：改为常驻
   DOM + 单调递增钳制，阶段更新只改文本与宽度。
 - **取消分析后按钮不再恢复**：30s 轮询耗尽时按钮停在 display:none，用户既不能再次取消
   也无法发起新分析；现在恢复按钮并说明服务端仍在收尾。
@@ -242,6 +250,10 @@ ead_file {"path": ...}）：工具名与参数摘要改为本地化短语
 
 ### Changed
 
+- **wiki/API-Reference 补齐 5 个已上线端点**：`/batch`、`/batch/{batch_id}`、
+  `/session/{id}/export`、`/session/import`、`/i18n`（此前 README 与 routes 都有、
+  wiki 缺失）；wiki/Configuration 与 README 配置表补 `MAX_CONCURRENT_INVESTIGATIONS`
+  与 `MAX_SESSION_ESTIMATED_COST_USD` 两个并发/成本闸门。
 - **类型检查与格式检查覆盖到测试与脚本**：mypy app/ tests/ scripts/ evals/ 现在全清
   （此前只检查 app/；测试侧 31 处类型问题按真实类型修掉，而不是用 ignore 掩盖——
   自造请求替身改用真实的 ApplyFixRequest、消息字面量补 list[dict] 标注、Optional
