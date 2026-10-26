@@ -82,7 +82,9 @@ async def _run_command(
     max_output_bytes: int,
 ) -> CommandExecution:
     started = monotonic()
-    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    # CREATE_NEW_PROCESS_GROUP 仅存在于 Windows 运行时与 typeshed；getattr 让
+    # Linux CI 的 mypy 与 Linux 运行时都安全回落到 0。
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     process = await asyncio.create_subprocess_shell(
         command,
         cwd=cwd,
