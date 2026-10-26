@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **红—绿补丁验证（显式 opt-in）**：新增 `POST /session/{id}/validate-patch` 与
+  `issue-agent validate-patch` CLI——维护者显式提供可信命令，在临时 detached Git
+  worktree 中记录「补丁前失败 / 补丁后通过 / 回归通过」的真实执行证据：逐命令
+  超时（含进程树终止）、输出限量截断、补丁 SHA-256 指纹、worktree 清理结果。
+  结构化证据（`PatchValidationEvidence`）持久化进会话报告，未完整执行绝不标记
+  `passed`。默认关闭且不注册为 LLM 工具：启用需 `PATCH_VALIDATION_ENABLED=true`
+  加认证，请求需 `confirm=true`（CLI 需 `--confirm`）；隔离 worktree 防止改动
+  原工作区，但命令本身不是权限沙箱。
 - **axe 审计覆盖导出的 HTML 报告**：e2e 用例现在会调用 `IA.Export.selfContainedHtml`
   生成导出文件、离线（阻断 CDN）渲染后跑同一套 axe 断言，导出的报告不再有审计盲区。
 - `scripts/capture_screenshots.cjs`：用路由 mock 复现三张文档截图，配色/布局变更后重跑即可。

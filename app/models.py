@@ -90,6 +90,70 @@ class Reproduction(BaseModel):
     expected: str = ""
 
 
+class CommandExecution(BaseModel):
+    """One actually attempted (or explicitly skipped) local validation command."""
+
+    command: str
+    phase: Literal["before_patch", "after_patch", "regression"]
+    status: Literal["passed", "failed", "timeout", "not_run"] = "not_run"
+    exit_code: int | None = None
+    duration_ms: int = 0
+    timeout_seconds: float
+    stdout: str = ""
+    stderr: str = ""
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+
+class PatchValidationEvidence(BaseModel):
+    """Auditable red-green evidence; ``passed`` requires execution of every phase."""
+
+    status: Literal["passed", "failed", "not_reproduced", "timeout", "error"]
+    summary: str
+    repository_path: str
+    base_sha: str
+    patch_sha256: str
+    before_patch: CommandExecution
+    after_patch: CommandExecution
+    regressions: list[CommandExecution] = Field(default_factory=list)
+    workspace_cleaned: bool = False
+    error: str | None = None
+
+
+class PatchValidationRequest(BaseModel):
+    """Maintainer-supplied commands for local patch validation, never LLM tool input."""
+
+    repository_path: str = Field(min_length=1, max_length=4096)
+    patch: str = Field(min_length=1, max_length=1_000_000)
+    test_command: str = Field(max_length=8192)
+    regression_commands: list[str] = Field(default_factory=list, max_length=10)
+    base_sha: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{7,40}$")
+    timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
+    max_output_bytes: int = Field(default=12_000, ge=100, le=100_000)
+    confirm: bool = False
+
+    @field_validator("repository_path", "patch")
+    @classmethod
+    def _reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value cannot be blank")
+        return value
+
+    @field_validator("test_command")
+    @classmethod
+    def _validate_test_command(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("test_command cannot be blank")
+        return value.strip()
+
+    @field_validator("regression_commands")
+    @classmethod
+    def _validate_regression_commands(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("regression_commands cannot contain blank commands")
+        return [value.strip() for value in values]
+
+
 class AnalysisReport(BaseModel):
     summary: str
     root_cause: str
@@ -108,6 +172,10 @@ class AnalysisReport(BaseModel):
     impact: Impact | None = Field(default=None, description="Severity, likelihood, blast radius")
     reproduction: Reproduction | None = Field(default=None, description="Reproduction steps")
     fix_rationale: str = Field(default="", description="Reason for choosing this fix")
+    patch_validation: PatchValidationEvidence | None = Field(
+        default=None,
+        description="Locally executed red-green and regression evidence; absent means not executed",
+    )
 
 
 class ReviewOutcome(BaseModel):

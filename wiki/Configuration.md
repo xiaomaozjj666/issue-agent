@@ -93,6 +93,7 @@
 | `LANGUAGE` | `zh` | `zh` / `en` | 响应语言 |
 | `API_KEY` | *(可选)* | — | 设置后启用 X-API-Key 认证 |
 | `WRITE_MODE` | `false` | — | 启用 PR 创建能力 |
+| `PATCH_VALIDATION_ENABLED` | `false` | — | 启用会话级本地补丁验证 API；必须同时配置 `API_KEY`，请求仍需 `confirm=true` |
 | `SESSION_DB_PATH` | `data/sessions.db` | — | SQLite 路径（`:memory:` 为临时） |
 | `SESSION_STALE_AFTER_SECONDS` | `300` | 60–86400 | 心跳超时（秒），超过即把 running 会话标记为中断 |
 | `SESSION_RETENTION_DAYS` | `30` | 1–365 | 自动清理已完成会话的天数 |
@@ -159,6 +160,7 @@ LANGUAGE=zh
 
 # Runtime
 WRITE_MODE=false
+PATCH_VALIDATION_ENABLED=false
 SESSION_DB_PATH=data/sessions.db
 SESSION_RETENTION_DAYS=30
 LOG_FORMAT=console

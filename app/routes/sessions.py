@@ -15,12 +15,13 @@ from app.models import (
     ApplyFixRequest,
     CreatePRResponse,
     IssueData,
+    PatchValidationRequest,
     SessionDetail,
     SessionEventRecord,
     SessionSummary,
     SessionUpdateRequest,
 )
-from app.services import apply_fix, session_summary
+from app.services import apply_fix, session_summary, validate_session_patch
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,20 @@ async def get_session_report(session_id: str, manager: SessionMgr) -> AnalysisRe
     if session.report is None:
         raise HTTPException(status_code=404, detail="Report not yet generated for this session")
     return session.report
+
+
+@router.post("/session/{session_id}/validate-patch", response_model=AnalysisReport)
+async def validate_patch_route(
+    session_id: str,
+    request: PatchValidationRequest,
+    session_mgr: SessionMgr,
+) -> AnalysisReport:
+    return await validate_session_patch(
+        session_id,
+        request,
+        settings=get_settings(),
+        session_mgr=session_mgr,
+    )
 
 
 @router.post("/session/{session_id}/apply-fix", response_model=CreatePRResponse)

@@ -23,7 +23,14 @@ from fastapi import HTTPException
 from app.config import Settings
 from app.events import AgentEvent
 from app.github import GitHubClient, GitHubError, GitHubPRCreatedError
-from app.models import AnalysisReport, ApplyFixRequest, CreatePRResponse, SessionSummary
+from app.models import (
+    AnalysisReport,
+    ApplyFixRequest,
+    CreatePRResponse,
+    PatchValidationRequest,
+    SessionSummary,
+)
+from app.patch_validation import PatchValidationError, validate_patch
 from app.sessions import Session, SessionConflictError, SessionManager
 from app.tools import validate_pr_proposal
 
@@ -150,6 +157,14 @@ def format_report_text(report: AnalysisReport) -> str:
         lines.append("Risks:")
         for risk in report.risks:
             lines.append(f"  - {risk}")
+    if report.patch_validation is not None:
+        validation = report.patch_validation
+        lines.extend(["", f"Patch Validation: {validation.status}", validation.summary])
+        for execution in [validation.before_patch, validation.after_patch, *validation.regressions]:
+            exit_code = "n/a" if execution.exit_code is None else str(execution.exit_code)
+            lines.append(f"  - {execution.phase}: {execution.status} (exit={exit_code}) {execution.command}")
+        lines.append(f"  - Base SHA: {validation.base_sha}")
+        lines.append(f"  - Workspace cleaned: {validation.workspace_cleaned}")
     if report.review_audit.status != "not_run":
         lines.append("")
         lines.append(f"Independent Review: {report.review_audit.status}")
@@ -311,6 +326,36 @@ async def mark_stream_interrupted(manager: SessionManager, session_id: str, star
         raise
     except SessionConflictError:
         logger.warning("SessionConflictError while marking stream interrupted for session %s", session_id)
+
+
+async def validate_session_patch(
+    session_id: str,
+    request: PatchValidationRequest,
+    *,
+    settings: Settings,
+    session_mgr: SessionManager,
+) -> AnalysisReport:
+    """Run approved local validation and attach its evidence to a durable report."""
+    if not settings.patch_validation_enabled:
+        raise HTTPException(status_code=403, detail="Patch validation is disabled")
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="Set confirm=true to execute trusted local commands")
+    session = await session_mgr.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status == "running":
+        raise HTTPException(status_code=409, detail="Session is still running — wait for it to complete")
+    if session.report is None:
+        raise HTTPException(status_code=409, detail="Report not yet generated for this session")
+
+    async with session.lock:
+        try:
+            evidence = await validate_patch(request)
+        except PatchValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        session.report.patch_validation = evidence
+        await session_mgr.save(session)
+        return session.report
 
 
 async def apply_fix(

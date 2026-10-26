@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     language: str = Field(default="zh", pattern=r"^(zh|en)$")
     api_key: str | None = None
     write_mode: bool = False
+    patch_validation_enabled: bool = False
     session_db_path: str = "data/sessions.db"
     session_stale_after_seconds: int = Field(default=300, ge=60, le=86_400)
     session_retention_days: int = Field(

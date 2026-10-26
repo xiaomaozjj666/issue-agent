@@ -65,6 +65,7 @@ flowchart LR
 - ⚙️ **批量分析** — 一次提交多个 Issue 到进程内异步任务队列后台分析，轮询进度；配置 SQLite 路径时批次状态与完成报告落盘，重启可恢复 pending 任务
 - 📈 **成本可观测** — 会话 metrics 记录 token 用量与估算费用（`estimated_cost_usd`），时间线展示 tokens / 花费
 - 🧪 **评测脚手架** — `evals/` 黄金用例 + 离线打分，用于对比 prompt / 模型调整后的根因命中率
+- ✅ **红—绿补丁验证** — 维护者显式提供可信命令，在临时 Git worktree 中记录补丁前失败、补丁后通过与回归结果；结构化证据写入会话报告，未执行绝不标记通过
 - 💾 **会话导出 / 导入** — 任意会话可下载为 JSON，导入后生成全新会话继续使用
 - 🖥️ **双接口** — FastAPI REST API + Rich 终端 CLI + 内嵌 Web UI（带图表）
 - 🐳 **Docker 支持** — 现成 Dockerfile，非 root 用户运行，含健康检查；CI 会真实启动容器探活并校验数据目录可写
@@ -75,6 +76,8 @@ flowchart LR
 - 默认使用只读 GitHub REST API 端点，绝不执行仓库代码
 - 仓库写入只发生在 `POST /session/{session_id}/apply-fix`，且同时满足：`WRITE_MODE=true`、存在校验通过的存储提案、请求带显式 `confirm=true`
 - 创建 PR 前会基于仓库默认分支重新校验提案；写入中途失败会回滚临时分支
+- 本地补丁验证默认关闭，不注册为 LLM 工具；API 需 `PATCH_VALIDATION_ENABLED=true`、认证与 `confirm=true`，CLI 需 `--confirm`。命令只能由维护者显式提供，绝不会从 Issue 内容自动执行
+- 补丁验证使用隔离 worktree、逐命令超时和输出截断，但**不是权限沙箱**：可信命令拥有当前用户权限，仍不得粘贴或执行不可信 Issue 给出的命令
 - 将 Issue 文本与仓库内容视为不可信提示数据，注入其中的指令不会被遵循
 - 限制候选文件数、模型上下文与输出 token（默认 8000）
 - 提供带行号的源码片段，删除未知路径、格式错误或超出所给范围的证据
@@ -153,9 +156,18 @@ issue-agent analyze https://github.com/owner/repo/issues/123 --save-patch fix.pa
 
 # 交互式聊天模式
 issue-agent chat https://github.com/owner/repo/issues/123
+
+# 本地红—绿验证（只运行你明确信任的命令；不修改原工作区）
+issue-agent validate-patch /path/to/repo \
+  --patch-file fix.patch \
+  --test-command "python -m pytest tests/test_bug.py" \
+  --regression-command "python -m pytest tests/" \
+  --base-sha 0123456789abcdef0123456789abcdef01234567 \
+  --timeout-seconds 120 \
+  --confirm
 ```
 
-聊天模式内：`/save <file>` 保存补丁，`/quit` 或 `/exit` 退出。
+聊天模式内：`/save <file>` 保存补丁，`/quit` 或 `/exit` 退出。`validate-patch` 输出 JSON 证据；仅当测试在补丁前真实失败、补丁后真实通过且所有回归命令通过时退出码为 0。省略 `--base-sha` 使用当前 `HEAD`，未提交的本地改动不会进入验证 worktree。
 
 ### 启动 API 服务
 
@@ -201,6 +213,7 @@ python -m uvicorn app.main:app --port 9123 --reload
 | `LANGUAGE` | `zh` | 响应语言（`zh` / `en`） |
 | `API_KEY` | 可选 | 设置后在 `X-API-Key` 请求头校验，否则全站开放 |
 | `WRITE_MODE` | `false` | 是否允许校验过的 PR 提案与确认后的写操作 |
+| `PATCH_VALIDATION_ENABLED` | `false` | 是否开放会话级本地补丁验证 API；启用时必须配置 `API_KEY`，每次请求仍需 `confirm=true` |
 | `SESSION_DB_PATH` | `data/sessions.db` | SQLite 路径，`:memory:` 用于测试 |
 | `SESSION_RETENTION_DAYS` | `30` | 启动时自动清理早于该天数的终态会话 |
 | `MAX_PR_FILES` | `20` | 单个 PR 提案最多文件数 |
@@ -242,7 +255,8 @@ app/
   sessions.py / db.py  会话管理与 SQLite 持久化（连接池 + 乐观锁）
   report_backfill.py   历史会话报告字段回填（纯 stdlib，补齐增强字段）
   task_queue.py        进程内异步批量任务队列
-  services.py          会话状态、PR 应用 / 回滚等服务逻辑
+  services.py          会话状态、PR 应用 / 回滚、验证证据持久化等服务逻辑
+  patch_validation.py  显式 opt-in 的本地红—绿执行、超时/截断与 worktree 清理
   cli.py               Rich 终端 CLI
   static/              前端 JS / CSS（无构建步骤；core / markdown / 计时器 /
                        文件追踪 / 导出 / charts 等按职责拆分的 IIFE 模块）
@@ -273,6 +287,7 @@ wiki/                  项目文档
 | `GET /session/{id}/export` | 导出完整会话 JSON |
 | `POST /session/import` | 导入会话 JSON 到新会话 |
 | `POST /batch` / `GET /batch/{batch_id}` | 批量提交与进度轮询 |
+| `POST /session/{session_id}/validate-patch` | 本地红—绿验证并把真实证据写入报告（默认关闭；需启用、认证与 `confirm=true`） |
 | `POST /session/{session_id}/apply-fix` | 写模式：创建 PR（需 `WRITE_MODE=true` 与 `confirm=true`） |
 
 ## 测试
@@ -313,6 +328,7 @@ python -c "import httpx; httpx.Client()"   # 能构造出来就说明不是这�
 
 ## 已知限制
 
+- 红—绿能力只验证维护者已经提供的本地补丁与命令，不会自动生成完整修复，也不会替维护者判断测试是否充分；命令不是权限沙箱
 - GitHub 代码搜索的鉴权、索引与限流行为比仓库树访问更严格；agent 保留确定性文件名选择作为回退
 - SQLite 乐观锁可防止跨 worker 覆盖，但高吞吐分布式部署仍建议使用专用事务数据库与后台任务系统
 - 取消是协作式的，在下一个模型 / 工具事件边界生效；在途的 provider 请求可能先完成

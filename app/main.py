@@ -49,11 +49,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # 安全自检：写模式（可创建分支/PR）必须配合认证，否则任何能访问端口的人
     # 都能用仓库 token 推代码。宁可拒绝启动，也不要静默地敞开写权限。
-    if settings.write_mode and not settings.api_key:
+    if (settings.write_mode or settings.patch_validation_enabled) and not settings.api_key:
         raise RuntimeError(
-            "WRITE_MODE=true requires API_KEY to be set: write mode can create branches and "
-            "pull requests, so an unauthenticated server must never expose it. "
-            "Set API_KEY (and optionally unset WRITE_MODE) in .env, then restart."
+            "WRITE_MODE or PATCH_VALIDATION_ENABLED requires API_KEY to be set: these modes can "
+            "write to a remote repository or execute maintainer-approved local commands, so an "
+            "unauthenticated server must never expose them. Set API_KEY (and optionally disable "
+            "these modes) in .env, then restart."
         )
     if not settings.api_key:
         logger.warning(
@@ -238,6 +239,7 @@ async def health() -> dict[str, object]:
         "build_id": get_build_id(),
         "auth_enabled": settings.api_key is not None,
         "write_mode": settings.write_mode,
+        "patch_validation_enabled": settings.patch_validation_enabled,
     }
 
 

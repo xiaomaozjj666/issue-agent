@@ -28,7 +28,7 @@ GitHub Issue Agent 是一个默认只读的 Issue 分析智能体：抓取 Issue
 报告中建议包含：
 
 - 受影响的版本 / 提交号、Python 版本与部署方式（本地 uvicorn / Docker）；
-- 相关开关的状态（如 `API_KEY`、`WRITE_MODE` 是否开启，`GITHUB_TOKEN` 的权限范围——**不要贴 token 原文**）；
+- 相关开关的状态（如 `API_KEY`、`WRITE_MODE`、`PATCH_VALIDATION_ENABLED` 是否开启，`GITHUB_TOKEN` 的权限范围——**不要贴 token 原文**）；
 - 复现步骤或最小复现；
 - 影响说明，例如鉴权绕过、路径穿越、会话数据泄露、PR 写入越权，或提示注入导致越权工具调用；
 - 如有可能，附上修复建议。
@@ -38,6 +38,7 @@ GitHub Issue Agent 是一个默认只读的 Issue 分析智能体：抓取 Issue
 ## 范围说明
 
 - 覆盖本仓库的服务端、Web UI、CLI、Docker 镜像，以及调查 / 评审 / 证据校验流水线。
-- 设计上把 Issue 文本与仓库内容视为不可信提示数据，不执行被分析仓库的代码；仓库写入只在 `WRITE_MODE=true`、存在校验通过的提案且请求带 `confirm=true` 时发生。部署方应最小化 `GITHUB_TOKEN` 权限并设置 `API_KEY`。
+- 设计上把 Issue 文本与仓库内容视为不可信提示数据，默认不执行被分析仓库的代码；仓库写入只在 `WRITE_MODE=true`、存在校验通过的提案且请求带 `confirm=true` 时发生。部署方应最小化 `GITHUB_TOKEN` 权限并设置 `API_KEY`。
+- 唯一的代码执行入口是维护者显式 opt-in 的本地补丁验证：API 需 `PATCH_VALIDATION_ENABLED=true`、认证与 `confirm=true`，CLI 需 `--confirm`。命令只应来自维护者，不得复制不可信 Issue 中的命令；临时 worktree 隔离文件修改，但不限制命令的用户权限。
 - 如果你能证明模型输出可以绕过证据校验、越权触发写操作或泄露不应返回的数据，属于本仓库的安全问题。
 - 不覆盖：被分析仓库自身的漏洞、LLM 供应商服务，以及模型回答的事实正确性。
