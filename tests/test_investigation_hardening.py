@@ -13,8 +13,15 @@ from app.models import AnalysisReport, CodeReference, IssueData, SourceFile
 from app.report_generator import ReportGenerator
 from app.reviewer import _build_review_context
 from app.sessions import Session
-from app.source_context import render_numbered_source, sample_source
-from app.tools import ToolExecutor
+from app.source_context import (
+    _add_lines,
+    _complement,
+    bound_text_head_tail,
+    merge_line_ranges,
+    render_numbered_source,
+    sample_source,
+)
+from app.tools import ToolExecutor, _regex_has_quantifier, _regex_refusal_reason
 
 
 def _issue() -> IssueData:
@@ -203,3 +210,62 @@ async def test_grep_execution_timeout_prevents_thread_exhaustion(monkeypatch) ->
     assert "timed out" in first
     assert "previous regex timed out" in second
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("a+", True),
+        ("a*", True),
+        ("a?", True),
+        ("a{2,3}", True),
+        ("a{b}", False),
+        ("(?:a)", False),
+        ("[+]", False),
+        ("\\+", False),
+    ],
+)
+def test_regex_has_quantifier_detects_engine_metacharacters(pattern: str, expected: bool) -> None:
+    assert _regex_has_quantifier(pattern) is expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("(a|b)*", "repeated alternation with ambiguous branches"),
+        ("(ab{2})+", "nested quantifiers"),
+        ("(a?)+", "nested quantifiers"),
+        ("(a+)+", "nested quantifiers"),
+        ("(a\\|b)*", None),
+        ("([|])*", None),
+        ("[(a)]*", None),
+        ("plain", None),
+        ("a" * 257, "patterns longer than 256 characters"),
+    ],
+)
+def test_regex_refusal_reason_blocks_backtracking_shapes(pattern: str, expected: str | None) -> None:
+    assert _regex_refusal_reason(pattern) == expected
+
+
+def test_merge_line_ranges_swaps_reversed_and_merges_adjacent() -> None:
+    assert merge_line_ranges([(5, 2)], 10) == [(2, 5)]
+    assert merge_line_ranges([(7, 8), (9, 10)], 20) == [(7, 10)]
+
+
+def test_add_lines_skips_selected_lines_and_crops_one_long_line() -> None:
+    selected: dict[int, str] = {}
+    _add_lines(["a", "b", "c"], selected, 1, 3, 1_000)
+    _add_lines(["a", "b", "c"], selected, 1, 3, 1_000, reverse=True)
+    assert selected == {0: "a", 1: "b", 2: "c"}
+
+    cropped: dict[int, str] = {}
+    _add_lines(["x" * 400], cropped, 1, 1, 100)
+    assert cropped == {0: "x" * 99}
+
+
+def test_complement_reports_tail_gap() -> None:
+    assert _complement([(1, 2)], 5) == [(3, 5)]
+
+
+def test_bound_text_head_tail_short_budget_keeps_prefix() -> None:
+    assert bound_text_head_tail("x" * 200, 50) == "x" * 50

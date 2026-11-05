@@ -1,4 +1,11 @@
-from app.evidence import EvidenceValidator, extract_cited_text, extract_identifiers, parse_line_range
+from app.evidence import (
+    EvidenceValidator,
+    _has_identifier_overlap,
+    _score_content_alignment,
+    extract_cited_text,
+    extract_identifiers,
+    parse_line_range,
+)
 from app.models import AnalysisReport, CodeReference
 
 
@@ -16,7 +23,18 @@ def _report(*, evidence: list[CodeReference], root_cause: str, confidence: str =
 
 def test_extract_cited_text_out_of_range() -> None:
     assert extract_cited_text("only\none\n", "L9-L10") == ""
+    assert extract_cited_text("only\none\n", "L0") == ""
     assert parse_line_range("not-a-range") is None
+
+
+def test_identifier_overlap_requires_both_inputs() -> None:
+    assert _has_identifier_overlap(set(), "alpha") is False
+    assert _has_identifier_overlap({"alpha"}, "") is False
+
+
+def test_score_alignment_without_cited_lines_is_unknown() -> None:
+    item = CodeReference(path="src/a.py", lines=None, reason="alpha", strength="strong")
+    assert _score_content_alignment(item, "alpha fails", "alpha\nbeta") == "unknown"
 
 
 def test_invalid_line_format_dropped() -> None:

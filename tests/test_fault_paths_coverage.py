@@ -1373,6 +1373,7 @@ class _FakeStreamChunkStub:
         (lambda: type("Err429", (Exception,), {"status_code": 429})(), "rate limit reached"),
         (lambda: type("Err500", (Exception,), {"status_code": 503})(), "Model service error"),
         (lambda: TimeoutError(), "timed out"),
+        (lambda: TimeoutError("Investigation exceeded 300s total timeout"), "Investigation exceeded"),
         (lambda: httpx.ConnectTimeout("t"), "Unable to connect"),
         (lambda: type("WeirdSdkError", (Exception,), {})(), None),  # 类名无特征 → Internal error
         (lambda: ValueError("plain readable"), "plain readable"),
