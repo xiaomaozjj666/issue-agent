@@ -36,7 +36,10 @@
 
 ```bash
 # 打分逻辑单测（无网络）
-pytest tests/test_eval_score.py -q
+pytest tests/test_eval_score.py tests/test_eval_offline_gate.py -q
+
+# CI 离线质量门：cases/<id>.json 配对 fixtures/<id>.json，默认要求 100% 通过
+python -m evals.offline_gate --min-pass-rate 1.0
 
 # 真实评测（需 .env 中的 OPENAI_API_KEY，并能访问 GitHub）
 python -m evals.run_eval --dir evals/cases

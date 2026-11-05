@@ -154,6 +154,25 @@ class PatchValidationRequest(BaseModel):
         return [value.strip() for value in values]
 
 
+class SourceLineRange(BaseModel):
+    """1-based inclusive source line range."""
+
+    start: int = Field(ge=1)
+    end: int = Field(ge=1)
+
+
+class SourceCoverage(BaseModel):
+    """Deterministic disclosure of source omitted by context truncation."""
+
+    path: str
+    truncated: bool
+    original_lines: int = Field(ge=1)
+    original_chars: int = Field(ge=0)
+    captured_chars: int = Field(ge=0)
+    included_ranges: list[SourceLineRange] = Field(default_factory=list)
+    omitted_ranges: list[SourceLineRange] = Field(default_factory=list)
+
+
 class AnalysisReport(BaseModel):
     summary: str
     root_cause: str
@@ -164,6 +183,10 @@ class AnalysisReport(BaseModel):
     tests: list[str]
     risks: list[str]
     files_examined: list[str] = Field(default_factory=list)
+    source_coverage: list[SourceCoverage] = Field(
+        default_factory=list,
+        description="Line ranges retained or omitted when large source files were truncated",
+    )
     evidence_audit: EvidenceAudit = Field(default_factory=EvidenceAudit)
     review_audit: ReviewAudit = Field(default_factory=ReviewAudit)
     # ── 增强字段：让报告更具说服力、图表更具信息量（全部可选，向后兼容旧报告）──

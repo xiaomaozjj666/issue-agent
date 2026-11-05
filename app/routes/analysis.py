@@ -52,6 +52,8 @@ async def analyze(
     agent = build_issue_agent(clients, resolve_override_settings(body), breaker)
     try:
         return await agent.investigate(str(body.issue_url))
+    except TimeoutError as error:
+        raise HTTPException(status_code=504, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except GitHubRateLimitError as error:
@@ -184,11 +186,13 @@ async def stream_analysis(
             # 详细堆栈进日志，客户端只拿脱敏后的友好消息
             logger.exception("Stream failed for session %s", session.session_id if session else "unknown")
             friendly = friendly_chat_error(exc)
+            timed_out = isinstance(exc, TimeoutError)
             if session is not None:
                 async with session.lock:
                     session.status = "failed"
-                    session.phase = "failed"
+                    session.phase = "timeout" if timed_out else "failed"
                     session.error_message = friendly[:500]
+                    session.metrics["timed_out"] = timed_out
                     session.metrics["duration_ms"] = round((monotonic() - started_at) * 1000)
                     try:
                         await session_mgr.save(session)

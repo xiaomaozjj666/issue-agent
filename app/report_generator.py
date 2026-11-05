@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from time import monotonic
@@ -32,9 +33,16 @@ from app.json_utils import extract_json
 from app.models import AnalysisReport
 from app.provider import iter_deltas, iter_stream_with_breaker, record_model_request, record_model_usage
 from app.retry import build_attempt_plan
+from app.source_context import bound_text_head_tail, render_numbered_source
 from app.tools import ToolExecutor
 
 logger = logging.getLogger(__name__)
+
+
+def _source_coverage(executor: ToolExecutor) -> list[dict]:
+    """Read deterministic metadata while tolerating legacy executor test doubles."""
+    coverage = getattr(executor, "source_coverage", [])
+    return coverage if isinstance(coverage, list) else []
 
 
 class ReportGenerator:
@@ -166,6 +174,7 @@ class ReportGenerator:
                 files_read=executor.files_read,
                 line_counts=executor.line_counts,
                 file_cache=executor.file_cache,
+                source_coverage=_source_coverage(executor),
             )
             logger.info(
                 "Analysis complete: confidence=%s, evidence=%d, files=%d",
@@ -230,6 +239,15 @@ class ReportGenerator:
         if issue_context:
             user_parts.append(issue_context)
 
+        coverage = _source_coverage(executor)
+        if coverage and budget > 0:
+            metadata = json.dumps(coverage, ensure_ascii=False, separators=(",", ":"))
+            limited_metadata = bound_text_head_tail(metadata, min(4_000, budget))
+            user_parts.append("")
+            user_parts.append("Source truncation metadata (omitted ranges were not inspected):")
+            user_parts.append(limited_metadata)
+            budget -= len(limited_metadata)
+
         ledger_text = "\n".join(executor.investigation_ledger)
         if ledger_text and budget > 0:
             ledger_budget = min(self._settings.max_investigation_ledger_chars, budget // 3)
@@ -240,21 +258,22 @@ class ReportGenerator:
                 user_parts.append(limited_ledger)
                 budget -= len(limited_ledger)
 
-        if executor.files_read:
+        source_paths = [path for path in executor.files_read if executor.file_cache.get(path)]
+        if source_paths:
             user_parts.append("")
             user_parts.append("Source files examined (with line numbers):")
-            for path in executor.files_read:
-                content = executor.file_cache.get(path)
-                if not content or budget <= 0:
-                    continue
-                numbered = "\n".join(f"L{number}: {line}" for number, line in enumerate(content.splitlines(), 1))
-                block = f"\n--- {path} ---\n{numbered}\n"
-                if len(block) > budget:
-                    block = block[:budget]
-                user_parts.append(block)
-                budget -= len(block)
+            for index, path in enumerate(source_paths):
                 if budget <= 0:
                     break
+                content = executor.file_cache[path]
+                numbered = render_numbered_source(content)
+                block = f"\n--- {path} ---\n{numbered}\n"
+                # Fair-share the remaining budget across files and retain both ends
+                # when line-number prefixes make a block larger than its raw source.
+                allowance = budget if index == len(source_paths) - 1 else budget // (len(source_paths) - index)
+                block = bound_text_head_tail(block, allowance)
+                user_parts.append(block)
+                budget -= len(block)
 
         user_parts.append("")
         user_parts.append(final_output_prompt)

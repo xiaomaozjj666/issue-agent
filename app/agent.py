@@ -112,13 +112,44 @@ class IssueAgent:
     async def investigate_stream(
         self, issue_url: str, *, session: Session | None = None
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Investigate an issue, yielding AgentEvent objects for real-time streaming.
-
-        Phases: fetching → preloading → exploring → verifying → reviewing → done.
-        """
-        owner, repo, number = parse_issue_url(issue_url)
+        """Run the complete investigation under one cancellable wall-clock deadline."""
         investigation_start = monotonic()
         deadline = investigation_start + self.settings.investigation_timeout
+        message = f"Investigation exceeded {self.settings.investigation_timeout:.0f}s total timeout"
+        try:
+            # Unlike iteration-boundary checks, this cancels an in-flight GitHub/model
+            # call, tool batch, report stream, or review at the absolute deadline.
+            async with asyncio.timeout(self.settings.investigation_timeout):
+                async for event in self._investigate_stream(
+                    issue_url,
+                    session=session,
+                    investigation_start=investigation_start,
+                    deadline=deadline,
+                ):
+                    yield event
+        except TimeoutError as error:
+            # Provider-specific timeouts before the process deadline retain their
+            # original meaning; only the global cap is marked as investigation timeout.
+            if monotonic() < deadline and "total timeout" not in str(error) and "process deadline" not in str(error):
+                raise
+            if session is not None:
+                session.status = "failed"
+                session.phase = "timeout"
+                session.error_message = message
+                session.metrics["timed_out"] = True
+                session.metrics["timeout_seconds"] = self.settings.investigation_timeout
+            raise TimeoutError(message) from None
+
+    async def _investigate_stream(
+        self,
+        issue_url: str,
+        *,
+        session: Session | None,
+        investigation_start: float,
+        deadline: float,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Internal phases: fetching → preloading → exploring → report → review."""
+        owner, repo, number = parse_issue_url(issue_url)
         logger.info("Investigating issue %s/%s#%d", owner, repo, number)
         if session is not None:
             session.metrics = {
@@ -306,9 +337,16 @@ class IssueAgent:
                         line_counts=executor.line_counts,
                         metrics=session.metrics if session is not None else None,
                         deadline=deadline,
+                        source_coverage=executor.source_coverage,
                     )
                     report = outcome.report
-                except Exception:
+                except Exception as error:
+                    # provider 自身的评审超时仍可降级；只有全调查 deadline 必须终止，
+                    # 避免超时后被包装成“评审不可用”并继续输出成功报告。
+                    if isinstance(error, TimeoutError) and (
+                        monotonic() >= deadline or "process deadline" in str(error)
+                    ):
+                        raise
                     logger.exception("Independent review failed; preserving deterministically validated report")
                     message = get_review_unavailable_message(self.settings.language)
                     report.review_audit = ReviewAudit(status="unavailable", summary=message)
@@ -831,6 +869,8 @@ def _friendly_chat_error(exc: Exception) -> str:
         return f"Model service error (HTTP {status}). Please retry shortly."
     # 优先用异常类型匹配，避免依赖类名字符串（SDK 版本升级后类名可能变化）
     if isinstance(exc, asyncio.TimeoutError):
+        if str(exc).startswith("Investigation exceeded"):
+            return str(exc)
         return "Model response timed out. Please try again."
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
         return "Unable to connect to the model service. Check your network."

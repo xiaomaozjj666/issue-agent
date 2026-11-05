@@ -1,0 +1,18 @@
+{
+  "summary": "A missing check for None causes session parsing to fail.",
+  "root_cause": "The parser dereferences None because a missing check precedes token access.",
+  "confidence": "medium",
+  "evidence": [
+    {
+      "path": "src/auth/session.py",
+      "lines": "L12",
+      "reason": "The token is accessed without a None guard.",
+      "strength": "strong",
+      "kind": "code"
+    }
+  ],
+  "proposed_changes": ["Guard None before dereferencing the session token."],
+  "patch": null,
+  "tests": ["Add a regression case for a missing session token."],
+  "risks": []
+}

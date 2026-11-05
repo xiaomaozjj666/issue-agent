@@ -81,6 +81,10 @@ jobs:
         # --cov-fail-under 覆盖 pyproject 里的全局门槛，按解释器取矩阵值（见上方注释）
         run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=${{ matrix.cov-fail-under }}
 
+      - name: Offline deterministic eval quality gate
+        # 提交内 fixture 驱动真实 score_report 路径；无需 GitHub、LLM 或任何密钥。
+        run: python -m evals.offline_gate --min-pass-rate 1.0
+
       - name: Upload test artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -97,6 +101,24 @@ jobs:
         # --skip-editable：本地可编辑安装包（github-issue-agent）不在 PyPI 上
         # 无法审计；配合非 strict 模式，跳过项仅作提示，不再恒 exit 1。
         run: pip-audit --skip-editable
+
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run full test suite on Windows
+        run: pytest -q
 
   docker:
     runs-on: ubuntu-latest

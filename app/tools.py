@@ -21,14 +21,18 @@ from typing import Any
 from app.config import Settings
 from app.github import GitHubClient, GitHubFileSkipped
 from app.models import IssueData
+from app.source_context import SourceSample, iter_source_lines, render_numbered_source, sample_source
 
 logger = logging.getLogger(__name__)
 
 _MAX_LIST_ENTRIES = 80
 _MAX_GREP_RESULTS = 50
+_MAX_REGEX_PATTERN_CHARS = 256
+_GREP_TIMEOUT_SECONDS = 1.0
 # 嵌套量词启发式（如 (a+)+ / (a*)* / (a+){2,}）：经典灾难性回溯形态，直接拒绝执行
 _DANGEROUS_REGEX = re.compile(r"\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*[+*{]")
 _MAX_SEARCH_RESULTS = 50
+_FOCUS_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{3,}")
 _DUPLICATE_TOOL_RESULT = "Duplicate tool call skipped; the unchanged result is already present in the conversation."
 _PARALLEL_SAFE_TOOLS = {
     "read_file",
@@ -238,6 +242,89 @@ def get_tool_definitions(settings: Settings) -> list[dict]:
     return tools
 
 
+def _regex_body_has(pattern: str, target: str) -> bool:
+    """Find an unescaped character outside character classes."""
+    escaped = False
+    in_class = False
+    for char in pattern:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+        elif char == "[" and not in_class:
+            in_class = True
+        elif char == "]" and in_class:
+            in_class = False
+        elif char == target and not in_class:
+            return True
+    return False
+
+
+def _regex_has_quantifier(pattern: str) -> bool:
+    index = 0
+    in_class = False
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "[" and not in_class:
+            in_class = True
+        elif char == "]" and in_class:
+            in_class = False
+        elif (
+            not in_class
+            and char in "+*"
+            or not in_class
+            and char == "?"
+            and (index == 0 or pattern[index - 1] != "(")
+            or not in_class
+            and char == "{"
+            and re.match(r"\{\d+(?:,\d*)?\}", pattern[index:])
+        ):
+            return True
+        index += 1
+    return False
+
+
+def _regex_refusal_reason(pattern: str) -> str | None:
+    """Reject catastrophic-backtracking shapes before touching CPython's engine."""
+    if len(pattern) > _MAX_REGEX_PATTERN_CHARS:
+        return f"patterns longer than {_MAX_REGEX_PATTERN_CHARS} characters"
+    if _DANGEROUS_REGEX.search(pattern):
+        return "nested quantifiers"
+
+    stack: list[int] = []
+    index = 0
+    in_class = False
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "[" and not in_class:
+            in_class = True
+        elif char == "]" and in_class:
+            in_class = False
+        elif char == "(" and not in_class:
+            stack.append(index + 1)
+        elif char == ")" and not in_class and stack:
+            body_start = stack.pop()
+            next_char = pattern[index + 1 : index + 2]
+            repeated = next_char in {"+", "*"} or (
+                next_char == "{" and re.match(r"\{\d+(?:,\d*)?\}", pattern[index + 1 :]) is not None
+            )
+            if repeated:
+                body = pattern[body_start:index]
+                if _regex_body_has(body, "|"):
+                    return "repeated alternation with ambiguous branches"
+                if _regex_has_quantifier(body):
+                    return "nested quantifiers"
+        index += 1
+    return None
+
+
 class ToolExecutor:
     """Sandboxed tool execution environment for the investigation agent.
 
@@ -271,6 +358,12 @@ class ToolExecutor:
         self._ledger_chars = 0
         self._investigation_ledger: list[str] = []
         self._file_cache: dict[str, str] = {}
+        self._source_documents: dict[str, str] = {}
+        self._source_samples: dict[str, SourceSample] = {}
+        self._source_focus: dict[str, list[tuple[int, int]]] = {}
+        self._source_budgets: dict[str, int] = {}
+        self._grep_lock = asyncio.Lock()
+        self._grep_timed_out = False
         self.files_read: list[str] = []
         cached_paths = files_read if files_read is not None else list((file_cache or {}).keys())
         cached_chars = 0
@@ -293,6 +386,15 @@ class ToolExecutor:
     @property
     def file_cache(self) -> dict[str, str]:
         return self._file_cache
+
+    @property
+    def source_coverage(self) -> list[dict]:
+        """Disclose only files whose original content was actually truncated."""
+        return [
+            sample.coverage(path)
+            for path, sample in self._source_samples.items()
+            if len(sample.text) < sample.original_chars
+        ]
 
     async def execute(self, name: str, arguments: dict) -> str:
         """Dispatch and execute a tool call by name.
@@ -395,7 +497,8 @@ class ToolExecutor:
 
     async def _tool_read_file(self, path: str, start_line: int | None = None, end_line: int | None = None) -> str:
         path = self._normalize_file_path(path)
-        full_content: str | None = None
+        full_content = self._source_documents.get(path)
+        fetched_in_call = False
         if path not in self._file_cache:
             if len(self.files_read) >= self._max_files:
                 return f"File limit reached ({self._max_files}); use files already read."
@@ -403,6 +506,7 @@ class ToolExecutor:
             if remaining <= 0:
                 return "Source context limit reached; use files already read."
             source = await self._github.get_file(self._issue, path)
+            fetched_in_call = True
             # 并发预读场景下，await 期间其它协程可能已消耗预算，必须重新校验。
             # asyncio 单线程模型保证此同步块原子执行，不会再次被协程切换打断。
             full_content = source.content
@@ -412,36 +516,87 @@ class ToolExecutor:
                 remaining = self._max_total_context_chars - self._cached_chars
                 if remaining <= 0:
                     return "Source context limit reached; use files already read."
-                self._file_cache[path] = source.content[: self._max_file_chars][:remaining]
+                budget = min(self._max_file_chars, remaining)
+                focus = self._issue_focus_ranges(full_content)
+                sample = sample_source(full_content, budget, focus)
+                self._source_documents[path] = full_content
+                self._source_samples[path] = sample
+                self._source_focus[path] = focus
+                self._source_budgets[path] = budget
+                self._file_cache[path] = sample.text
                 self.files_read.append(path)
-                self._cached_chars += len(self._file_cache[path])
-                self._line_counts[path] = source.content.count("\n") + 1
+                self._cached_chars += len(sample.text)
+                self._line_counts[path] = full_content.count("\n") + 1
 
-        content = self._file_cache[path]
-        cached_line_count = content.count("\n") + 1
-        if start_line is not None and (end_line is None or end_line > cached_line_count):
+        if start_line is not None:
+            start_line = max(1, start_line)
+        if start_line is not None or end_line is not None:
+            # 显式行范围总是从原始文档读取，并把该区段提升到最终报告缓存。
+            # 这不仅支持尾部引用，也避免 omission marker 被误当成源码行。
+            range_start = start_line or 1
+            range_end = end_line if end_line is not None else self._line_counts[path]
+            if full_content is not None and not fetched_in_call and start_line is not None:
+                cached_line_count = self._file_cache[path].count("\n") + 1
+                available_lines = {
+                    line_number
+                    for line_number, _line in iter_source_lines(self._file_cache[path])
+                    if line_number is not None
+                }
+                range_missing = any(
+                    line_number not in available_lines
+                    for line_number in range(range_start, min(range_end, self._line_counts[path]) + 1)
+                )
+                # 保留原有缓存契约：start-only 或超出旧缓存范围时重新拉取，
+                # 防止远程分支已变化时持续返回进程内的陈旧原文。
+                if end_line is None or end_line > cached_line_count or range_missing:
+                    full_content = None
             if full_content is None:
                 source = await self._github.get_file(self._issue, path)
                 full_content = source.content
-                self._line_counts[path] = source.content.count("\n") + 1
-            content = full_content
-        lines = content.splitlines()
-
-        if start_line is not None and start_line < 1:
-            start_line = 1
-        if end_line is not None and end_line > len(lines):
-            end_line = len(lines)
-
-        if start_line is not None and end_line is not None:
-            selected = lines[start_line - 1 : end_line]
-            result = "\n".join(f"L{i}: {line}" for i, line in enumerate(selected, start_line))
+                self._source_documents[path] = full_content
+                self._line_counts[path] = full_content.count("\n") + 1
+            if path not in self._source_budgets:
+                remaining = self._max_total_context_chars - self._cached_chars
+                self._source_budgets[path] = min(
+                    self._max_file_chars,
+                    len(self._file_cache[path]) + max(remaining, 0),
+                )
+                self._source_focus[path] = []
+            self._source_focus[path].append((range_start, max(range_start, range_end)))
+            self._refresh_source_sample(path)
+            lines = full_content.splitlines()
+            selected = lines[range_start - 1 : range_end]
+            result = "\n".join(f"L{i}: {line}" for i, line in enumerate(selected, range_start))
             return self._limit_tool_context(result)
-        if start_line is not None:
-            selected = lines[start_line - 1 :]
-            result = "\n".join(f"L{i}: {line}" for i, line in enumerate(selected, start_line))
-            return self._limit_tool_context(result)
-        result = "\n".join(f"L{i}: {line}" for i, line in enumerate(lines, 1))
+
+        result = render_numbered_source(self._file_cache[path])
         return self._limit_tool_context(result)
+
+    def _issue_focus_ranges(self, content: str) -> list[tuple[int, int]]:
+        """Promote source lines related to issue identifiers, with local context."""
+        issue_text = " ".join([self._issue.title, self._issue.body, *self._issue.comments])
+        tokens = {match.group(0).lower() for match in _FOCUS_TOKEN_RE.finditer(issue_text)}
+        if not tokens:
+            return []
+        ranges: list[tuple[int, int]] = []
+        for line_number, line in enumerate(content.splitlines(), 1):
+            lowered = line.lower()
+            if any(token in lowered for token in tokens):
+                ranges.append((max(1, line_number - 3), line_number + 3))
+                if len(ranges) >= 8:
+                    break
+        return ranges
+
+    def _refresh_source_sample(self, path: str) -> None:
+        """Rebuild one cached excerpt without exceeding its reserved/total budget."""
+        full_content = self._source_documents[path]
+        old_length = len(self._file_cache.get(path, ""))
+        remaining = self._max_total_context_chars - self._cached_chars
+        budget = min(self._source_budgets[path], old_length + max(remaining, 0))
+        sample = sample_source(full_content, budget, self._source_focus.get(path, []))
+        self._file_cache[path] = sample.text
+        self._source_samples[path] = sample
+        self._cached_chars += len(sample.text) - old_length
 
     def _normalize_file_path(self, path: str) -> str:
         if not isinstance(path, str) or not path or "\\" in path or path.startswith("/"):
@@ -500,44 +655,58 @@ class ToolExecutor:
             lines.extend(f"  {fragment}" for fragment in fragments)
         return self._limit_tool_context("\n".join(lines))
 
-    def _grep_lines(self, regex: re.Pattern[str], cache: dict[str, str]) -> list[str]:
-        """Synchronous scan executed in a worker thread.
-
-        扫描规模本身已有上界：``_file_cache`` 受 ``max_total_context_chars``（默认 80k）
-        与 ``max_file_chars`` 双重截断，因此这里的真正风险不是「扫得太多」，而是
-        「单行正则回溯爆炸」——后者由调用方的嵌套量词拒绝 + 线程隔离一起兜住。
-        """
+    def _grep_lines(self, regex: re.Pattern[str], cache: dict[str, str]) -> tuple[list[str], dict[str, list[int]]]:
+        """Synchronous scan executed in a worker thread with original line numbers."""
         results: list[str] = []
+        matches: dict[str, list[int]] = {}
         for file_path, content in cache.items():
-            for i, line in enumerate(content.splitlines(), 1):
-                if regex.search(line):
-                    results.append(f"{file_path}:L{i}: {line}")
+            for line_number, line in iter_source_lines(content):
+                if line_number is not None and regex.search(line):
+                    results.append(f"{file_path}:L{line_number}: {line}")
+                    matches.setdefault(file_path, []).append(line_number)
                     if len(results) >= _MAX_GREP_RESULTS:
-                        return results
-        return results
+                        return results, matches
+        return results, matches
 
     async def _tool_grep_content(self, pattern: str, path: str | None = None) -> str:
-        # 正则来自模型/聊天输入，存在灾难性回溯（ReDoS）风险：CPython 的 re 没有超时，
-        # 一旦陷入回溯会同步占满事件循环——连 /health 与 SSE 心跳都会一起卡住。
-        # 因此：先做嵌套量词启发式拒绝，再放到工作线程执行（最坏只烧一个线程，
-        # 事件循环仍然可用，取消/心跳不受影响）。
-        if _DANGEROUS_REGEX.search(pattern):
-            return (
-                "Refusing to run this pattern: nested quantifiers can trigger catastrophic "
-                "backtracking. Use a literal substring or a bounded repetition instead."
-            )
+        # CPython re 没有匹配超时：先做结构复杂度拒绝，再在工作线程执行并设置
+        # wall-clock 上限。一次超时后禁用本执行器的后续 grep，避免恶意调用不断
+        # 制造无法被杀死的后台线程；事件循环和 SSE 心跳始终保持可取消。
+        refusal = _regex_refusal_reason(pattern)
+        if refusal:
+            return f"Refusing to run this pattern: {refusal} can trigger catastrophic backtracking."
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error:
             regex = re.compile(re.escape(pattern), re.IGNORECASE)
-        # 可选 path 过滤：若指定则只搜索该已读文件，否则搜索全部已读文件
-        cache = self._file_cache
+        # 可选 path 过滤：搜索原始文档而非仅搜索采样，命中区段随后进入报告缓存。
+        cache = {key: self._source_documents.get(key, content) for key, content in self._file_cache.items()}
         if path is not None:
             normalized = self._normalize_file_path(path)
             if normalized not in cache:
                 return f"'{path}' has not been read yet. Use read_file first, or omit path to search all read files."
             cache = {normalized: cache[normalized]}
-        results = await asyncio.to_thread(self._grep_lines, regex, cache)
+        async with self._grep_lock:
+            if self._grep_timed_out:
+                return "Search unavailable: a previous regex timed out; use literal read_file ranges instead."
+            try:
+                results, matches = await asyncio.wait_for(
+                    asyncio.to_thread(self._grep_lines, regex, cache),
+                    timeout=_GREP_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                self._grep_timed_out = True
+                logger.warning(
+                    "grep_content timed out after %ss; further regex searches disabled", _GREP_TIMEOUT_SECONDS
+                )
+                return "Search timed out; further regex searches are disabled for this investigation."
+        for file_path, line_numbers in matches.items():
+            if file_path not in self._source_documents:
+                continue
+            self._source_focus[file_path].extend(
+                (max(1, line_number - 3), line_number + 3) for line_number in line_numbers[:4]
+            )
+            self._refresh_source_sample(file_path)
         if not results:
             scope = f"'{path}'" if path else "files read so far"
             return f"No matches for '{pattern}' in {scope}."

@@ -4,7 +4,8 @@ import re
 from typing import Literal
 
 from app.i18n import t
-from app.models import AnalysisReport, CodeReference
+from app.models import AnalysisReport, CodeReference, SourceCoverage
+from app.source_context import extract_line_text
 
 LINE_RANGE = re.compile(r"^L(\d+)(?:-L?(\d+))?$")
 # 英文标识符（函数名、变量、异常名等）。中文说明里通常混有代码符号，这里只抽英文 token。
@@ -113,16 +114,14 @@ def parse_line_range(lines: str | None) -> tuple[int, int] | None:
 
 
 def extract_cited_text(content: str, lines: str | None, *, max_chars: int = 4_000) -> str:
-    """Return the source text covered by a L-range citation, or a bounded prefix."""
-    source_lines = content.splitlines()
+    """Return cited text while respecting original line numbers in sampled excerpts."""
     parsed = parse_line_range(lines)
     if parsed is None:
-        return "\n".join(source_lines)[:max_chars]
+        return content[:max_chars]
     start, end = parsed
-    if start < 1 or start > len(source_lines):
+    if start < 1:
         return ""
-    end = min(end, len(source_lines))
-    return "\n".join(source_lines[start - 1 : end])[:max_chars]
+    return extract_line_text(content, start, end)[:max_chars]
 
 
 def _has_identifier_overlap(query_tokens: set[str], cited_text: str) -> bool:
@@ -172,7 +171,10 @@ class EvidenceValidator:
         files_read: list[str],
         line_counts: dict[str, int],
         file_cache: dict[str, str] | None = None,
+        source_coverage: list[dict] | None = None,
     ) -> AnalysisReport:
+        if source_coverage is not None:
+            report.source_coverage = [SourceCoverage.model_validate(item) for item in source_coverage]
         read_paths = set(files_read)
         kept: list[CodeReference] = []
         aligned_count = 0

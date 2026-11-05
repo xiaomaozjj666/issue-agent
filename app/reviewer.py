@@ -24,6 +24,7 @@ from app.json_utils import extract_json
 from app.models import AnalysisReport, IssueData, ReviewAudit, ReviewOutcome
 from app.provider import record_model_request, record_model_usage
 from app.retry import build_attempt_plan
+from app.source_context import bound_text_head_tail, render_numbered_source
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class ReviewerAgent:
         line_counts: dict[str, int],
         metrics: dict | None = None,
         deadline: float | None = None,
+        source_coverage: list[dict] | None = None,
     ) -> ReviewOutcome:
         original_payload = report.model_dump(exclude={"review_audit", "files_examined", "evidence_audit"})
         context = _build_review_context(
@@ -56,6 +58,7 @@ class ReviewerAgent:
             file_cache,
             files_read,
             self.settings.max_review_context_chars,
+            source_coverage,
         )
         base_messages = [
             {"role": "system", "content": get_review_system_prompt(self.settings.language)},
@@ -158,6 +161,7 @@ class ReviewerAgent:
             files_read=files_read,
             line_counts=line_counts,
             file_cache=file_cache,
+            source_coverage=source_coverage,
         )
         reviewed_payload = outcome.report.model_dump(exclude={"review_audit", "files_examined", "evidence_audit"})
         if outcome.verdict == "approved" and reviewed_payload != original_payload:
@@ -185,6 +189,7 @@ def _build_review_context(
     file_cache: dict[str, str],
     files_read: list[str],
     max_chars: int,
+    source_coverage: list[dict] | None = None,
 ) -> str:
     issue_data = {
         "repository": f"{issue.owner}/{issue.repo}",
@@ -197,24 +202,32 @@ def _build_review_context(
     report_data = report.model_dump(exclude={"review_audit"})
     if report_data.get("patch"):
         report_data["patch"] = str(report_data["patch"])[:4_000]
+    coverage_context = ""
+    if source_coverage:
+        coverage_context = "\n\nSOURCE TRUNCATION METADATA\n" + json.dumps(
+            source_coverage, ensure_ascii=False, separators=(",", ":")
+        )
     prefix = (
         "ISSUE\n"
         + json.dumps(issue_data, ensure_ascii=False, indent=2)
         + "\n\nINVESTIGATOR REPORT\n"
         + json.dumps(report_data, ensure_ascii=False, indent=2)
+        + coverage_context
         + "\n\nSOURCE EXCERPTS\n"
     )
     remaining = max(max_chars - len(prefix), 0)
     excerpts: list[str] = []
     evidence_paths = [item.path for item in report.evidence]
     ordered_paths = list(dict.fromkeys([*evidence_paths, *files_read]))
-    for path in ordered_paths:
-        content = file_cache.get(path)
-        if not content or remaining <= 0:
-            continue
-        numbered = "\n".join(f"L{number}: {line}" for number, line in enumerate(content.splitlines(), 1))
+    source_paths = [path for path in ordered_paths if file_cache.get(path)]
+    for index, path in enumerate(source_paths):
+        if remaining <= 0:
+            break
+        content = file_cache[path]
+        numbered = render_numbered_source(content)
         block = f"\n--- {path} ---\n{numbered}\n"
-        limited = block[:remaining]
+        allowance = remaining if index == len(source_paths) - 1 else remaining // (len(source_paths) - index)
+        limited = bound_text_head_tail(block, allowance)
         excerpts.append(limited)
         remaining -= len(limited)
     return (prefix + "".join(excerpts))[:max_chars]
