@@ -681,8 +681,12 @@ class IssueAgent:
             candidate_paths = list(referenced_paths) + remaining
             candidate_paths = candidate_paths[: self.settings.max_planning_paths]
         tree_preview = candidate_paths if candidate_paths else tree[: self.settings.max_planning_paths]
+        comments = [
+            comment[: self.settings.max_issue_comment_chars]
+            for comment in issue.comments[: self.settings.max_issue_comments]
+        ]
         issue_context = json.dumps(
-            {"title": issue.title, "body": issue.body[:5000], "labels": issue.labels, "comments": issue.comments[:10]},
+            {"title": issue.title, "body": issue.body[:5000], "labels": issue.labels, "comments": comments},
             ensure_ascii=False,
             indent=2,
         )

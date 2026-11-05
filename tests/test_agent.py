@@ -917,6 +917,17 @@ def test_build_initial_messages_includes_issue_and_tree(make_agent, make_issue) 
     assert "src/parser.py" in messages[1]["content"]
 
 
+def test_build_initial_messages_bounds_comment_count_and_length(make_agent, make_issue) -> None:
+    agent = make_agent(settings_kwargs={"max_issue_comments": 2, "max_issue_comment_chars": 3})
+    issue = make_issue(comments=["abcdef", "xy", "must not appear"])
+
+    content = agent._build_initial_messages(issue, ["src/main.py"])[1]["content"]
+    issue_context = json.loads(content.split("Investigate this GitHub issue:\n", 1)[1].split("\n\nRepository", 1)[0])
+
+    assert issue_context["comments"] == ["abc", "xy"]
+    assert "must not appear" not in content
+
+
 def test_trim_session_messages_keeps_latest_complete_turn() -> None:
     messages = [
         {"role": "user", "content": "old question"},

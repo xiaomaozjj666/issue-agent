@@ -83,28 +83,56 @@ def test_content_alignment_keeps_matching_evidence_strong() -> None:
 
 
 def test_three_aligned_evidence_allow_high_confidence() -> None:
+    paths = ("src/auth.py", "src/auth.py", "src/config.py")
+    lines = ("L1", "L2", "L1")
     evidence = [
         CodeReference(
-            path="src/auth.py",
-            lines=f"L{i}-L{i}",
+            path=path,
+            lines=line,
             reason="login_handler forgot password_hash",
             strength="strong",
         )
-        for i in (1, 2, 3)
+        for path, line in zip(paths, lines, strict=True)
     ]
     report = _report(
         evidence=evidence,
         root_cause="login_handler mishandles password_hash",
     )
-    file_cache = {"src/auth.py": "def login_handler(password_hash):\n    return password_hash\n# password_hash\n"}
+    file_cache = {
+        "src/auth.py": "def login_handler(password_hash):\n    return password_hash\n",
+        "src/config.py": "login_handler password_hash\n",
+    }
     validated = EvidenceValidator().validate(
         report,
-        files_read=["src/auth.py"],
-        line_counts={"src/auth.py": 3},
+        files_read=["src/auth.py", "src/config.py"],
+        line_counts={"src/auth.py": 2, "src/config.py": 1},
         file_cache=file_cache,
     )
     assert all(item.strength == "strong" for item in validated.evidence)
     assert validated.confidence == "high"
+
+
+def test_repeated_references_from_one_file_cap_confidence_at_medium() -> None:
+    evidence = [
+        CodeReference(
+            path="src/auth.py",
+            lines=f"L{i}",
+            reason="login_handler forgot password_hash",
+            strength="strong",
+        )
+        for i in (1, 2, 3)
+    ]
+    report = _report(evidence=evidence, root_cause="login_handler mishandles password_hash")
+
+    validated = EvidenceValidator().validate(
+        report,
+        files_read=["src/auth.py"],
+        line_counts={"src/auth.py": 3},
+        file_cache={"src/auth.py": "def login_handler(password_hash):\n    return password_hash\n# password_hash\n"},
+    )
+
+    assert len(validated.evidence) == 3
+    assert validated.confidence == "medium"
 
 
 def test_without_file_cache_keeps_legacy_behaviour() -> None:

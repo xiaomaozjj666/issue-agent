@@ -197,6 +197,8 @@ python -m uvicorn app.main:app --port 9123 --reload
 | `GITHUB_CACHE_TTL_SECONDS` | `300` | 仓库树 / 源码缓存有效期，`0` 关闭 |
 | `MAX_CANDIDATE_FILES` | `12` | 单次调查最多读取的不同源码文件数 |
 | `MAX_PLANNING_PATHS` | `80` | 初始提示中展示的候选路径数 |
+| `MAX_ISSUE_COMMENTS` | `10` | 初始调查上下文最多包含的评论数，`0` 表示不包含 |
+| `MAX_ISSUE_COMMENT_CHARS` | `2000` | 初始调查上下文中单条评论的最大字符数 |
 | `MAX_FILE_CHARS` | `16000` | 单个文件最多保留字符数 |
 | `MAX_TOTAL_CONTEXT_CHARS` | `80000` | 保留的源码 + 对话总字符上限 |
 | `MAX_EXPLORATION_TOKENS` | `2000` | 每轮规划输出 token 预算 |

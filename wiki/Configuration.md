@@ -61,6 +61,8 @@
 | `MAX_DUPLICATE_TOOL_ROUNDS` | `2` | 1–5 | 连续精确重复工具轮次达到该值后提前生成报告 |
 | `MAX_INVESTIGATION_LEDGER_CHARS` | `12000` | 1000–50000 | 调查账本（搜索/历史/工具发现）保留上限 |
 | `MAX_CHAT_TOKENS` | `2000` | 500–16000 | 聊天模式单次响应最大 token |
+| `MAX_ISSUE_COMMENTS` | `10` | 0–100 | 初始调查上下文最多包含的评论数，`0` 表示不包含 |
+| `MAX_ISSUE_COMMENT_CHARS` | `2000` | 1–20000 | 初始调查上下文中单条评论的最大字符数 |
 
 **上下文预算分配（报告生成阶段）:**
 - 调查账本 (investigation ledger): `budget // 3`

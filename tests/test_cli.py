@@ -32,6 +32,28 @@ def test_print_report_renders_complete_analysis(monkeypatch) -> None:
     assert "May change error semantics" in rendered
 
 
+@pytest.mark.parametrize(("confidence", "color"), [("high", "green"), ("medium", "yellow"), ("low", "red")])
+def test_print_report_uses_semantic_confidence_colors(monkeypatch, confidence: str, color: str) -> None:
+    from unittest.mock import MagicMock
+
+    console = MagicMock()
+    monkeypatch.setattr(cli, "console", console)
+    report = AnalysisReport(
+        summary="summary",
+        root_cause="root cause",
+        confidence=confidence,
+        evidence=[],
+        proposed_changes=[],
+        tests=[],
+        risks=[],
+    )
+
+    cli.print_report(report)
+
+    confidence_line = next(call.args[0] for call in console.print.call_args_list if "Confidence:" in str(call))
+    assert f"[{color}]{confidence}[/]" in confidence_line
+
+
 def test_main_dispatches_analyze_command(monkeypatch) -> None:
     called: dict[str, str | None] = {}
 

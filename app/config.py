@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     )
     max_investigation_ledger_chars: int = Field(default=12_000, ge=1_000, le=50_000)
     max_chat_tokens: int = Field(default=2_000, ge=500, le=16_000)
+    max_issue_comments: int = Field(default=10, ge=0, le=100)
+    max_issue_comment_chars: int = Field(default=2_000, ge=1, le=20_000)
 
     # ── Independent review ───────────────────────────────────────────
     independent_review: bool = True

@@ -198,14 +198,15 @@ class EvidenceValidator:
         )
 
         reference_count = len(report.evidence)
+        independent_paths = {item.path for item in report.evidence}
         confidence_rank = {"low": 0, "medium": 1, "high": 2}
-        # 上限规则：0 条 → low；不足 3 条，或全部引用内容与结论无交集 → medium；否则 high
+        # high 至少需要 3 条可回溯引用及 2 个独立文件，避免同一文件的重复引用虚增置信度。
         all_content_weak = (
             file_cache is not None and reference_count > 0 and aligned_count == 0 and weak_count == reference_count
         )
         if reference_count == 0:
             maximum_confidence: Literal["low", "medium", "high"] = "low"
-        elif all_content_weak or reference_count < 3:
+        elif all_content_weak or reference_count < 3 or len(independent_paths) < 2:
             maximum_confidence = "medium"
         else:
             maximum_confidence = "high"

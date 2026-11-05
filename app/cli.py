@@ -29,7 +29,7 @@ def print_report(report: AnalysisReport) -> None:
     console.print(f"[bold]Root Cause:[/] {report.root_cause}")
     console.print()
 
-    badge_style = {"high": "red", "medium": "yellow", "low": "green"}
+    badge_style = {"high": "green", "medium": "yellow", "low": "red"}
     style = badge_style.get(report.confidence, "white")
     console.print(f"[bold]Confidence:[/] [{style}]{report.confidence}[/]")
     console.print(f"Valid Evidence: {report.evidence_audit.valid_references}")
