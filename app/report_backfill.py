@@ -182,12 +182,10 @@ def parse_diffstat(patch: str) -> list[dict]:
         elif line.startswith("+++"):
             if cur is None:
                 cur = {"path": _path_from(line), "added": 0, "removed": 0}
-        elif line.startswith("+"):
-            if cur and not line.startswith("+++"):
-                cur["added"] += 1
-        elif line.startswith("-"):
-            if cur and not line.startswith("---"):
-                cur["removed"] += 1
+        elif cur and line.startswith("+") and not line.startswith("+++"):
+            cur["added"] += 1
+        elif cur and line.startswith("-") and not line.startswith("---"):
+            cur["removed"] += 1
     if cur:
         files.append(cur)
     return files
