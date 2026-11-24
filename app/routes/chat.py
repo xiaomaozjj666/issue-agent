@@ -104,6 +104,9 @@ async def chat(
     except ValueError as error:
         await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except TimeoutError as error:
+        await mark_session_failed(session_mgr, session, error)
+        raise HTTPException(status_code=504, detail=str(error)) from error
     except GitHubRateLimitError as error:
         await mark_session_failed(session_mgr, session, error)
         raise HTTPException(status_code=429, detail=str(error)) from error

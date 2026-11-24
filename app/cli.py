@@ -5,6 +5,7 @@ import asyncio
 import sys
 from pathlib import Path
 
+from openai import APIError
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -94,9 +95,7 @@ async def cmd_analyze(url: str, save_patch: str | None = None) -> None:
             SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console
         ) as progress:
             task = progress.add_task(f"[cyan]Analyzing {url}...", total=None)
-            events = []
             async for event in agent.investigate_stream(url):
-                events.append(event)
                 data = event.data or {}
                 if event.type == "start":
                     progress.update(
@@ -115,7 +114,7 @@ async def cmd_analyze(url: str, save_patch: str | None = None) -> None:
                         if save_patch and report.patch:
                             Path(save_patch).write_text(report.patch, encoding="utf-8")
                             console.print(f"[green]Patch saved to {save_patch}[/]")
-    except (ValueError, GitHubError, ModelResponseError) as error:
+    except (ValueError, GitHubError, ModelResponseError, TimeoutError, APIError) as error:
         console.print(f"[red]Error: {error}[/]", style="red")
         sys.exit(1)
     finally:
@@ -177,7 +176,7 @@ async def cmd_chat(url: str, save_patch: str | None = None) -> None:
                 console.print(response.reply)
                 if response.tools_used:
                     console.print(f"[dim]Tools: {', '.join(response.tools_used)}[/]")
-            except (GitHubError, ModelResponseError) as error:
+            except (GitHubError, ModelResponseError, TimeoutError, APIError) as error:
                 console.print(f"[red]Error: {error}[/]")
             console.print()
     except ValueError as error:

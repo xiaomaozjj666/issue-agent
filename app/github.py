@@ -347,9 +347,10 @@ class GitHubClient:
                 if attempt < self._max_retries:
                     delay = 0.5 * (2**attempt)
                     logger.warning(
-                        "GitHub request %s failed (attempt %d): %s; retrying in %.1fs",
+                        "GitHub request %s failed (attempt %d): %s: %s; retrying in %.1fs",
                         path,
                         attempt + 1,
+                        type(exc).__name__,
                         exc,
                         delay,
                     )

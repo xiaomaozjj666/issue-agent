@@ -240,6 +240,32 @@ def test_chat_new_session_returns_report(monkeypatch) -> None:
     assert data["report"]["confidence"] == "high"
 
 
+@pytest.mark.asyncio
+async def test_chat_new_session_timeout_returns_504_and_marks_failed(monkeypatch) -> None:
+    async def fake_investigate(self: IssueAgent, issue_url: str, *, session=None):
+        raise TimeoutError("Investigation exceeded 300s total timeout")
+
+    manager = SessionManager()
+    monkeypatch.setattr(IssueAgent, "investigate", fake_investigate)
+    app.dependency_overrides[get_settings] = lambda: Settings(openai_api_key="test-key")
+    app.dependency_overrides[get_session_manager] = lambda: manager
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/chat",
+                json={"issue_url": "https://github.com/acme/widget/issues/1", "message": "分析一下"},
+            )
+        sessions = await manager.list()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 504
+    assert "Investigation exceeded" in response.json()["detail"]
+    # 超时必须把会话落到失败态，否则会一直显示“正在分析”直到 stale 回收
+    assert [session.status for session in sessions] == ["failed"]
+
+
 def test_stream_creates_session_that_can_continue_in_chat(monkeypatch) -> None:
     manager = SessionManager()
     app.dependency_overrides[get_session_manager] = lambda: manager

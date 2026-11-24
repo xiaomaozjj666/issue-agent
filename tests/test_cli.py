@@ -242,3 +242,60 @@ def test_cmd_chat_quit_on_eof(monkeypatch, capsys) -> None:
     asyncio.run(cli.cmd_chat("https://github.com/acme/widget/issues/1"))  # 不应抛异常
 
     assert "Interactive Mode" in capsys.readouterr().out
+
+
+# ── 网络 / 模型服务异常：CLI 应给出可读错误而不是回溯 ──
+
+
+def _api_error() -> Exception:
+    import httpx2
+    from openai import APIError
+
+    return APIError(
+        "Connection error.",
+        httpx2.Request("POST", "https://api.deepseek.com/v1/chat/completions"),
+        body=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "error_factory",
+    [pytest.param(_api_error, id="api-error"), pytest.param(lambda: TimeoutError("analysis timed out"), id="timeout")],
+)
+def test_cmd_analyze_reports_upstream_failures_without_traceback(monkeypatch, capsys, error_factory) -> None:
+    import asyncio
+
+    class _FailingAgent:
+        async def investigate_stream(self, url, *, session=None):
+            raise error_factory()
+            yield  # pragma: no cover
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr(cli, "IssueAgent", lambda settings: _FailingAgent())
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(cli.cmd_analyze("https://github.com/acme/widget/issues/1"))
+
+    assert exc_info.value.code == 1
+    assert "Error:" in capsys.readouterr().out
+
+
+def test_cmd_chat_keeps_session_alive_after_api_error(monkeypatch, capsys) -> None:
+    import asyncio
+    import builtins
+
+    class _ChatFailingAgent(_FakeEventsAgent):
+        async def chat(self, session, message: str):
+            raise _api_error()
+
+    agent = _ChatFailingAgent(_standard_events())
+    monkeypatch.setattr(cli, "IssueAgent", lambda settings: agent)
+    inputs = iter(["解释一下", "/quit"])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
+
+    asyncio.run(cli.cmd_chat("https://github.com/acme/widget/issues/1"))
+
+    out = capsys.readouterr().out
+    assert "Error:" in out
+    assert "Connection error." in out
