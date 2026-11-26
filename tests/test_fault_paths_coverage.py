@@ -481,9 +481,13 @@ async def test_chat_rate_limit_error_marks_failed(monkeypatch) -> None:
 
 
 async def test_chat_api_error_maps_to_502(monkeypatch) -> None:
-    detail = await _post_chat_with_session_error(
-        monkeypatch, openai.APIError("model down", request=None, body=None), 502
+    # openai>=3.56 的 APIError 构造函数会访问 request.headers，必须传真实 Request
+    error = openai.APIError(
+        "model down",
+        request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
+        body=None,
     )
+    detail = await _post_chat_with_session_error(monkeypatch, error, 502)
     assert detail["status"] == "failed"
 
 

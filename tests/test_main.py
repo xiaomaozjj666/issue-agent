@@ -921,7 +921,13 @@ def test_analyze_api_error_maps_to_502(monkeypatch) -> None:
     """底层 OpenAI APIError -> 502，且日志记录不泄露堆栈到客户端。"""
     import openai
 
-    _post_analyze_with_error(monkeypatch, openai.APIError("model down", request=None, body=None), 502)
+    # openai>=3.56 的 APIError 构造函数会访问 request.headers，必须传真实 Request
+    error = openai.APIError(
+        "model down",
+        request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
+        body=None,
+    )
+    _post_analyze_with_error(monkeypatch, error, 502)
 
 
 # ── /chat 各类异常分支（614-632）──
