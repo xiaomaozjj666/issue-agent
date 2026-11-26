@@ -653,6 +653,31 @@ class GitHubClient:
             for b in branches
         ]
 
+    async def list_open_issues(self, owner: str, repo: str, limit: int = 10) -> list[int]:
+        """List numbers of recently created open issues (pull requests excluded).
+
+        Used by batch analysis to expand a repository URL into concrete issues.
+        """
+        repo_segment = self._repo_segment(owner, repo)
+        response = await self._get(
+            f"/repos/{repo_segment}/issues",
+            params={
+                "state": "open",
+                "sort": "created",
+                "direction": "desc",
+                "per_page": max(1, min(limit, 100)),
+            },
+        )
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise GitHubError("Unexpected GitHub issues payload")
+        numbers = [
+            item["number"]
+            for item in payload
+            if isinstance(item, dict) and isinstance(item.get("number"), int) and "pull_request" not in item
+        ]
+        return numbers[:limit]
+
     async def get_file_at_commit(self, issue: IssueData, path: str, sha: str) -> SourceFile:
         encoded_path = quote(path, safe="/")
         repo_segment = self._repo_segment(issue.owner, issue.repo)

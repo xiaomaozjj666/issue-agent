@@ -34,6 +34,11 @@ def get_task_queue(request: Request) -> TaskQueue:
     return queue
 
 
+def get_github_client(request: Request) -> GitHubClient | None:
+    """FastAPI dependency: process-scoped GitHub client (may be absent in tests)."""
+    return getattr(request.app.state, "github_client", None)
+
+
 def get_investigation_slots(request: Request) -> InvestigationGate:
     """FastAPI dependency: process-wide investigation concurrency gate.
 
@@ -52,6 +57,7 @@ def get_investigation_slots(request: Request) -> InvestigationGate:
 SessionMgr = Annotated[SessionManager, Depends(get_session_manager)]
 CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]
 TaskQueueDep = Annotated[TaskQueue, Depends(get_task_queue)]
+GitHubClientDep = Annotated[GitHubClient | None, Depends(get_github_client)]
 InvestigationSlots = Annotated[InvestigationGate, Depends(get_investigation_slots)]
 
 

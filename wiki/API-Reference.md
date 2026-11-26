@@ -319,9 +319,10 @@ data: {"type": "done", "data": {}}
 
 ## 批量分析
 
-### `POST /batch`
+批量任务由进程内异步队列执行（无需 Redis / Celery）。单批最多 100 个任务、20 个仓库链接；
+仓库链接会展开为其最近创建的 10 个 open issue（PR 不计入）。重复 URL 自动去重。
 
-提交多个 Issue 批量调查，返回批次句柄供轮询。单批最多 100 个 URL。
+### `POST /batch`
 
 **Request:**
 ```json
@@ -329,27 +330,67 @@ data: {"type": "done", "data": {}}
   "issue_urls": [
     "https://github.com/acme/widget/issues/42",
     "https://github.com/acme/widget/issues/43"
-  ]
+  ],
+  "repository_urls": ["https://github.com/acme/widget"]
 }
 ```
+
+两个字段都可省略，但不能同时为空。仓库链接需为 `https://github.com/owner/repo`（允许 `www.`、末尾 `/` 与 `.git`）。
 
 **Response 200:**
 ```json
 {
   "batch_id": "b1b2c3d4e5f6",
-  "status": "running",
-  "progress": { "total": 2, "completed": 0, "failed": 0 },
+  "status": "pending",
+  "progress": { "pending": 2, "running": 0, "completed": 0, "failed": 0, "cancelled": 0 },
   "tasks": [
-    { "task_id": "t1", "issue_url": "…42", "status": "pending", "has_report": false }
+    { "task_id": "t1", "issue_url": "…42", "status": "pending", "error": null, "has_report": false }
   ]
 }
 ```
 
-URL 非法或超限返回 422。
+`status` 取值：`pending` / `running` / `completed`（全部成功）/ `partial`（存在失败或取消）。
+任务状态：`pending` / `running` / `completed` / `failed` / `cancelled`。
+
+**错误：**
+
+| 状态码 | 场景 |
+|---|---|
+| 422 | 任一 Issue / 仓库 URL 非法（`detail` 带下标，如 `issue_urls[1]: …`）、展开后仍为空、超过任务或仓库上限、队列容量不足 |
+| 429 | 展开仓库时触发 GitHub 限流 |
+| 502 | 展开仓库时 GitHub 不可用 |
 
 ### `GET /batch/{batch_id}`
 
-查询批次进度。响应结构同 `POST /batch`；批次不存在返回 404。进程重启后已持久化的批次仍可查询。
+查询批次进度，响应结构同 `POST /batch`。批次不存在（含过期清理）返回 404；
+进程重启后已持久化的批次仍可查询，崩溃前 `running` 的任务会标记为 `cancelled`，`pending` 任务自动重新入队。
+
+### `GET /batch/{batch_id}/tasks/{task_id}`
+
+返回单个任务的完整结果，供界面按需展开报告：
+
+```json
+{
+  "task_id": "t1",
+  "issue_url": "https://github.com/acme/widget/issues/42",
+  "status": "completed",
+  "error": null,
+  "has_report": true,
+  "report": { "summary": "…", "root_cause": "…", "confidence": "high", "evidence": [] }
+}
+```
+
+批次或任务不存在返回 404；任务未完成时 `report` 为 `null`。
+
+### `POST /batch/{batch_id}/retry`
+
+把该批次中 `failed` / `cancelled` 的任务重新置为 `pending` 并入队，响应结构同 `GET /batch/{batch_id}`。
+
+| 状态码 | 场景 |
+|---|---|
+| 200 | 已重新入队，返回更新后的批次 |
+| 404 | 批次不存在 |
+| 409 | 没有可重试的任务，或队列剩余容量不足 |
 
 ---
 

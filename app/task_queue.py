@@ -259,6 +259,38 @@ class TaskQueue:
             return None
         return await self._load_batch(batch_id)
 
+    async def retry(self, batch_id: str) -> Batch | None:
+        """Re-enqueue failed or cancelled tasks so a batch can recover from partial failure.
+
+        Returns ``None`` when the batch does not exist. Raises ``ValueError`` when
+        there is nothing to retry or the queue has no remaining capacity.
+        """
+        batch = await self.get_batch_async(batch_id)
+        if batch is None:
+            return None
+        retryable = [task for task in batch.tasks if task.status in {"failed", "cancelled"}]
+        if not retryable:
+            raise ValueError("No failed tasks to retry")
+        if self._pending.qsize() + len(retryable) > self._max_queue_size:
+            raise ValueError(
+                f"Queue capacity exceeded: {self._pending.qsize()} pending + "
+                f"{len(retryable)} retried > {self._max_queue_size} max"
+            )
+        # 从 SQLite 恢复的批次不在内存中，worker 通过 _batches 查找任务，必须先放回去
+        self._batches[batch_id] = batch
+        for task in retryable:
+            task.status = "pending"
+            task.error = None
+            task.result = None
+            task.started_at = None
+            task.finished_at = None
+            self._pending.put_nowait((batch_id, task.task_id))
+        batch.status = _recompute_batch_status(batch.progress)
+        for task in retryable:
+            await self._persist_state(batch, task)
+        logger.info("Batch %s: retried %d task(s)", batch_id, len(retryable))
+        return batch
+
     async def recover_from_store(self) -> int:
         """Reload pending work and cancel tasks orphaned by a previous process.
 

@@ -62,7 +62,7 @@ flowchart LR
 - ⚡ **并发安全** — 会话版本号乐观锁，防止多 worker / 多进程静默覆盖
 - 🔁 **熔断器** — LLM 供应商连续失败后快速失败，应用在故障期间仍能响应
 - 🚦 **限流** — 按 API key 的滑动窗口限流（未配置时按客户端 IP 兜底），健康检查与静态资源豁免
-- ⚙️ **批量分析** — 一次提交多个 Issue 到进程内异步任务队列后台分析，轮询进度；配置 SQLite 路径时批次状态与完成报告落盘，重启可恢复 pending 任务
+- ⚙️ **批量分析** — Web UI 一次提交多个 Issue 或仓库链接（仓库自动展开为最近 10 个 open issue），逐个展示排队 / 进行中 / 完成 / 失败状态与错误原因；可查看单任务报告、一键重试失败项、复制失败链接。后端为进程内异步任务队列，配置 SQLite 路径时批次状态与完成报告落盘，重启可恢复 pending 任务
 - 📈 **成本可观测** — 会话 metrics 记录 token 用量与估算费用（`estimated_cost_usd`），时间线展示 tokens / 花费
 - 🧪 **评测脚手架** — `evals/` 黄金用例 + 离线打分，用于对比 prompt / 模型调整后的根因命中率
 - ✅ **红—绿补丁验证** — 维护者显式提供可信命令，在临时 Git worktree 中记录补丁前失败、补丁后通过与回归结果；结构化证据写入会话报告，未执行绝不标记通过
@@ -72,7 +72,7 @@ flowchart LR
 
 ## 安全模型
 
-- 仅接受 `https://github.com/{owner}/{repo}/issues/{number}` 形式的 URL
+- 仅接受 `https://github.com/{owner}/{repo}/issues/{number}` 形式的分析目标；批量分析额外接受 `https://github.com/{owner}/{repo}`，仅用于只读列出该仓库最近的 open issue
 - 默认使用只读 GitHub REST API 端点，绝不执行仓库代码
 - 仓库写入只发生在 `POST /session/{session_id}/apply-fix`，且同时满足：`WRITE_MODE=true`、存在校验通过的存储提案、请求带显式 `confirm=true`
 - 创建 PR 前会基于仓库默认分支重新校验提案；写入中途失败会回滚临时分支
@@ -288,7 +288,10 @@ wiki/                  项目文档
 | `GET /session/{id}/proposal` | 安全的 PR 提案预览（不含文件内容） |
 | `GET /session/{id}/export` | 导出完整会话 JSON |
 | `POST /session/import` | 导入会话 JSON 到新会话 |
-| `POST /batch` / `GET /batch/{batch_id}` | 批量提交与进度轮询 |
+| `POST /batch` | 批量提交 Issue / 仓库链接（仓库展开为 open issue） |
+| `GET /batch/{batch_id}` | 批次进度轮询 |
+| `GET /batch/{batch_id}/tasks/{task_id}` | 单个任务的报告与错误详情 |
+| `POST /batch/{batch_id}/retry` | 重新入队失败 / 取消的任务 |
 | `POST /session/{session_id}/validate-patch` | 本地红—绿验证并把真实证据写入报告（默认关闭；需启用、认证与 `confirm=true`） |
 | `POST /session/{session_id}/apply-fix` | 写模式：创建 PR（需 `WRITE_MODE=true` 与 `confirm=true`） |
 

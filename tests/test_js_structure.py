@@ -177,3 +177,45 @@ def test_risk_matrix_marker_uses_ripple_effect() -> None:
     assert "rippleEffect" in text, "缺少 rippleEffect 涟漪配置"
     degraded = 'prefersReducedMotion() ? "scatter" : "effectScatter"' in text
     assert degraded, "effectScatter 必须在 prefers-reduced-motion 下降级为普通散点"
+
+
+# ── 批量分析界面（BatchAnalysis）结构约束 ─────────────────────────────
+
+_BATCH_JS = _JS_DIR / "batch-analysis.js"
+_ENHANCEMENTS_CSS = Path(__file__).resolve().parent.parent / "app" / "static" / "css" / "enhancements.css"
+
+
+def test_batch_analysis_module_contract() -> None:
+    """批量分析模块必须走 IA 命名空间、覆盖提交/轮询/结果/重试，且不引入裸全局。"""
+    assert _BATCH_JS.exists(), "缺少 app/static/js/batch-analysis.js 批量分析模块"
+    text = _BATCH_JS.read_text(encoding="utf-8")
+    assert "IA.BatchAnalysis" in text, "批量分析模块未通过 IA.BatchAnalysis 暴露接口"
+    # API 契约：提交、进度轮询、任务详情、失败重试
+    assert '"/batch"' in text, "缺少批量提交请求"
+    assert '"/tasks/"' in text, "缺少任务详情请求（无法查看单个任务报告）"
+    assert '"/retry"' in text, "缺少失败项重试请求"
+    # 轮询必须能在后台标签页暂停后恢复，且关闭弹层后不再排期
+    assert "visibilitychange" in text, "缺少 visibilitychange 补拉逻辑"
+    assert "isOpen()" in text, "轮询未检查弹层是否打开"
+    bare = re.findall(r"window\.(\w+)\s*=", text)
+    allowed = {"IssueAgent", "addEventListener", "removeEventListener"}
+    assert all(name in allowed for name in bare), f"batch-analysis.js 引入了禁止的 window 裸全局：{bare}"
+
+
+def test_index_html_includes_batch_entry_and_module() -> None:
+    """index.html 必须有批量分析入口，并在 app.js 之后加载批量分析模块。"""
+    html = (_TEMPLATES_DIR / "index.html").read_text(encoding="utf-8")
+    assert 'id="batch-open-btn"' in html, "index.html 缺少 #batch-open-btn 入口"
+    assert 'data-i18n="bulk_open"' in html, "批量分析入口缺少国际化绑定"
+    batch_pos = html.find("/static/js/batch-analysis.js")
+    app_pos = html.find("/static/js/app.js")
+    assert batch_pos != -1 and app_pos != -1
+    assert app_pos < batch_pos, "batch-analysis.js 必须在 app.js 之后加载"
+
+
+def test_batch_analysis_styles_exist() -> None:
+    """批量分析弹层样式必须存在，且窄屏下铺满视口。"""
+    css = _ENHANCEMENTS_CSS.read_text(encoding="utf-8")
+    assert ".batch-surface" in css, "缺少批量分析弹层样式"
+    assert ".batch-task-list" in css, "缺少批次任务列表样式"
+    assert "@media (max-width: 640px)" in css and "max-height: none" in css, "缺少窄屏铺满视口规则"

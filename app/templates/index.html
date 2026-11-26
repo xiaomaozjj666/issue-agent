@@ -38,6 +38,10 @@
       <button class="primary-action" type="button" id="analyze-btn"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7.25 1.75a.75.75 0 0 1 1.5 0v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5Z"/></svg><span data-i18n="new_analysis">New analysis</span></button>
     </div>
     <p id="url-error" class="compose-error" role="alert" hidden></p>
+    <button type="button" id="batch-open-btn" class="batch-open-btn">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 .75a.75.75 0 0 1 .37.1l7 4a.75.75 0 0 1 0 1.3l-7 4a.75.75 0 0 1-.74 0l-7-4a.75.75 0 0 1 0-1.3l7-4A.75.75 0 0 1 8 .75Zm-5.6 4.4L8 8.28l5.6-3.13L8 2.02 2.4 5.15Zm12.42 2.6a.75.75 0 0 1-.22 1.04L8 12.68 1.4 8.79a.75.75 0 1 1 .78-1.28L8 11.1l5.82-3.59a.75.75 0 0 1 1.04.22Zm0 3.5a.75.75 0 0 1-.22 1.04L8 16.18l-6.6-3.89a.75.75 0 1 1 .78-1.28L8 14.6l5.82-3.59a.75.75 0 0 1 1.04.22Z"/></svg>
+      <span data-i18n="bulk_open">Batch analysis</span>
+    </button>
   </div>
   <div class="history-panel">
     <div class="history-toolbar">
@@ -108,5 +112,6 @@
 <script src="/static/js/app.js?v={{ build_id }}" defer></script>
 <script src="/static/js/enhancements.js?v={{ build_id }}" defer></script>
 <script src="/static/js/pr-panel.js?v={{ build_id }}" defer></script>
+<script src="/static/js/batch-analysis.js?v={{ build_id }}" defer></script>
 </body>
 </html>
