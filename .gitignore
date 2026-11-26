@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .playwright-cli/
+.screenshots/.tmp/
 playwright-report/
 test-results/
 .coverage
