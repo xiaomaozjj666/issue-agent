@@ -2,6 +2,11 @@
 setlocal
 chcp 65001 >nul
 
+if "%~1"=="" if exist "%~dp0desktop-app\Issue Agent.exe" (
+  start "" "%~dp0desktop-app\Issue Agent.exe"
+  exit /b 0
+)
+
 rem start-issue-agent.ps1 的退出码约定：
 rem   0 = 正常（服务已启动 / 已在运行 / -CheckOnly 通过）
 rem   1 = 真正的启动失败
