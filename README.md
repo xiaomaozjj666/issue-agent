@@ -36,7 +36,7 @@ flowchart LR
 
 粘贴 Issue 链接即可开始分析——深色 / 浅色双主题，桌面与移动端自适应：
 
-| 首页 · 一键发起分析 | 调查轨迹 · 实时进度与结构化报告 |
+| 首页 · 一键发起分析 | 调查轨迹 · 工具调用、5/5 能力与根因证据链 |
 |---|---|
 | <img src="docs/screenshots/home-dark.png" alt="首页" width="480"> | <img src="docs/screenshots/report-dark.png" alt="调查与报告" width="480"> |
 | 批量分析 · 仓库展开、并发进度与单任务报告 | 报告交互图表 · 风险矩阵与波及范围 |
