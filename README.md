@@ -6,6 +6,7 @@
   <img src="https://img.shields.io/badge/DeepSeek-LLM-4D6BFE" alt="DeepSeek" />
   <img src="https://img.shields.io/badge/Docker-ready-2496ED" alt="Docker" />
   <a href="https://github.com/xiaomaozjj666/issue-agent/actions/workflows/ci.yml"><img src="https://github.com/xiaomaozjj666/issue-agent/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/tests-679%20passed-brightgreen" alt="679 项自动化测试通过" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
 </p>
 
@@ -35,9 +36,11 @@ flowchart LR
 
 粘贴 Issue 链接即可开始分析——深色 / 浅色双主题，桌面与移动端自适应：
 
-| 首页 · 一键发起分析 | 调查轨迹 · 实时进度 |
+| 首页 · 一键发起分析 | 调查轨迹 · 实时进度与结构化报告 |
 |---|---|
 | <img src="docs/screenshots/home-dark.png" alt="首页" width="480"> | <img src="docs/screenshots/report-dark.png" alt="调查与报告" width="480"> |
+| 批量分析 · 仓库展开、并发进度与单任务报告 | 报告交互图表 · 风险矩阵与波及范围 |
+| <img src="docs/screenshots/batch-dark.png" alt="批量分析界面" width="480"> | <img src="docs/screenshots/charts-dark.png" alt="报告交互图表" width="480"> |
 
 报告内置 5 个**可交互数据图表**，全部支持悬停详情与点击下钻（证据定位、风险矩阵聚焦、补丁 diff 跳转）：
 
@@ -46,8 +49,6 @@ flowchart LR
 - 🌊 **波及范围** — 受影响模块可视化（有补丁时按改动行数，无补丁时降级为语义徽章流）
 - 📈 **补丁改动分布** — 与 git diff --stat 同口径的增删行统计
 - ✅ **证据核对** — 引用 / 已读 / 补丁覆盖三方对账，未读引用红色警示
-
-<img src="docs/screenshots/charts-dark.png" alt="报告交互图表" width="960">
 
 > 截图由 `node scripts/capture_screenshots.cjs` 生成（路由 mock、无外部依赖），配色或布局变更后请重跑刷新。
 
@@ -130,7 +131,18 @@ OPENAI_MODEL=deepseek-flash
 
 私有仓库或需要更高 GitHub 限流时，设置 `GITHUB_TOKEN=<your-token>`。建议使用仅授予 contents 与 issues 只读权限的 fine-grained token；只有开启 `WRITE_MODE` 时才需要 contents 与 pull-requests 的写权限。
 
-### Windows 一键启动
+### 原生桌面程序（Windows，推荐）
+
+完成本地安装后，可编译成独立原生桌面应用（基于 Windows 内置 WebView2，无黑框终端、不再依赖浏览器标签页）：
+
+```powershell
+.\scripts\build-desktop.ps1                     # 生成 desktop-app\Issue Agent.exe
+.\scripts\build-desktop.ps1 -DesktopShortcut    # 同时在桌面创建快捷方式
+```
+
+直接双击 `desktop-app\Issue Agent.exe` 即可启动：首次缺少 `.env` 时会在窗口内提示并一键打开 `.env` 填写 Key；关闭桌面窗口时通过 Windows Job Object 自动停止后台 uvicorn 进程，不留残留。
+
+### Windows 脚本启动（传统方式）
 
 完成本地安装后，双击项目根目录下的 `打开 Issue Agent.cmd`。启动器会检查环境、启动服务并自动打开浏览器；默认使用端口 `9123`，被占用时依次回退 `9124 → 9125`（会先通过 `/health` 确认端口上确实运行的是本应用），实际地址以启动器终端输出为准。使用期间请保持启动器窗口开启，`Ctrl+C` 停止；若服务已在运行，则只打开已有页面。代码更新后启动器会对比构建标识并自动替换过期的本地进程；强制干净重启可执行 `.\start-issue-agent.ps1 -Restart`。
 

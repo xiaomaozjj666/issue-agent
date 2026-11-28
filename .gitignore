@@ -22,3 +22,4 @@ data/
 *.tmp_*.json
 _ui_charts_*.png
 github_issue_agent.egg-info/
+desktop-app/
